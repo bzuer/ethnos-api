@@ -1,0 +1,23 @@
+[Unit]
+Description=Ethnos API (PM2)
+After=network.target mariadb.service redis-server.service
+Requires=network.target
+
+[Service]
+Type=simple
+User=bruno
+Group=bruno
+WorkingDirectory=/home/%u/api
+Environment=NODE_ENV=production
+Environment=PM2_HOME=/home/%u/.pm2
+EnvironmentFile=/etc/node-backend.env
+ExecStart=/home/%u/api/node_modules/.bin/pm2-runtime start /home/%u/api/pm2.config.cjs --env production --only ethnos-api
+ExecReload=/home/%u/api/node_modules/.bin/pm2 reload /home/%u/api/pm2.config.cjs --env production --only ethnos-api
+ExecStop=/usr/bin/env pm2 stop ethnos-api
+Restart=always
+RestartSec=5
+KillMode=mixed
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

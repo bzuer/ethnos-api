@@ -1,0 +1,39 @@
+#
+# Minimal Sphinx configuration sample (clean, simple, functional)
+#
+
+common
+{
+    datadir     = ./sphinxdata # just for clarity, this is the default
+}
+
+source src1
+{
+    type        = mysql
+
+    sql_host    = localhost # for `sql_port` to work, use 127.0.0.1
+    sql_user    = test
+    sql_pass    =
+    sql_db      = test
+    sql_port    = 3306  # optional, default is 3306
+
+    # use `example.sql` to populate `test.documents` table
+    sql_query   = SELECT id, group_id, UNIX_TIMESTAMP(date_added) AS date_added, title, content FROM documents
+}
+
+index test1
+{
+    type        = plain
+    source      = src1
+
+    field       = title, content
+    attr_uint   = group_id, date_added
+}
+
+index testrt
+{
+    type        = rt
+
+    field       = title, content
+    attr_uint   = gid
+}
