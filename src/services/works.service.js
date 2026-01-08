@@ -5,6 +5,17 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
 const { withTimeout } = require('../utils/db');
+const uniqueById = (items) => {
+  const seen = new Set();
+  const result = [];
+  for (const item of items || []) {
+    const id = item && item.id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    result.push(item);
+  }
+  return result;
+};
 
 class WorksService {
   
@@ -285,7 +296,7 @@ class WorksService {
     ]);
     const primaryQueryMs = Number(((process.hrtime.bigint() - primaryQueryStart) / BigInt(1e6)).toString());
 
-    const processedWorks = works.map(work => {
+    let processedWorks = works.map(work => {
       const authors = work.author_string ? work.author_string.split(';').map(a => a.trim()) : [];
       
       return {
@@ -309,6 +320,7 @@ class WorksService {
         search_engine: null
       };
     });
+    processedWorks = uniqueById(processedWorks);
 
     let publicationsQueryMs = null;
     let authorsQueryMs = null;
@@ -326,7 +338,11 @@ class WorksService {
                v.name AS venue_name,
                v.type AS venue_type,
                v.issn,
-               v.eissn
+               v.eissn,
+               v.scopus_id,
+               v.wikidata_id,
+               v.openalex_id,
+               v.mag_id
         FROM publications p1
         INNER JOIN (
           SELECT work_id, MAX(year) AS max_year
@@ -359,7 +375,11 @@ class WorksService {
               name: pub.venue_name,
               type: pub.venue_type || null,
               issn: pub.issn || null,
-              eissn: pub.eissn || null
+              eissn: pub.eissn || null,
+              scopus_id: pub.scopus_id || null,
+              wikidata_id: pub.wikidata_id || null,
+              openalex_id: pub.openalex_id || null,
+              mag_id: pub.mag_id || null
             };
           }
         }
@@ -430,6 +450,12 @@ class WorksService {
         w.language,
         w.abstract,
         w.reference_count,
+        w.citation_count,
+        w.altmetric_score,
+        w.download_count,
+        w.view_count,
+        w.social_media_mentions,
+        w.news_mentions,
         w.created_at,
         w.updated_at,
         
@@ -464,12 +490,21 @@ class WorksService {
         v.type as venue_type,
         v.issn,
         v.eissn,
+        v.scopus_id,
+        v.wikidata_id as venue_wikidata_id,
+        v.openalex_id as venue_openalex_id,
+        v.mag_id as venue_mag_id,
         
         -- Publisher data
         publisher.id as publisher_id,
         publisher.name as publisher_name,
         publisher.type as publisher_type,
-        publisher.country_code as publisher_country
+        publisher.country_code as publisher_country,
+        publisher.ror_id as publisher_ror_id,
+        publisher.wikidata_id as publisher_wikidata_id,
+        publisher.openalex_id as publisher_openalex_id,
+        publisher.mag_id as publisher_mag_id,
+        publisher.url as publisher_url
         
       FROM works w
       LEFT JOIN publications pub_latest ON pub_latest.id = (
@@ -597,34 +632,18 @@ class WorksService {
 
     const licensesPromise = sequelize.query(`
       SELECT 
+        id as publication_id,
         license_url,
-        content_version,
-        start_date,
+        license_version,
         created_at
-      FROM work_licenses
+      FROM publications
       WHERE work_id = ?
-      ORDER BY created_at DESC
+        AND license_url IS NOT NULL
+      ORDER BY created_at DESC, id DESC
     `, {
       replacements: [id],
       type: sequelize.QueryTypes.SELECT
     });
-
-    const metricsPromise = (async () => {
-      try {
-        const [mrow] = await sequelize.query(`
-          SELECT citation_count, altmetric_score, download_count, view_count, 
-                 social_media_mentions, news_mentions
-          FROM metrics WHERE work_id = ?
-        `, { replacements: [id], type: sequelize.QueryTypes.SELECT });
-        if (mrow) return mrow;
-      } catch (_) {}
-      const [fallback] = await sequelize.query(`
-        SELECT 
-          (SELECT COUNT(*) FROM citations WHERE cited_work_id = ?) as citation_count,
-          ? as reference_count
-      `, { replacements: [id, workData.reference_count || 0], type: sequelize.QueryTypes.SELECT });
-      return fallback || { citation_count: 0, reference_count: workData.reference_count || 0 };
-    })();
 
     const identifiersPromise = sequelize.query(`
       SELECT DISTINCT 
@@ -639,7 +658,6 @@ class WorksService {
       fundingData,
       filesData,
       licensesData,
-      metricsData,
       allIdentifiersRows
     ] = await Promise.all([
       authorsPromise,
@@ -647,9 +665,18 @@ class WorksService {
       fundingPromise,
       filesPromise,
       licensesPromise,
-      metricsPromise,
       identifiersPromise
     ]);
+
+    const metricsData = {
+      citation_count: workData.citation_count,
+      reference_count: workData.reference_count,
+      altmetric_score: workData.altmetric_score,
+      download_count: workData.download_count,
+      view_count: workData.view_count,
+      social_media_mentions: workData.social_media_mentions,
+      news_mentions: workData.news_mentions
+    };
 
     if (!subjectsData || subjectsData.length === 0) {
       try {
@@ -797,14 +824,23 @@ class WorksService {
         name: workData.venue_name,
         type: workData.venue_type,
         issn: workData.issn,
-        eissn: workData.eissn
+        eissn: workData.eissn,
+        scopus_id: workData.scopus_id || null,
+        wikidata_id: workData.venue_wikidata_id || null,
+        openalex_id: workData.venue_openalex_id || null,
+        mag_id: workData.venue_mag_id || null
       } : null,
 
       publisher: workData.publisher_name ? {
         id: workData.publisher_id,
         name: workData.publisher_name,
         type: workData.publisher_type,
-        country: workData.publisher_country
+        country: workData.publisher_country,
+        ror_id: workData.publisher_ror_id || null,
+        wikidata_id: workData.publisher_wikidata_id || null,
+        openalex_id: workData.publisher_openalex_id || null,
+        mag_id: workData.publisher_mag_id || null,
+        url: workData.publisher_url || null
       } : null,
 
       authors: authorsData.map(author => ({
@@ -909,12 +945,20 @@ class WorksService {
       const [pubs] = await pool.execute({
         sql: `
           SELECT p1.work_id,
+                 p1.id AS publication_id,
                  p1.year AS publication_year,
                  p1.peer_reviewed,
                  p1.open_access,
                  p1.doi,
+                 v.id AS venue_id,
                  v.name AS venue_name,
-                 v.type AS venue_type
+                 v.type AS venue_type,
+                 v.issn,
+                 v.eissn,
+                 v.scopus_id,
+                 v.wikidata_id,
+                 v.openalex_id,
+                 v.mag_id
           FROM publications p1
           INNER JOIN (
             SELECT work_id, MAX(year) AS max_year
@@ -932,7 +976,7 @@ class WorksService {
     const pubMap = Object.create(null);
     for (const pub of publicationsData) pubMap[pub.work_id] = pub;
 
-    const processed = works.map(work => {
+    let processed = works.map(work => {
       const authors = work.author_string ? work.author_string.split(';').map(a => a.trim()) : [];
       const pub = pubMap[work.id];
       return {
@@ -940,14 +984,23 @@ class WorksService {
         title: work.title,
         subtitle: work.subtitle,
         abstract: work.abstract || null,
-        type: work.work_type,
         work_type: work.work_type,
         language: work.language,
         publication_year: pub?.publication_year,
         doi: pub?.doi,
         peer_reviewed: pub ? pub.peer_reviewed === 1 : null,
         open_access: pub ? pub.open_access === 1 : null,
-        venue: pub?.venue_name ? { name: pub.venue_name, type: pub.venue_type } : null,
+        venue: pub?.venue_name ? {
+          id: pub.venue_id || null,
+          name: pub.venue_name,
+          type: pub.venue_type,
+          issn: pub.issn || null,
+          eissn: pub.eissn || null,
+          scopus_id: pub.scopus_id || null,
+          wikidata_id: pub.wikidata_id || null,
+          openalex_id: pub.openalex_id || null,
+          mag_id: pub.mag_id || null
+        } : null,
         author_count: authors.length,
         first_author: authors[0] || null,
         authors_preview: authors.slice(0, 3),
@@ -957,6 +1010,7 @@ class WorksService {
       };
     });
 
+    processed = uniqueById(processed);
     const approxTotal = offset + processed.length;
     const items = processed.map(formatWorkListItem);
     return {
@@ -1020,8 +1074,15 @@ class WorksService {
                  p1.peer_reviewed,
                  p1.open_access,
                  p1.doi,
+                 v.id AS venue_id,
                  v.name AS venue_name,
-                 v.type AS venue_type
+                 v.type AS venue_type,
+                 v.issn,
+                 v.eissn,
+                 v.scopus_id,
+                 v.wikidata_id,
+                 v.openalex_id,
+                 v.mag_id
           FROM publications p1
           INNER JOIN (
             SELECT work_id, MAX(year) AS max_year
@@ -1038,7 +1099,7 @@ class WorksService {
       const pubMap = Object.create(null);
       for (const pub of publicationsData) pubMap[pub.work_id] = pub;
 
-      const processedWorks = (works || []).map(work => {
+      let processedWorks = (works || []).map(work => {
         const authors = work.author_string ? work.author_string.split(';').map(a => a.trim()) : [];
         const pub = pubMap[work.id];
         return {
@@ -1046,13 +1107,22 @@ class WorksService {
           title: work.title,
           subtitle: work.subtitle || null,
           abstract: work.abstract || null,
-          type: work.work_type || 'ARTICLE',
           work_type: work.work_type || 'ARTICLE',
           language: work.language || null,
           publication_year: pub?.publication_year || null,
           doi: pub?.doi || null,
           open_access: pub ? pub.open_access === 1 : null,
-          venue: pub?.venue_name ? { name: pub.venue_name, type: pub.venue_type } : null,
+          venue: pub?.venue_name ? {
+            id: pub.venue_id || null,
+            name: pub.venue_name,
+            type: pub.venue_type,
+            issn: pub.issn || null,
+            eissn: pub.eissn || null,
+            scopus_id: pub.scopus_id || null,
+            wikidata_id: pub.wikidata_id || null,
+            openalex_id: pub.openalex_id || null,
+            mag_id: pub.mag_id || null
+          } : null,
           peer_reviewed: pub ? pub.peer_reviewed === 1 : null,
           author_count: authors.length,
           first_author: authors[0] || null,
@@ -1063,7 +1133,8 @@ class WorksService {
         };
       });
 
-      const items = processedWorks;
+      processedWorks = uniqueById(processedWorks);
+      const items = processedWorks.map(formatWorkListItem);
 
       return {
         data: items,

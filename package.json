@@ -5,8 +5,10 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "deploy": "bash scripts/manage.sh deploy",
-    "dev": "nodemon src/app.js",
+    "build": "bash scripts/process.sh build",
+    "deploy": "bash scripts/process.sh deploy",
+    "dev": "bash scripts/process.sh dev",
+    "dev:server": "nodemon src/app.js",
     "test": "cross-env NODE_ENV=test JEST_FAST=1 jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

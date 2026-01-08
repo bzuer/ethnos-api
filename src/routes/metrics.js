@@ -98,7 +98,7 @@ const validateCollaborations = [
  *                         type: integer
  *                       total_publications:
  *                         type: integer
- *                       unique_authors:
+ *                       unique_organizations:
  *                         type: integer
  *                 meta:
  *                   type: object
@@ -153,7 +153,7 @@ router.get('/dashboard', metricsController.getDashboardSummary);
  *                         type: integer
  *                       articles:
  *                         type: integer
- *                       unique_authors:
+ *                       unique_organizations:
  *                         type: integer
  *       400:
  *         $ref: '#/components/responses/BadRequest'
@@ -206,7 +206,7 @@ router.get('/venues', validateLimit, metricsController.getTopVenues);
  * /metrics/institutions:
  *   get:
  *     summary: Institution productivity ranking
- *     description: Get academic institutions ranked by research productivity, publication count, citation metrics, and H-index.
+ *     description: Get academic institutions ranked by research productivity, publication count, and citation metrics.
  *     tags: [Metrics]
  *     parameters:
  *       - name: limit
@@ -256,7 +256,7 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  * /metrics/persons:
  *   get:
  *     summary: Person production analytics
- *     description: Get researchers ranked by publication productivity, citation metrics, H-index, and collaboration indicators.
+ *     description: Get researchers ranked by publication productivity and citation metrics.
  *     tags: [Metrics]
  *     parameters:
  *       - name: limit
@@ -305,7 +305,7 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  * /metrics/collaborations:
  *   get:
  *     summary: Collaboration network statistics
- *     description: Get statistics on research collaboration networks, including top collaborator pairs, collaboration patterns, and network metrics.
+ *     description: Get statistics on research collaboration networks, including top collaborator pairs and collaboration patterns.
  *     tags: [Metrics]
  *     parameters:
  *       - name: limit

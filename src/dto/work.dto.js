@@ -55,7 +55,11 @@ function normalizeVenue(raw = {}) {
     name,
     type: normalizeType(raw.type || raw.venue_type),
     issn: raw.issn || null,
-    eissn: raw.eissn || null
+    eissn: raw.eissn || null,
+    scopus_id: raw.scopus_id || null,
+    wikidata_id: raw.wikidata_id || null,
+    openalex_id: raw.openalex_id || null,
+    mag_id: raw.mag_id || null
   };
 }
 
@@ -127,7 +131,12 @@ function formatWorkDetails(work = {}) {
         id: work.publisher.id || null,
         name: work.publisher.name,
         type: work.publisher.type ? normalizeType(work.publisher.type) : null,
-        country: work.publisher.country || null
+        country: work.publisher.country || null,
+        ror_id: work.publisher.ror_id || null,
+        wikidata_id: work.publisher.wikidata_id || null,
+        openalex_id: work.publisher.openalex_id || null,
+        mag_id: work.publisher.mag_id || null,
+        url: work.publisher.url || null
       }
     : null;
 
@@ -271,9 +280,9 @@ function formatWorkDetails(work = {}) {
 
   const licenses = Array.isArray(work.licenses)
     ? work.licenses.map(license => ({
+        publication_id: toOptionalInteger(license.publication_id),
         license_url: license.license_url || null,
-        content_version: license.content_version || null,
-        start_date: license.start_date || null,
+        license_version: license.license_version || null,
         created_at: license.created_at || null
       }))
     : [];

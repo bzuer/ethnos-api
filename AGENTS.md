@@ -1,98 +1,110 @@
-# AGENTS.md — Guia Definitivo para Agentes neste Repositorio
+# AGENTS.md — Definitive Guide for Agents in This Repository
 
-Este documento orienta agentes e colaboradores automatizados sobre como analisar, implementar e documentar funcionalidades na Ethnos_API. Siga-o para manter consistencia tecnica, seguranca e padronizacao.
+This document guides automated agents and collaborators on how to analyze, implement, and document features in Ethnos_API. Follow it to maintain technical consistency, security, and standardization.
 
-## Visao Geral do Projeto
+## Project Overview
 - Runtime: Node.js (>= 18)
 - Framework: Express
-- Entrada da aplicacao: `src/app.js`
-- Organizacao:
-  - Rotas: `src/routes/`
-  - Controladores: `src/controllers/`
-  - Servicos: `src/services/`
+- Application entry: `src/app.js`
+- Structure:
+  - Routes: `src/routes/`
+  - Controllers: `src/controllers/`
+  - Services: `src/services/`
   - DTOs: `src/dto/`
   - Middleware: `src/middleware/`
   - Utils: `src/utils/`
   - OpenAPI: `config/swagger.config.js`
-  - Documentacao gerada: `docs/`
+  - Generated documentation: `docs/`
 
-Diretiva operacional: mantenha limpeza absoluta, clareza tecnica, hierarquia e padronizacao. Nao versionar artefatos gerados, logs, backups ou dumps. Remover conteudos fora do escopo.
+Operational directive: keep absolute cleanliness, technical clarity, hierarchy, and standardization. Do not version generated artifacts, logs, backups, or dumps. Remove out-of-scope content.
 
-## Convencoes de Resposta
-- Responder via `responseFormatter` (global em `src/app.js`).
-- Envelopes (ver `src/utils/responseBuilder.js`):
+## Response Conventions
+- Respond via `responseFormatter` (global in `src/app.js`).
+- Envelopes (see `src/utils/responseBuilder.js`):
   - SuccessEnvelope: `{ status: 'success', data, pagination?, meta? }`
   - ErrorEnvelope: `{ status: 'error', message, code, timestamp, meta? }`
-- Paginacao obrigatoria em listagens: `createPagination/normalizePagination` de `src/utils/pagination.js`.
-  - Suporte a `page/limit` e `offset/limit` simultaneamente.
+- Pagination is mandatory for listings: `createPagination/normalizePagination` from `src/utils/pagination.js`.
+  - Support both `page/limit` and `offset/limit` simultaneously.
 
-## Seguranca e Acesso Interno
-- Endpoints protegidos exigem header `X-Access-Key` (case-insensitive: `x-access-key`, `x-internal-key`, `x-api-key`).
+## Security and Internal Access
+- Protected endpoints require `X-Access-Key` header (case-insensitive: `x-access-key`, `x-internal-key`, `x-api-key`).
 - Middleware: `src/middleware/accessKey.js`.
-  - `requireInternalAccessKey` tenta, nesta ordem: `API_KEY`, `INTERNAL_ACCESS_KEY`, `SECURITY_ACCESS_KEY`, `API_ACCESS_KEY`, `ETHNOS_API_KEY`, `ETHNOS_API_ACCESS_KEY`, `API_SECRET_KEY`.
-  - `createAccessKeyGuard` para contextos especificos.
-- OpenAPI define `securitySchemes.XAccessKey`.
+  - `requireInternalAccessKey` checks, in order: `API_KEY`, `INTERNAL_ACCESS_KEY`, `SECURITY_ACCESS_KEY`, `API_ACCESS_KEY`, `ETHNOS_API_KEY`, `ETHNOS_API_ACCESS_KEY`, `API_SECRET_KEY`.
+  - `createAccessKeyGuard` for specific contexts.
+- OpenAPI defines `securitySchemes.XAccessKey`.
 
-## Padroes de Desenvolvimento
-- Validacao: `express-validator`.
-- DTOs por dominio (ex.: `work.dto.js`, `person.dto.js`, `organization.dto.js`, `venue.dto.js`).
-- Erros: `res.fail(...)` e `res.error(err, ...)` com `ERROR_CODES`.
-- SQL direto via `sequelize.query`.
-- Schema: `database/schema_data_updated.sql` como fonte.
+## Development Standards
+- Validation: `express-validator`.
+- DTOs per domain (e.g., `work.dto.js`, `person.dto.js`, `organization.dto.js`, `venue.dto.js`).
+- Errors: `res.fail(...)` and `res.error(err, ...)` with `ERROR_CODES`.
+- Raw SQL via `sequelize.query`.
+- Schema source of truth: `database/data_db.schema.sql`.
 
-## Documentacao (OpenAPI)
-- UI: `/docs` (Swagger UI) — fonte em `/docs.json`.
+## Documentation (OpenAPI)
+- UI: `/docs` (Swagger UI) sourced from `/docs.json`.
 - JSON: `GET /docs.json`.
 - YAML: `GET /docs.yaml` (aliases: `/openapi.yaml`, `/openapi.yml`).
-- Geracao via scripts:
+- Generation scripts:
   - `npm run docs:generate`
   - `npm run docs:generate:yaml`
-- Atualize JSDoc nas rotas quando criar/alterar endpoints.
-- Documente `page`, `limit`, `offset` e use `$ref` para envelopes e paginacao.
+- Update Swagger JSDoc in routes when creating or modifying endpoints.
+- Document `page`, `limit`, `offset` and use `$ref` for envelopes and pagination.
 
-## Execucao e Ambientes
-- Runtime: `/etc/node-backend.env` (fonte unica).
-- Testes: `.env.test`.
-- Desenvolvimento: `npm run dev`.
-- Producao: `./server.sh start`.
+## Execution and Environments
+- Runtime env: `/etc/node-backend.env` as single source of truth.
+- Tests: `.env.test`.
+- Development: `npm run dev`.
+- Build: `npm run build`.
+- Production: `./server.sh start`.
 
-## Scripts Importantes
-- `scripts/manage.sh` — deploy, testes, Sphinx, Swagger.
-  - Deploy: stop API e Sphinx, limpa caches, instala deps (inclui dev), gera docs, inicia Sphinx, indexa, repara indices quebrados, roda testes, reinicia API.
-  - Indexacao: `scripts/manage.sh index` e `scripts/manage.sh index:fast`.
+## Important Scripts
+- `scripts/manage.sh` — deploy, tests, Sphinx, Swagger.
+  - Deploy: stop API and Sphinx, clear caches, install deps (including dev), generate docs, start Sphinx, index, repair broken indexes, run tests, restart API.
+  - Indexing: `scripts/manage.sh index` and `scripts/manage.sh index:fast`.
   - Sphinx: `scripts/manage.sh sphinx start|stop|status`.
-- `scripts/generate-swagger.js` — gera `docs/swagger.json` e `docs/swagger.yaml`.
-- `rsync.sh` — sincroniza o repositorio para `server@192.168.18.50:/home/server/api` e envia os indices Sphinx de `/var/lib/ethnos-api/sphinx`.
+- `scripts/process.sh` — standard build/dev/deploy flow (clears caches/runtime/logs, refreshes deps, warms docs cache, and runs tests or delegates deploy).
+- `scripts/generate-swagger.js` — generates `docs/swagger.json` and `docs/swagger.yaml`.
+- `rsync.sh` — syncs repo to `server@192.168.18.50:/home/server/api` and sends Sphinx indexes from `/var/lib/ethnos-api/sphinx`.
 
 ## Sphinx
-- Template: `config/sphinx-unified.conf` (sem segredos).
-- Config runtime: `/var/run/ethnos-api/sphinx.conf` (gerado pelo `manage.sh` a partir do `/etc/node-backend.env`).
+- Template: `config/sphinx-unified.conf` (no secrets).
+- Runtime config: `/var/run/ethnos-api/sphinx.conf` (generated by `manage.sh` from `/etc/node-backend.env`).
 - Runtime: `/var/lib/ethnos-api/sphinx`, logs: `/var/log/ethnos-api`, PID: `/var/run/ethnos-api/sphinx.pid`.
 
-## Higiene do Repositorio
-- Ignorar/limpar: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql`, `node_modules/`.
-- Pastas validas: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `models/`, `ssl/`.
-- Remover conteudos defasados ou fora do escopo.
-- Logs do repositorio devem ser limpos no inicio de `deploy` e `restart`.
-- `runtime/` nao deve conter indices do Sphinx (usar apenas `/var/lib/ethnos-api/sphinx`).
-- `config/` deve conter apenas `swagger.config.js` e `sphinx-unified.conf`.
+## Repository Hygiene
+- Ignore/clean: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql`, `node_modules/`.
+- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `models/`, `ssl/`.
+- Remove stale or out-of-scope content.
+- Repo logs must be cleared at the start of `deploy` and `restart`.
+- `runtime/` must not contain Sphinx indexes (use only `/var/lib/ethnos-api/sphinx`).
+- `config/` must contain only `swagger.config.js` and `sphinx-unified.conf`.
 
-## Estilo de Codigo e Comentarios
-- Comentarios proibidos em codigo, exceto Swagger JSDoc e anotacoes estritamente necessarias.
-- Proibidos: TODO, FIXME, HACK, NOTE, BUG, XXX, codigo comentado.
-- Logs objetivos; evite ruido.
+## Code Style and Comments
+- Comments are forbidden in code, except Swagger JSDoc and strictly necessary annotations.
+- Forbidden: TODO, FIXME, HACK, NOTE, BUG, XXX, commented-out code.
+- Keep logs objective; avoid noise.
 
-## Estado Atual dos Endpoints
-- Total documentado: 57 operacoes em `docs/swagger.json`.
-- Endpoints desativados: `/signatures`, `/subjects` (raiz).
-- Endpoints aninhados permanecem ativos.
+## Quality and Naming
+- Use technical English for new variable names, functions, files, tests, and system messages.
+- Keep code and scripts clean: no comments beyond the allowed exceptions.
+- Do not add inline CSS/JS in API documentation examples or responses.
 
-## Testes
+## Configuration and Security
+- Never version secrets or credentials; use `/etc/node-backend.env` as the source.
+- Do not expose keys or sensitive data in responses, logs, or error payloads.
+
+## Endpoints State
+- Documented total: 57 operations in `docs/swagger.json`.
+- Disabled endpoints: `/signatures`, `/subjects` (root).
+- Nested endpoints remain active.
+
+## Tests
 - Framework: Jest + Supertest.
-- Comandos: `npm test`, `npm run test:watch`, `npm run test:coverage`.
+- Commands: `npm test`, `npm run test:watch`, `npm run test:coverage`.
+- When changing behavior, prefer adding or updating tests in `tests/`.
 
-## Referencias Rapidas
+## Quick References
 - Envelopes: `src/utils/responseBuilder.js`
-- Paginacao: `src/utils/pagination.js`
-- Acesso interno: `src/middleware/accessKey.js`
-- Monitoramento: `src/middleware/monitoring.js`
+- Pagination: `src/utils/pagination.js`
+- Internal access: `src/middleware/accessKey.js`
+- Monitoring: `src/middleware/monitoring.js`

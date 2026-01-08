@@ -13,10 +13,6 @@ const formatAnnualStats = (stats) => {
       open_access_percentage: parseFloat(stats.open_access_percentage) || 0,
       articles: parseInt(stats.articles) || 0,
       books: parseInt(stats.books) || 0,
-      theses: parseInt(stats.theses) || 0,
-      conference_papers: parseInt(stats.conference_papers) || 0,
-      unique_venues: parseInt(stats.unique_venues) || 0,
-      unique_authors: parseInt(stats.unique_authors) || 0,
       unique_organizations: parseInt(stats.unique_organizations) || 0,
       avg_citations: parseFloat(stats.avg_citations) || 0,
       total_downloads: parseInt(stats.total_downloads) || 0
@@ -65,10 +61,7 @@ const formatInstitutionProductivity = (institution, rank = null) => {
       total_works: parseInt(institution.total_works) || 0,
       total_citations: parseInt(institution.total_citations) || 0,
       avg_citations: parseFloat(institution.avg_citations) || 0,
-      h_index: parseInt(institution.h_index) || 0,
-      total_authors: parseInt(institution.total_authors) || 0,
-      open_access_works: parseInt(institution.open_access_works) || 0,
-      open_access_percentage: parseFloat(institution.open_access_percentage) || 0
+      unique_researchers: parseInt(institution.unique_researchers) || 0
     },
     timespan: {
       first_publication_year: parseInt(institution.first_publication_year) || null,
@@ -91,20 +84,14 @@ const formatPersonProduction = (person, rank = null) => {
     identifiers: {
       orcid: person.orcid || null
     },
-    primary_affiliation: {
-      name: person.primary_affiliation_name || null,
-      id: person.primary_affiliation_id || null
-    },
+    is_verified: person.is_verified === null || person.is_verified === undefined
+      ? null
+      : Boolean(person.is_verified),
+    primary_affiliation: null,
     metrics: {
       total_works: parseInt(person.total_works) || 0,
       total_citations: parseInt(person.total_citations) || 0,
-      avg_citations: parseFloat(person.avg_citations) || 0,
-      h_index: parseInt(person.h_index) || 0,
-      as_first_author: parseInt(person.as_first_author) || 0,
-      as_corresponding_author: parseInt(person.as_corresponding_author) || 0,
-      open_access_works: parseInt(person.open_access_works) || 0,
-      open_access_percentage: parseFloat(person.open_access_percentage) || 0,
-      collaboration_count: parseInt(person.collaboration_count) || 0
+      avg_citations: parseFloat(person.avg_citations) || 0
     },
     timespan: {
       first_publication_year: parseInt(person.first_publication_year) || null,
@@ -140,15 +127,16 @@ const formatCollaboration = (collaboration, rank = null) => {
       }
     },
     metrics: {
-      shared_works: parseInt(collaboration.shared_works) || 0,
-      shared_citations: parseInt(collaboration.shared_citations) || 0,
-      avg_shared_citations: parseFloat(collaboration.avg_shared_citations) || 0,
-      collaboration_strength: collaborationStrength(parseInt(collaboration.shared_works) || 0)
+      shared_works: parseInt(collaboration.collaboration_count) || 0,
+      avg_shared_citations: parseFloat(collaboration.avg_citations_together) || 0,
+      collaboration_strength: collaborationStrength(parseInt(collaboration.collaboration_count) || 0)
     },
     timespan: {
       first_collaboration_year: parseInt(collaboration.first_collaboration_year) || null,
       latest_collaboration_year: parseInt(collaboration.latest_collaboration_year) || null,
-      collaboration_years: parseInt(collaboration.collaboration_years) || 0
+      collaboration_years: collaboration.latest_collaboration_year && collaboration.first_collaboration_year
+        ? parseInt(collaboration.latest_collaboration_year) - parseInt(collaboration.first_collaboration_year) + 1
+        : 0
     }
   };
 };
@@ -167,13 +155,13 @@ const formatDashboardSummary = (totals, recentTrends = []) => {
       year: parseInt(trend.year),
       total_publications: parseInt(trend.total_publications) || 0,
       open_access_count: parseInt(trend.open_access_count) || 0,
-      unique_authors: parseInt(trend.unique_authors) || 0,
+      unique_organizations: parseInt(trend.unique_organizations) || 0,
       open_access_percentage: trend.total_publications > 0 ? 
         Math.round((trend.open_access_count / trend.total_publications) * 100 * 10) / 10 : 0
     })),
     growth_indicators: recentTrends.length >= 2 ? {
       publications_trend: calculateTrendDirection(recentTrends.map(t => t.total_publications)),
-      authors_trend: calculateTrendDirection(recentTrends.map(t => t.unique_authors)),
+      organizations_trend: calculateTrendDirection(recentTrends.map(t => t.unique_organizations)),
       open_access_trend: calculateTrendDirection(recentTrends.map(t => t.open_access_count))
     } : null,
     last_updated: new Date().toISOString()

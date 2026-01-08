@@ -46,10 +46,6 @@ class MetricsService {
           ROUND(open_access_percentage, 2) as open_access_percentage,
           articles,
           books,
-          theses,
-          conference_papers,
-          unique_venues,
-          unique_authors,
           ROUND(avg_citations, 2) as avg_citations,
           ROUND(total_downloads, 0) as total_downloads,
           unique_organizations
@@ -165,16 +161,13 @@ class MetricsService {
 
       const institutions = await sequelize.query(`
         SELECT 
-          organization_id,
-          organization_name,
+          id as organization_id,
+          institution_name as organization_name,
           country_code,
           total_works,
           total_citations,
-          ROUND(avg_citations, 2) as avg_citations,
-          h_index,
-          total_authors,
-          open_access_works,
-          ROUND(open_access_percentage, 2) as open_access_percentage,
+          ROUND(CASE WHEN total_works > 0 THEN total_citations / total_works ELSE NULL END, 2) as avg_citations,
+          unique_researchers,
           first_publication_year,
           latest_publication_year
         FROM v_institution_productivity
@@ -194,8 +187,8 @@ class MetricsService {
           total_institutions_ranked: formattedInstitutions.length,
           countries_represented: [...new Set(formattedInstitutions.map(i => i.country_code))].filter(Boolean),
           top_institution_works: formattedInstitutions.length > 0 ? formattedInstitutions[0].metrics.total_works : 0,
-          avg_h_index: formattedInstitutions.length > 0 ?
-            Math.round(formattedInstitutions.reduce((sum, i) => sum + i.metrics.h_index, 0) / formattedInstitutions.length) : 0,
+          avg_citations_per_work: formattedInstitutions.length > 0 ?
+            Math.round(formattedInstitutions.reduce((sum, i) => sum + i.metrics.avg_citations, 0) / formattedInstitutions.length * 100) / 100 : 0,
           total_citations: formattedInstitutions.reduce((sum, i) => sum + i.metrics.total_citations, 0)
         }
       };
@@ -225,7 +218,10 @@ class MetricsService {
       const replacements = { limit: parseInt(limit) };
 
       if (organization_id) {
-        whereConditions.push('primary_affiliation_id = :organization_id');
+        whereConditions.push(`EXISTS (
+          SELECT 1 FROM authorships a 
+          WHERE a.person_id = vp.id AND a.affiliation_id = :organization_id
+        )`);
         replacements.organization_id = parseInt(organization_id);
       }
 
@@ -233,22 +229,16 @@ class MetricsService {
 
       const persons = await sequelize.query(`
         SELECT 
-          person_id,
-          person_name,
+          id as person_id,
+          preferred_name as person_name,
           orcid,
-          primary_affiliation_name,
+          is_verified,
           total_works,
           total_citations,
-          ROUND(avg_citations, 2) as avg_citations,
-          h_index,
-          as_first_author,
-          as_corresponding_author,
-          open_access_works,
-          ROUND(open_access_percentage, 2) as open_access_percentage,
+          ROUND(avg_citations_per_work, 2) as avg_citations,
           first_publication_year,
-          latest_publication_year,
-          collaboration_count
-        FROM v_person_production
+          latest_publication_year
+        FROM v_person_production vp
         ${whereClause}
         ORDER BY total_works DESC, total_citations DESC
         LIMIT :limit
@@ -264,11 +254,9 @@ class MetricsService {
         summary: {
           total_persons_ranked: formattedPersons.length,
           top_person_works: formattedPersons.length > 0 ? formattedPersons[0].metrics.total_works : 0,
-          top_h_index: formattedPersons.length > 0 ? Math.max(...formattedPersons.map(p => p.metrics.h_index)) : 0,
-          avg_collaboration_count: formattedPersons.length > 0 ? 
-            Math.round(formattedPersons.reduce((sum, p) => sum + p.metrics.collaboration_count, 0) / formattedPersons.length) : 0,
-          total_citations: formattedPersons.reduce((sum, p) => sum + p.metrics.total_citations, 0),
-          organizations_represented: [...new Set(formattedPersons.map(p => p.primary_affiliation.name))].filter(Boolean).length
+          avg_citations_per_work: formattedPersons.length > 0 ? 
+            Math.round(formattedPersons.reduce((sum, p) => sum + p.metrics.avg_citations, 0) / formattedPersons.length * 100) / 100 : 0,
+          total_citations: formattedPersons.reduce((sum, p) => sum + p.metrics.total_citations, 0)
         }
       };
 
@@ -299,15 +287,13 @@ class MetricsService {
           person1_name,
           person2_id,
           person2_name,
-          shared_works,
-          shared_citations,
-          ROUND(avg_shared_citations, 2) as avg_shared_citations,
+          collaboration_count,
+          ROUND(avg_citations_together, 2) as avg_citations_together,
           first_collaboration_year,
-          latest_collaboration_year,
-          collaboration_years
+          latest_collaboration_year
         FROM v_collaborations
-        WHERE shared_works >= :min_collaborations
-        ORDER BY shared_works DESC, shared_citations DESC
+        WHERE collaboration_count >= :min_collaborations
+        ORDER BY collaboration_count DESC, avg_citations_together DESC
         LIMIT :limit
       `, {
         replacements: { 
@@ -368,7 +354,7 @@ class MetricsService {
             year,
             total_publications,
             open_access_count,
-            unique_authors
+            unique_organizations
           FROM v_annual_stats 
           ORDER BY year DESC 
           LIMIT 5
