@@ -406,7 +406,8 @@ describe('Bibliography', () => {
 
 describe('Security', () => {
   test('GET /security/stats requires key and responds', async () => {
-    const req = createMockReq({ method: 'GET', path: '/security/stats', headers: { 'x-access-key': process.env.SECURITY_ACCESS_KEY } });
+    const accessKey = process.env.API_KEY || process.env.SECURITY_ACCESS_KEY || process.env.INTERNAL_ACCESS_KEY;
+    const req = createMockReq({ method: 'GET', path: '/security/stats', headers: { 'x-access-key': accessKey } });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: securityRouter, method: 'get', path: '/stats', req, res });
     expect(res.statusCode).toBe(200);

@@ -12,6 +12,7 @@ const { testConnection } = require('./config/database');
 const { testRedisConnection } = require('./config/redis');
 
 const realTimeIndexingService = require('./services/realTimeIndexing.service');
+const homepageStatsService = require('./services/homepageStats.service');
 
 const app = express();
 
@@ -139,11 +140,28 @@ app.use(requestTimeout({ timeoutMs: 0 }));
 
 app.use(performanceMonitoring);
 
+homepageStatsService.refresh();
+
 app.get('/', (req, res) => {
+  const homepageStats = homepageStatsService.getSnapshot();
+  const totals = homepageStats?.totals || {};
+  const formatNumber = (value) => {
+    if (!Number.isFinite(value)) return null;
+    return value.toLocaleString('en-US');
+  };
+  const totalWorksLabel = formatNumber(totals.total_works);
+  const totalResearchersLabel = formatNumber(totals.total_researchers);
+  const totalOrganizationsLabel = formatNumber(totals.total_organizations);
+  const totalPublicationsLabel = formatNumber(totals.total_publications);
+  const totalVenuesLabel = formatNumber(totals.total_venues);
+  const totalCoursesLabel = formatNumber(totals.total_courses);
+
   res.success({
     name: 'Ethnos.app Academic Bibliography API',
     version: '2.0.0',
-    description: 'Public RESTful API for academic bibliographic research with 2.6M works, 1.5M researchers, 288K organizations',
+    description: homepageStats ? 
+      `Public RESTful API for academic bibliographic research with ${totalWorksLabel} works, ${totalPublicationsLabel} publications, ${totalResearchersLabel} researchers` :
+      'Public RESTful API for academic bibliographic research',
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString(),
     documentation: {
@@ -151,7 +169,7 @@ app.get('/', (req, res) => {
       openapi_spec: '/docs.json'
     },
     system_status: {
-      database: '2,625,018 works indexed',
+      database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
       search_engine: 'Sphinx integrated (18-26ms search performance)',
       cache: 'Redis with 30min TTL',
       rate_limiting: 'Disabled'
@@ -191,11 +209,13 @@ app.get('/', (req, res) => {
       }
     },
     data_statistics: {
-      total_works: '2,625,018',
-      total_researchers: '1,458,013',
-      total_organizations: '287,620',
-      total_venues: '1,328',
-      total_courses: '433'
+      total_works: totalWorksLabel,
+      total_publications: totalPublicationsLabel,
+      total_researchers: totalResearchersLabel,
+      total_organizations: totalOrganizationsLabel,
+      total_venues: totalVenuesLabel,
+      total_courses: totalCoursesLabel,
+      collected_at: homepageStats?.collected_at || null
     },
     technical_features: {
       search_performance: 'Sphinx: 18-26ms queries, total endpoint response: 20-2000ms (organizations search disabled for optimal performance)',

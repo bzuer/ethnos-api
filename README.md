@@ -8,6 +8,10 @@ Public RESTful API for academic bibliographic research with high-performance sea
 
 Production-ready system with 57 documented endpoints (per OpenAPI), Sphinx search integration with MariaDB fallback, Redis caching, and standardized response envelopes.
 
+## Database Schema
+
+Source of truth: `database/data_db.schema.sql`.
+
 ## Prerequisites
 
 - Node.js >= 18.0.0
@@ -113,6 +117,32 @@ Deploy sequence:
 - Swagger UI: `http://localhost:3000/docs`
 - OpenAPI JSON: `http://localhost:3000/docs.json`
 - OpenAPI YAML: `http://localhost:3000/docs.yaml`
+
+## Security Headers
+
+- Security headers are enforced by `helmet` in `src/app.js` (CSP, HSTS, frameguard, no-sniff, referrer policy, DNS prefetch control).
+- When updating CSP, ensure Swagger UI and fonts remain functional.
+- Do not loosen headers in production unless strictly required and documented.
+
+## Internal Access Key Usage
+
+- Protected endpoints require `X-Access-Key` (case-insensitive: `x-access-key`, `x-internal-key`, `x-api-key`).
+- Validation is handled by `requireInternalAccessKey` in `src/middleware/accessKey.js`.
+- Keys must be provided only via `/etc/node-backend.env` and never logged or exposed in responses.
+- If rotating keys, update the env file and restart the service to apply changes.
+
+## Deployment Hygiene
+
+- Use `scripts/manage.sh deploy` as the only deploy pipeline.
+- Ensure logs and caches are cleared on deploy/restart as defined in `scripts/manage.sh`.
+- Do not commit generated artifacts, logs, backups, or dumps.
+- Keep Sphinx runtime data in `/var/lib/ethnos-api/sphinx` only.
+
+## Response Format
+
+- Success envelope: `{ status: 'success', data, pagination?, meta? }`
+- Error envelope: `{ status: 'error', message, code, timestamp, meta? }`
+- Pagination is mandatory for list endpoints and supports `page/limit` or `offset/limit`.
 
 ## Environment Management
 

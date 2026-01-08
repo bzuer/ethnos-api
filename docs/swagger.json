@@ -4624,7 +4624,7 @@
                           "total_publications": {
                             "type": "integer"
                           },
-                          "unique_authors": {
+                          "unique_organizations": {
                             "type": "integer"
                           }
                         }
@@ -4704,7 +4704,7 @@
                           "articles": {
                             "type": "integer"
                           },
-                          "unique_authors": {
+                          "unique_organizations": {
                             "type": "integer"
                           }
                         }
@@ -4780,7 +4780,7 @@
     "/metrics/institutions": {
       "get": {
         "summary": "Institution productivity ranking",
-        "description": "Get academic institutions ranked by research productivity, publication count, citation metrics, and H-index.",
+        "description": "Get academic institutions ranked by research productivity, publication count, and citation metrics.",
         "tags": [
           "Metrics"
         ],
@@ -4848,7 +4848,7 @@
     "/metrics/persons": {
       "get": {
         "summary": "Person production analytics",
-        "description": "Get researchers ranked by publication productivity, citation metrics, H-index, and collaboration indicators.",
+        "description": "Get researchers ranked by publication productivity and citation metrics.",
         "tags": [
           "Metrics"
         ],
@@ -4915,7 +4915,7 @@
     "/metrics/collaborations": {
       "get": {
         "summary": "Collaboration network statistics",
-        "description": "Get statistics on research collaboration networks, including top collaborator pairs, collaboration patterns, and network metrics.",
+        "description": "Get statistics on research collaboration networks, including top collaborator pairs and collaboration patterns.",
         "tags": [
           "Metrics"
         ],
