@@ -30,14 +30,14 @@ class OrganizationsController {
       const result = await organizationsService.getOrganizationWorks(id, filters);
       
       if (!result) {
-        return res.fail(`Organization with ID ${id} not found`, {
+        return res.fail(`Institution with ID ${id} not found`, {
           statusCode: 404,
           code: ERROR_CODES.NOT_FOUND,
           meta: { id }
         });
       }
 
-      logger.info(`Organization ${id} works retrieved: ${result.data.length} items`);
+      logger.info(`Institution ${id} works retrieved: ${result.data.length} items`);
       
       const meta = {
         ...(result.performance || {}),
@@ -49,7 +49,7 @@ class OrganizationsController {
         meta: Object.keys(meta).length ? meta : undefined
       });
     } catch (error) {
-      logger.error(`Error retrieving works for organization ${req.params.id}:`, error);
+      logger.error(`Error retrieving works for institution ${req.params.id}:`, error);
       return res.error(error);
     }
   }
@@ -69,18 +69,18 @@ class OrganizationsController {
       const organization = await organizationsService.getOrganizationById(id);
       
       if (!organization) {
-        return res.fail(`Organization with ID ${id} not found`, {
+        return res.fail(`Institution with ID ${id} not found`, {
           statusCode: 404,
           code: ERROR_CODES.NOT_FOUND,
           meta: { id }
         });
       }
 
-      logger.info(`Organization ${id} retrieved successfully`);
+      logger.info(`Institution ${id} retrieved successfully`);
       
       return res.success(organization);
     } catch (error) {
-      logger.error(`Error retrieving organization ${req.params.id}:`, error);
+      logger.error(`Error retrieving institution ${req.params.id}:`, error);
       return res.error(error);
     }
   }
@@ -107,7 +107,7 @@ class OrganizationsController {
 
       const result = await organizationsService.getOrganizations(filters);
       
-      logger.info(`Organizations list retrieved: ${result.data.length} items, page ${result.pagination.page}`);
+      logger.info(`Institutions list retrieved: ${result.data.length} items, page ${result.pagination.page}`);
       
       const meta = {
         ...(result.performance || {}),

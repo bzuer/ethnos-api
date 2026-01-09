@@ -80,10 +80,10 @@ describe('Search API', () => {
     });
   });
 
-  describe('GET /search/organizations', () => {
-    it('should return 404 for disabled organizations search', async () => {
+  describe('GET /search/institutions', () => {
+    it('should return 404 for disabled institutions search', async () => {
       const res = await request()
-        .get('/search/organizations?q=universidade')
+        .get('/search/institutions?q=universidade')
         .expect(404);
 
       expect(res.body.message).toContain('find');
@@ -100,7 +100,7 @@ describe('Search API', () => {
       expectSuccessEnvelope(res.body, { dataType: 'object', meta: ['query', 'controller_time_ms', 'sources'] });
       expect(res.body.data).toHaveProperty('works');
       expect(res.body.data).toHaveProperty('persons');
-      expect(res.body.data).toHaveProperty('organizations');
+      expect(res.body.data).toHaveProperty('institutions');
       expect(res.body).toHaveProperty('meta');
       expect(res.body.meta).toHaveProperty('query', 'artificial intelligence');
       expect(res.body.meta.sources).toHaveProperty('works');
@@ -109,15 +109,15 @@ describe('Search API', () => {
       expect(res.body.data.works).toHaveProperty('results');
       expect(res.body.data.persons).toHaveProperty('total');
       expect(res.body.data.persons).toHaveProperty('results');
-      expect(res.body.data.organizations).toHaveProperty('total');
-      expect(res.body.data.organizations).toHaveProperty('results');
+      expect(res.body.data.institutions).toHaveProperty('total');
+      expect(res.body.data.institutions).toHaveProperty('results');
       
       expect(Array.isArray(res.body.data.works.results)).toBe(true);
       expect(Array.isArray(res.body.data.persons.results)).toBe(true);
-      expect(Array.isArray(res.body.data.organizations.results)).toBe(true);
+      expect(Array.isArray(res.body.data.institutions.results)).toBe(true);
       
-      expect(res.body.data.organizations.total).toBe(0);
-      expect(res.body.data.organizations.results).toEqual([]);
+      expect(res.body.data.institutions.total).toBe(0);
+      expect(res.body.data.institutions.results).toEqual([]);
     });
 
     it('should accept limit parameter', async () => {
@@ -127,7 +127,7 @@ describe('Search API', () => {
 
       expect(res.body.data.works.results.length).toBeLessThanOrEqual(3);
       expect(res.body.data.persons.results.length).toBeLessThanOrEqual(3);
-      expect(res.body.data.organizations.results.length).toBe(0);
+      expect(res.body.data.institutions.results.length).toBe(0);
     });
 
     it('should return 400 for missing query', async () => {

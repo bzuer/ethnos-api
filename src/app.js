@@ -176,7 +176,7 @@ app.get('/', (req, res) => {
     },
     main_categories: {
       search_discovery: {
-        description: 'Advanced search with optimized Sphinx engine (organizations search disabled for performance)',
+        description: 'Advanced search with optimized Sphinx engine (institutions search disabled for performance)',
         endpoints: ['/search/works', '/search/persons', '/search/advanced', '/search/autocomplete', '/search/global']
       },
       academic_works: {
@@ -188,8 +188,8 @@ app.get('/', (req, res) => {
         endpoints: ['/persons', '/persons/{id}', '/persons/{id}/collaborators', '/persons/{id}/works']
       },
       institutions: {
-        description: 'Academic organizations and affiliations',
-        endpoints: ['/organizations', '/organizations/{id}', '/organizations/{id}/works']
+        description: 'Academic institutions and affiliations',
+        endpoints: ['/institutions', '/institutions/{id}', '/institutions/{id}/works']
       },
       academic_venues: {
         description: 'Journals, conferences, and publication venues',
@@ -201,11 +201,11 @@ app.get('/', (req, res) => {
       },
       bibliography_analysis: {
         description: 'Academic bibliography and reading analysis',
-        endpoints: ['/bibliography', '/bibliography/analysis']
+        endpoints: ['/bibliographies', '/bibliographies/analyses']
       },
       metrics_analytics: {
         description: 'Research metrics and institutional analytics',
-        endpoints: ['/metrics/dashboard', '/metrics/venues', '/metrics/sphinx', '/dashboard/overview']
+        endpoints: ['/metrics/venues', '/metrics/sphinx', '/metrics/sphinx/detailed', '/metrics/sphinx/search', '/dashboard/overview']
       }
     },
     data_statistics: {
@@ -218,7 +218,7 @@ app.get('/', (req, res) => {
       collected_at: homepageStats?.collected_at || null
     },
     technical_features: {
-      search_performance: 'Sphinx: 18-26ms queries, total endpoint response: 20-2000ms (organizations search disabled for optimal performance)',
+      search_performance: 'Sphinx: 18-26ms queries, total endpoint response: 20-2000ms (institutions search disabled for optimal performance)',
       authentication: 'Not required - Public API',
       rate_limits: 'Disabled',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
@@ -250,8 +250,10 @@ const searchRoutes = require('./routes/search');
 const metricsRoutes = require('./routes/metrics');
 const citationsRoutes = require('./routes/citations');
 const collaborationsRoutes = require('./routes/collaborations');
+const signaturesRoutes = require('./routes/signatures');
 const sphinxRoutes = require('./routes/sphinx');
 const dashboardRoutes = require('./routes/dashboard');
+const subjectsRoutes = require('./routes/subjects');
 
 const coursesRoutes = require('./routes/courses');
 const instructorsRoutes = require('./routes/instructors');
@@ -318,21 +320,21 @@ app.use('/health', healthRoutes);
 app.use('/security', metricsLimiter, securityRoutes);
 
 app.use('/search', searchLimiter, searchRoutes);
-app.use('/', searchLimiter, sphinxRoutes);
 app.use('/works', relationalLimiter, worksRoutes);
 app.use('/persons', relationalLimiter, personsRoutes);
-app.use('/author', relationalLimiter, personsRoutes);
-app.use('/authors', relationalLimiter, personsRoutes);
-app.use('/organizations', relationalLimiter, organizationsRoutes);
+app.use('/institutions', relationalLimiter, organizationsRoutes);
 app.use('/venues', relationalLimiter, venuesRoutes);
 app.use('/metrics', metricsLimiter, metricsRoutes);
+app.use('/metrics', metricsLimiter, sphinxRoutes);
 app.use('/dashboard', metricsLimiter, dashboardRoutes);
 app.use('/', citationsRoutes);
 app.use('/', collaborationsRoutes);
+app.use('/signatures', relationalLimiter, signaturesRoutes);
+app.use('/subjects', relationalLimiter, subjectsRoutes);
 
 app.use('/courses', coursesRoutes);
 app.use('/instructors', instructorsRoutes);
-app.use('/bibliography', bibliographyRoutes);
+app.use('/bibliographies', bibliographyRoutes);
 
 app.use('*', notFoundHandler);
 

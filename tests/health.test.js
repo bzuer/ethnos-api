@@ -26,10 +26,10 @@ describe('Health Endpoints', () => {
     });
   });
 
-  describe('GET /health/ready', () => {
+  describe('GET /health/readiness', () => {
     it('should return readiness status', async () => {
       const res = await withAccessKey(request()
-        .get('/health/ready'))
+        .get('/health/readiness'))
         .expect(200)
         .expect('Content-Type', /json/);
 
@@ -40,10 +40,10 @@ describe('Health Endpoints', () => {
     });
   });
 
-  describe('GET /health/live', () => {
+  describe('GET /health/liveness', () => {
     it('should return liveness status', async () => {
       const res = await request()
-        .get('/health/live')
+        .get('/health/liveness')
         .expect(200)
         .expect('Content-Type', /json/);
 

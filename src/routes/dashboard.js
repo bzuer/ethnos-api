@@ -7,6 +7,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { query, validationResult } = require('express-validator');
 const sphinxMonitoring = require('../services/sphinxMonitoring.service');
 const sphinxHealthCheck = require('../services/sphinxHealthCheck.service');
 const autocompleteService = require('../services/autocomplete.service');
@@ -20,6 +21,34 @@ const {
 } = require('../dto/dashboard.dto');
 
 router.use(requireInternalAccessKey);
+
+const validatePerformanceParams = [
+  query('hours')
+    .optional()
+    .isInt({ min: 1, max: 168 })
+    .withMessage('Hours must be between 1 and 168')
+    .toInt()
+];
+
+const validateTrendParams = [
+  query('days')
+    .optional()
+    .isInt({ min: 1, max: 365 })
+    .withMessage('Days must be between 1 and 365')
+    .toInt()
+];
+
+const handleValidation = (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.fail('Validation failed', {
+      statusCode: 400,
+      code: ERROR_CODES.VALIDATION,
+      errors: errors.array()
+    });
+  }
+  return null;
+};
 
 /**
  * @swagger
@@ -126,10 +155,15 @@ router.get('/overview', async (req, res) => {
  *       200:
  *         description: Performance metrics for visualization
  */
-router.get('/performance', async (req, res) => {
+router.get('/performance', validatePerformanceParams, async (req, res) => {
     try {
+        const validationError = handleValidation(req, res);
+        if (validationError) {
+            return validationError;
+        }
+
         const t0 = Date.now();
-        const hours = Math.min(parseInt(req.query.hours) || 24, 168);
+        const hours = Math.min(req.query.hours || 24, 168);
         
         const detailedMetrics = sphinxMonitoring.getDetailedMetrics();
         const recentQueries = detailedMetrics.recent_queries || [];
@@ -175,10 +209,15 @@ router.get('/performance', async (req, res) => {
  *       200:
  *         description: Search trends analysis
  */
-router.get('/search-trends', async (req, res) => {
+router.get('/search-trends', validateTrendParams, async (req, res) => {
     try {
+        const validationError = handleValidation(req, res);
+        if (validationError) {
+            return validationError;
+        }
+
         const t0 = Date.now();
-        const days = parseInt(req.query.days) || 7;
+        const days = req.query.days || 7;
         
         const [searchAnalytics, popularTerms] = await Promise.all([
             autocompleteService.getSearchAnalytics(days),

@@ -2,6 +2,7 @@ const { validationResult } = require('express-validator');
 const citationsService = require('../services/citations.service');
 const { logger } = require('../middleware/errorHandler');
 const { ERROR_CODES } = require('../utils/responseBuilder');
+const { normalizePagination } = require('../utils/pagination');
 
 class CitationsController {
   
@@ -18,9 +19,10 @@ class CitationsController {
       }
 
       const workId = req.params.id;
+      const pagination = normalizePagination(req.query);
       const filters = {
-        page: req.query.page,
-        limit: req.query.limit,
+        page: pagination.page,
+        limit: pagination.limit,
         type: req.query.type
       };
 
@@ -44,9 +46,9 @@ class CitationsController {
         filters: result.filters
       };
 
-      const { pagination, ...data } = result;
+      const { pagination: resultPagination, ...data } = result;
       return res.success(data, {
-        pagination,
+        pagination: resultPagination,
         meta
       });
     } catch (error) {
@@ -69,9 +71,10 @@ class CitationsController {
       }
 
       const workId = req.params.id;
+      const pagination = normalizePagination(req.query);
       const filters = {
-        page: req.query.page,
-        limit: req.query.limit
+        page: pagination.page,
+        limit: pagination.limit
       };
 
       const startTime = Date.now();
@@ -93,9 +96,9 @@ class CitationsController {
         source: 'references_analysis'
       };
 
-      const { pagination, ...data } = result;
+      const { pagination: resultPagination, ...data } = result;
       return res.success(data, {
-        pagination,
+        pagination: resultPagination,
         meta
       });
     } catch (error) {

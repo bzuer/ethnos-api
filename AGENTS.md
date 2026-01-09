@@ -38,7 +38,7 @@ Operational directive: keep absolute cleanliness, technical clarity, hierarchy, 
 - DTOs per domain (e.g., `work.dto.js`, `person.dto.js`, `organization.dto.js`, `venue.dto.js`).
 - Errors: `res.fail(...)` and `res.error(err, ...)` with `ERROR_CODES`.
 - Raw SQL via `sequelize.query`.
-- Schema source of truth: `database/data_db.schema.sql`.
+- Schema source of truth: `database/schema.sql`.
 
 ## Documentation (OpenAPI)
 - UI: `/docs` (Swagger UI) sourced from `/docs.json`.
@@ -72,8 +72,8 @@ Operational directive: keep absolute cleanliness, technical clarity, hierarchy, 
 - Runtime: `/var/lib/ethnos-api/sphinx`, logs: `/var/log/ethnos-api`, PID: `/var/run/ethnos-api/sphinx.pid`.
 
 ## Repository Hygiene
-- Ignore/clean: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql`, `node_modules/`.
-- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `models/`, `ssl/`.
+- Ignore/clean: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql` (except `database/schema.sql`), `node_modules/`.
+- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `models/`, `ssl/`, `database/`.
 - Remove stale or out-of-scope content.
 - Repo logs must be cleared at the start of `deploy` and `restart`.
 - `runtime/` must not contain Sphinx indexes (use only `/var/lib/ethnos-api/sphinx`).
@@ -94,9 +94,15 @@ Operational directive: keep absolute cleanliness, technical clarity, hierarchy, 
 - Do not expose keys or sensitive data in responses, logs, or error payloads.
 
 ## Endpoints State
-- Documented total: 57 operations in `docs/swagger.json`.
+- Documented total: 78 operations in `docs/swagger.json`.
 - Disabled endpoints: `/signatures`, `/subjects` (root).
 - Nested endpoints remain active.
+## Route Standards (Current)
+- Use plural collections: `/bibliographies`, `/institutions`.
+- Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
+- Works listing: `/works/showcase`.
+- Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
+- Sphinx endpoints: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
 
 ## Tests
 - Framework: Jest + Supertest.

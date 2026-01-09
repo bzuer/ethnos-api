@@ -2,7 +2,6 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const personsService = require('./persons.service');
 const worksService = require('./works.service');
-const organizationsService = require('./organizations.service');
 const sphinxService = require('./sphinx.service');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 
@@ -186,10 +185,10 @@ class SearchService {
             total: persons.pagination.total,
             results: persons.data.slice(0, limit)
           },
-          organizations: {
+          institutions: {
             total: 0,
             results: [],
-            note: "Organizations search disabled for performance optimization"
+            note: "Institutions search disabled for performance optimization"
           }
         },
         meta: {
@@ -198,7 +197,7 @@ class SearchService {
           sources: {
             works: works.performance || null,
             persons: persons.performance || null,
-            organizations: null
+            institutions: null
           }
         }
       };

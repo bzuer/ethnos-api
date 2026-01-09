@@ -3,7 +3,7 @@
   "info": {
     "title": "Ethnos.app Academic Bibliography API",
     "version": "2.0.0",
-    "description": "\nREST API for academic bibliography: search, works, persons, organizations, venues, courses, citations, collaborations and health.\n\nHighlights\n- Public endpoints; selected admin/metrics routes require 'x-access-key'.\n- Standard response envelope: { status, data, pagination?, meta? }.\n- Pagination supports page/limit and offset/limit.\n- Identifiers: DOI, ORCID, ROR, ISSN.\n\nNotes\n- Rate limiting is configurable via environment and enabled by default.\n- Performance and dataset size vary by deployment.\n        ",
+    "description": "\nREST API for academic bibliography: search, works, persons, institutions, venues, courses, citations, collaborations and health.\n\nHighlights\n- Public endpoints; selected admin/metrics routes require 'x-access-key'.\n- Standard response envelope: { status, data, pagination?, meta? }.\n- Pagination supports page/limit and offset/limit.\n- Identifiers: DOI, ORCID, ROR, ISSN.\n\nNotes\n- Rate limiting is configurable via environment and enabled by default.\n- Performance and dataset size vary by deployment.\n        ",
     "contact": {
       "name": "Bruno Cesar Cunha Cruz, PhD Student"
     },
@@ -34,7 +34,7 @@
         "type": "apiKey",
         "in": "header",
         "name": "x-access-key",
-        "description": "Internal access key required for protected endpoints (security, dashboard, health except /live)"
+        "description": "Internal access key required for protected endpoints (security, dashboard, health except /liveness)"
       }
     },
     "schemas": {
@@ -3824,9 +3824,170 @@
     {
       "name": "Signatures",
       "description": "Name signatures and author identification"
+    },
+    {
+      "name": "Subjects",
+      "description": "Subject taxonomy and subject-linked listings"
     }
   ],
   "paths": {
+    "/bibliographies": {
+      "get": {
+        "summary": "List bibliography entries",
+        "tags": [
+          "Bibliography"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "course_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "work_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "instructor_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reading_type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "week_number",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "light",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/bibliographies/analyses": {
+      "get": {
+        "summary": "Bibliography analysis",
+        "tags": [
+          "Bibliography"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reading_type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/bibliographies/statistics": {
+      "get": {
+        "summary": "Bibliography statistics",
+        "tags": [
+          "Bibliography"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
     "/works/{id}/citations": {
       "get": {
         "summary": "Get works that cite this work",
@@ -3866,6 +4027,9 @@
           },
           {
             "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           }
         ],
         "responses": {
@@ -3904,6 +4068,9 @@
           },
           {
             "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           }
         ],
         "responses": {
@@ -4062,6 +4229,9 @@
           },
           {
             "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           }
         ],
         "responses": {
@@ -4307,7 +4477,13 @@
             }
           },
           {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
             "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           }
         ],
         "responses": {
@@ -4385,6 +4561,229 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/courses": {
+      "get": {
+        "summary": "List courses",
+        "tags": [
+          "Courses"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by course name or code"
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter by program ID"
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter by course year"
+          },
+          {
+            "in": "query",
+            "name": "semester",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by semester"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/courses/statistics": {
+      "get": {
+        "summary": "Course statistics",
+        "tags": [
+          "Courses"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/courses/{id}": {
+      "get": {
+        "summary": "Get course by ID",
+        "tags": [
+          "Courses"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/courses/{id}/instructors": {
+      "get": {
+        "summary": "List course instructors",
+        "tags": [
+          "Courses"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by instructor role"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/courses/{id}/bibliographies": {
+      "get": {
+        "summary": "List course bibliography entries",
+        "tags": [
+          "Courses"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "reading_type",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by reading type"
+          },
+          {
+            "in": "query",
+            "name": "week_number",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter by week number"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/courses/{id}/subjects": {
+      "get": {
+        "summary": "List course subjects",
+        "tags": [
+          "Courses"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "vocabulary",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by vocabulary"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
           }
         }
       }
@@ -4500,29 +4899,7 @@
         }
       }
     },
-    "/health": {
-      "get": {
-        "summary": "Get comprehensive health status",
-        "tags": [
-          "Health"
-        ],
-        "description": "Returns detailed health information including database, cache, and system metrics",
-        "security": [
-          {
-            "XAccessKey": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "503": {
-            "$ref": "#/components/responses/Success"
-          }
-        }
-      }
-    },
-    "/health/ready": {
+    "/health/readiness": {
       "get": {
         "summary": "Kubernetes readiness probe",
         "description": "Check if the service is ready to accept requests. Validates database connectivity and essential dependencies.",
@@ -4544,7 +4921,7 @@
         }
       }
     },
-    "/health/live": {
+    "/health/liveness": {
       "get": {
         "summary": "Kubernetes liveness probe",
         "description": "Basic health check to verify the service is running and responsive. Always returns success if the service is operational.",
@@ -4577,71 +4954,290 @@
         }
       }
     },
-    "/metrics/dashboard": {
+    "/instructors": {
       "get": {
-        "summary": "Dashboard overview with key statistics",
+        "summary": "List instructors",
         "tags": [
-          "Metrics"
+          "Instructors"
         ],
-        "description": "Get comprehensive overview including total counts and recent trends",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by instructor role"
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter by program ID"
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter from year"
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Filter to year"
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by instructor name"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Dashboard statistics",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "success"
-                    },
-                    "totals": {
-                      "type": "object",
-                      "properties": {
-                        "total_works": {
-                          "type": "integer",
-                          "example": 650645
-                        },
-                        "total_persons": {
-                          "type": "integer",
-                          "example": 385670
-                        },
-                        "total_organizations": {
-                          "type": "integer",
-                          "example": 235833
-                        }
-                      }
-                    },
-                    "recent_trends": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "year": {
-                            "type": "integer"
-                          },
-                          "total_publications": {
-                            "type": "integer"
-                          },
-                          "unique_organizations": {
-                            "type": "integer"
-                          }
-                        }
-                      }
-                    },
-                    "meta": {
-                      "type": "object",
-                      "properties": {
-                        "query_time_ms": {
-                          "type": "integer"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/instructors/statistics": {
+      "get": {
+        "summary": "Instructors statistics",
+        "tags": [
+          "Instructors"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/instructors/{id}": {
+      "get": {
+        "summary": "Get instructor by ID",
+        "tags": [
+          "Instructors"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
             }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/instructors/{id}/courses": {
+      "get": {
+        "summary": "List courses taught by an instructor",
+        "tags": [
+          "Instructors"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "semester",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/instructors/{id}/statistics": {
+      "get": {
+        "summary": "Instructor statistics",
+        "tags": [
+          "Instructors"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/instructors/{id}/subjects": {
+      "get": {
+        "summary": "List instructor subject expertise",
+        "tags": [
+          "Instructors"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "vocabulary",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/instructors/{id}/bibliographies": {
+      "get": {
+        "summary": "List bibliography entries linked to an instructor",
+        "tags": [
+          "Instructors"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "reading_type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
           }
         }
       }
@@ -4653,6 +5249,11 @@
           "Metrics"
         ],
         "description": "Get yearly statistics from the v_annual_stats view",
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "parameters": [
           {
             "name": "year_from",
@@ -4673,7 +5274,13 @@
             }
           },
           {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
             "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           }
         ],
         "responses": {
@@ -4728,18 +5335,20 @@
         "tags": [
           "Metrics"
         ],
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "parameters": [
           {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Number of venues to return (max 100)",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            }
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           }
         ],
         "responses": {
@@ -4784,18 +5393,20 @@
         "tags": [
           "Metrics"
         ],
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "parameters": [
           {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Number of institutions to return (max 100)",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            }
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           },
           {
             "name": "country_code",
@@ -4852,18 +5463,20 @@
         "tags": [
           "Metrics"
         ],
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "parameters": [
           {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Number of persons to return (max 100)",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            }
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           },
           {
             "name": "min_works",
@@ -4919,18 +5532,20 @@
         "tags": [
           "Metrics"
         ],
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "parameters": [
           {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Number of collaborations to return (max 100)",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            }
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           },
           {
             "name": "min_collaborations",
@@ -4986,6 +5601,11 @@
           "Metrics"
         ],
         "description": "Comprehensive performance and health metrics for the Sphinx search engine",
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Sphinx performance metrics",
@@ -5036,6 +5656,11 @@
           "Metrics"
         ],
         "description": "Detailed Sphinx metrics including recent query performance and distribution analysis",
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Detailed Sphinx metrics",
@@ -5073,12 +5698,12 @@
         }
       }
     },
-    "/organizations": {
+    "/institutions": {
       "get": {
-        "summary": "Get list of academic institutions and organizations",
-        "description": "Retrieve a paginated list of academic institutions including universities, research institutes, companies, and government organizations. Supports filtering by location, type, and name.",
+        "summary": "Get list of academic institutions",
+        "description": "Retrieve a paginated list of academic institutions including universities, research institutes, companies, and government entities. Supports filtering by location, type, and name.",
         "tags": [
-          "Organizations"
+          "Institutions"
         ],
         "parameters": [
           {
@@ -5104,13 +5729,23 @@
           },
           {
             "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of items to skip (alternative to page parameter)"
+          },
+          {
+            "in": "query",
             "name": "search",
             "schema": {
               "type": "string",
               "minLength": 2,
               "maxLength": 255
             },
-            "description": "Search term to filter organizations by name",
+            "description": "Search term to filter institutions by name",
             "example": "Stanford University"
           },
           {
@@ -5163,12 +5798,12 @@
         }
       }
     },
-    "/organizations/{id}": {
+    "/institutions/{id}": {
       "get": {
         "summary": "Get specific organization by ID",
         "description": "Retrieve detailed information about a specific academic institution or organization by their unique identifier.",
         "tags": [
-          "Organizations"
+          "Institutions"
         ],
         "parameters": [
           {
@@ -5202,12 +5837,12 @@
         }
       }
     },
-    "/organizations/{id}/works": {
+    "/institutions/{id}/works": {
       "get": {
         "summary": "Get works published by organization members",
         "description": "Retrieve a paginated list of academic works (publications, papers, articles) authored by members affiliated with the specified organization. Supports filtering by work type, publication year, and language.",
         "tags": [
-          "Organizations"
+          "Institutions"
         ],
         "parameters": [
           {
@@ -5478,6 +6113,16 @@
           },
           {
             "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of items to skip (alternative to page parameter)"
+          },
+          {
+            "in": "query",
             "name": "search",
             "schema": {
               "type": "string",
@@ -5722,6 +6367,16 @@
               "default": 20
             },
             "description": "Results per page"
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of items to skip (alternative to page parameter)"
           }
         ],
         "responses": {
@@ -5835,6 +6490,16 @@
               "default": 20
             },
             "description": "Results per page"
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of items to skip (alternative to page parameter)"
           },
           {
             "in": "query",
@@ -6046,6 +6711,9 @@
             "$ref": "#/components/parameters/limitParam"
           },
           {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
             "name": "include_facets",
             "in": "query",
             "description": "When set, includes Sphinx-computed facets (requires Sphinx)",
@@ -6071,7 +6739,7 @@
         "tags": [
           "Search"
         ],
-        "description": "Perform simultaneous search across works and persons (organizations search disabled for performance)",
+        "description": "Perform simultaneous search across works and persons (institutions search disabled for performance)",
         "parameters": [
           {
             "name": "q",
@@ -6126,7 +6794,7 @@
                         }
                       }
                     },
-                    "organizations": {
+                    "institutions": {
                       "type": "object",
                       "properties": {
                         "total": {
@@ -6181,6 +6849,9 @@
           },
           {
             "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
           }
         ],
         "responses": {
@@ -6313,6 +6984,19 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/search/health": {
+      "get": {
+        "summary": "Search engine health",
+        "tags": [
+          "Search"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
           }
         }
       }
@@ -6580,137 +7264,6 @@
           },
           "404": {
             "description": "IP not found in blocked list"
-          }
-        }
-      }
-    },
-    "/signatures": {
-      "get": {
-        "summary": "Get list of name signatures",
-        "description": "Retrieve a paginated list of author name signatures with filtering and sorting options",
-        "tags": [
-          "Signatures"
-        ],
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            },
-            "description": "Number of results per page (max 100)"
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0
-            },
-            "description": "Number of items to skip"
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 100
-            },
-            "description": "Search term to filter signatures",
-            "example": "Smith"
-          },
-          {
-            "in": "query",
-            "name": "sortBy",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "signature",
-                "created_at",
-                "id"
-              ]
-            },
-            "description": "Field to sort by",
-            "example": "signature"
-          },
-          {
-            "in": "query",
-            "name": "sortOrder",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "ASC",
-                "DESC"
-              ]
-            },
-            "description": "Sort order",
-            "example": "ASC"
-          },
-          {
-            "in": "query",
-            "name": "light",
-            "schema": {
-              "type": "boolean",
-              "default": false
-            },
-            "description": "If true, omits expensive counts to speed up listing"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of signatures retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "success"
-                    },
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Signature"
-                      }
-                    },
-                    "pagination": {
-                      "type": "object",
-                      "properties": {
-                        "limit": {
-                          "type": "integer",
-                          "example": 20
-                        },
-                        "offset": {
-                          "type": "integer",
-                          "example": 0
-                        },
-                        "total": {
-                          "type": "integer",
-                          "example": 378134
-                        },
-                        "hasNext": {
-                          "type": "boolean",
-                          "example": true
-                        },
-                        "hasPrev": {
-                          "type": "boolean",
-                          "example": false
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -7174,13 +7727,18 @@
         }
       }
     },
-    "/search/sphinx": {
+    "/metrics/sphinx/search": {
       "get": {
         "tags": [
-          "Search (Sphinx POC)"
+          "Metrics"
         ],
         "summary": "Search works using Sphinx Search Engine (POC)",
         "description": "Full-text search through academic works using Sphinx with advanced relevance ranking and faceted filtering",
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "parameters": [
           {
             "in": "query",
@@ -7203,6 +7761,16 @@
               "default": 20
             },
             "description": "Number of results to return"
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            },
+            "description": "Page number for pagination"
           },
           {
             "in": "query",
@@ -7414,13 +7982,18 @@
         }
       }
     },
-    "/search/sphinx/status": {
+    "/metrics/sphinx/status": {
       "get": {
         "tags": [
-          "Search (Sphinx POC)"
+          "Metrics"
         ],
         "summary": "Get Sphinx Search engine status",
         "description": "Retrieve status and performance metrics from Sphinx Search engine",
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Sphinx status information",
@@ -7478,13 +8051,18 @@
         }
       }
     },
-    "/search/sphinx/compare": {
+    "/metrics/sphinx/compare": {
       "get": {
         "tags": [
-          "Search (Sphinx POC)"
+          "Metrics"
         ],
         "summary": "Compare Sphinx vs MariaDB search performance",
         "description": "Run the same query on both Sphinx and MariaDB FULLTEXT to compare performance",
+        "security": [
+          {
+            "XAccessKey": []
+          }
+        ],
         "parameters": [
           {
             "in": "query",
@@ -7549,6 +8127,230 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/subjects/statistics": {
+      "get": {
+        "summary": "Subject statistics",
+        "tags": [
+          "Subjects"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/subjects/{id}": {
+      "get": {
+        "summary": "Get subject by ID",
+        "tags": [
+          "Subjects"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/subjects/{id}/children": {
+      "get": {
+        "summary": "List subject children",
+        "tags": [
+          "Subjects"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/subjects/{id}/hierarchy": {
+      "get": {
+        "summary": "Get subject hierarchy",
+        "tags": [
+          "Subjects"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/subjects/{id}/works": {
+      "get": {
+        "summary": "List works for a subject",
+        "tags": [
+          "Subjects"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "min_relevance",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "document_type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "language",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          }
+        }
+      }
+    },
+    "/subjects/{id}/courses": {
+      "get": {
+        "summary": "List courses for a subject",
+        "tags": [
+          "Subjects"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/pageParam"
+          },
+          {
+            "$ref": "#/components/parameters/limitParam"
+          },
+          {
+            "$ref": "#/components/parameters/offsetParam"
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reading_type",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
           }
         }
       }
@@ -7942,86 +8744,6 @@
         }
       }
     },
-    "/venues/{id}/publications": {
-      "get": {
-        "summary": "Get publications in a venue (alias for works)",
-        "description": "Alternative endpoint for retrieving works published in a specific venue",
-        "tags": [
-          "Venues"
-        ],
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "description": "Venue ID",
-            "example": 1
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            },
-            "description": "Number of results per page"
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0
-            },
-            "description": "Number of items to skip"
-          },
-          {
-            "in": "query",
-            "name": "year",
-            "schema": {
-              "type": "integer",
-              "minimum": 1900,
-              "maximum": 2100
-            },
-            "description": "Filter by publication year"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Publications in venue",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "success"
-                    },
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Work"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          }
-        }
-      }
-    },
     "/works": {
       "get": {
         "summary": "Get list of academic works",
@@ -8050,6 +8772,16 @@
               "default": 20
             },
             "description": "Number of results per page (max 20)"
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of items to skip (alternative to page parameter)"
           },
           {
             "in": "query",
@@ -8120,9 +8852,9 @@
         }
       }
     },
-    "/works/vitrine": {
+    "/works/showcase": {
       "get": {
-        "summary": "Get works list optimized for browsing (vitrine)",
+        "summary": "Get works list optimized for browsing (showcase)",
         "description": "High-performance endpoint for browsing works using pre-compiled summary table. Optimized for speed with minimal JOINs.",
         "tags": [
           "Works"
@@ -8148,6 +8880,16 @@
               "default": 20
             },
             "description": "Number of results per page (max 100)"
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of items to skip (alternative to page parameter)"
           },
           {
             "in": "query",
@@ -8194,7 +8936,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Works vitrine retrieved successfully",
+            "description": "Works showcase retrieved successfully",
             "content": {
               "application/json": {
                 "schema": {
@@ -8282,7 +9024,7 @@
         }
       }
     },
-    "/works/{id}/bibliography": {
+    "/works/{id}/bibliographies": {
       "get": {
         "summary": "Get work bibliography usage",
         "description": "Retrieve courses where this work is used in bibliography, with instructor information",

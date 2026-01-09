@@ -22,6 +22,7 @@ backup/
 
 # Database dumps
 database/*.sql
+!database/schema.sql
 !database/README.md
 
 # Node-related

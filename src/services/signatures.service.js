@@ -3,6 +3,8 @@ const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const sphinxService = require('./sphinx.service');
+const { formatSignatureListItem, formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
+const { formatPersonListItem } = require('../dto/person.dto');
 
 class SignaturesService {
   async getAllSignatures(options = {}) {
@@ -71,7 +73,7 @@ class SignaturesService {
       `, { replacements: [...ids, ...ids], type: sequelize.QueryTypes.SELECT });
 
       const result = {
-        signatures: Array.isArray(rows) ? rows : [],
+        signatures: Array.isArray(rows) ? rows.map(formatSignatureListItem) : [],
         pagination: {
           total,
           limit: parseInt(limit),
@@ -132,7 +134,7 @@ class SignaturesService {
     ]);
 
     return {
-      signatures: Array.isArray(signatures) ? signatures : [signatures],
+      signatures: Array.isArray(signatures) ? signatures.map(formatSignatureListItem) : [formatSignatureListItem(signatures)],
       pagination: {
         total: countResult[0].total,
         limit: parseInt(limit),
@@ -210,7 +212,7 @@ class SignaturesService {
     });
 
     const result = {
-      signatures: Array.isArray(signatures) ? signatures : [signatures],
+      signatures: Array.isArray(signatures) ? signatures.map(formatSignatureListItem) : [formatSignatureListItem(signatures)],
       pagination: {
         total: countResult.total,
         limit: parseInt(limit),
@@ -256,10 +258,11 @@ class SignaturesService {
         return null;
       }
 
-      await cacheService.set(cacheKey, signature, 3600);
+      const formatted = formatSignatureDetails(signature);
+      await cacheService.set(cacheKey, formatted, 3600);
       logger.info(`Retrieved signature ${id}`);
       
-      return signature;
+      return formatted;
 
     } catch (error) {
       logger.error(`Error fetching signature ${id}:`, error);
@@ -325,7 +328,7 @@ class SignaturesService {
       }
 
       const result = {
-        persons,
+        persons: persons.map(formatPersonListItem),
         pagination: {
           total: countResult.total,
           limit: parseInt(limit),
@@ -474,8 +477,7 @@ class SignaturesService {
       const total = countResult[0].total;
       const totalPages = Math.ceil(total / limit);
 
-      const result = {
-        data: works.map(work => ({
+      const items = works.map(work => ({
           id: work.id,
           title: work.title,
           subtitle: work.subtitle,
@@ -503,7 +505,10 @@ class SignaturesService {
             author_string: work.author_string
           },
           created_at: work.created_at
-        })),
+        }));
+
+      const result = {
+        data: items.map(formatSignatureWork),
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),

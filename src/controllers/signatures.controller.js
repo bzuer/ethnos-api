@@ -1,6 +1,7 @@
 const signaturesService = require('../services/signatures.service');
 const { validationResult } = require('express-validator');
 const { logger } = require('../middleware/errorHandler');
+const { ERROR_CODES } = require('../utils/responseBuilder');
 
 class SignaturesController {
   
@@ -8,12 +9,10 @@ class SignaturesController {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return res.status(400).json({ 
-          status: 'error',
-          error: 'Validation failed',
-          message: 'Validation failed', 
-          details: errors.array(),
-          errors: errors.array() 
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
         });
       }
 
@@ -44,14 +43,12 @@ class SignaturesController {
         responseTime: `${Date.now() - req.startTime}ms`
       });
 
-      res.json({
-        status: 'success',
-        data: result.signatures,
+      return res.success(result.signatures, {
         pagination: result.pagination
       });
     } catch (error) {
       logger.error('Error in getAllSignatures:', error);
-      next(error);
+      return res.error(error, { code: ERROR_CODES.INTERNAL });
     }
   }
 
@@ -60,28 +57,28 @@ class SignaturesController {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return res.status(400).json({ 
-          status: 'error',
-          message: 'Validation failed', 
-          errors: errors.array() 
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
         });
       }
 
       const { id } = req.params;
       
       if (!id || isNaN(parseInt(id))) {
-        return res.status(400).json({ 
-          status: 'error',
-          message: 'Invalid signature ID' 
+        return res.fail('Invalid signature ID', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION
         });
       }
 
       const signature = await signaturesService.getSignatureById(parseInt(id));
       
       if (!signature) {
-        return res.status(404).json({ 
-          status: 'error',
-          message: 'Signature not found' 
+        return res.fail('Signature not found', {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND
         });
       }
 
@@ -91,13 +88,10 @@ class SignaturesController {
         personsCount: signature.persons_count
       });
 
-      res.json({
-        status: 'success',
-        ...signature
-      });
+      return res.success(signature);
     } catch (error) {
       logger.error(`Error in getSignatureById for ID ${req.params.id}:`, error);
-      next(error);
+      return res.error(error, { code: ERROR_CODES.INTERNAL });
     }
   }
 
@@ -106,10 +100,10 @@ class SignaturesController {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return res.status(400).json({ 
-          status: 'error',
-          message: 'Validation failed', 
-          errors: errors.array() 
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
         });
       }
 
@@ -117,9 +111,9 @@ class SignaturesController {
       const { limit = 20, offset = 0 } = req.query;
       
       if (!id || isNaN(parseInt(id))) {
-        return res.status(400).json({ 
-          status: 'error',
-          message: 'Invalid signature ID' 
+        return res.fail('Invalid signature ID', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION
         });
       }
 
@@ -131,9 +125,9 @@ class SignaturesController {
       const result = await signaturesService.getSignaturePersons(parseInt(id), options);
       
       if (!result) {
-        return res.status(404).json({ 
-          status: 'error',
-          message: 'Signature not found' 
+        return res.fail('Signature not found', {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND
         });
       }
 
@@ -143,14 +137,12 @@ class SignaturesController {
         total: result.pagination.total
       });
 
-      res.json({
-        status: 'success',
-        persons: result.persons,
+      return res.success(result.persons, {
         pagination: result.pagination
       });
     } catch (error) {
       logger.error(`Error in getSignaturePersons for signature ${req.params.id}:`, error);
-      next(error);
+      return res.error(error, { code: ERROR_CODES.INTERNAL });
     }
   }
 
@@ -164,14 +156,10 @@ class SignaturesController {
         totalSignatures: stats.total_signatures
       });
 
-      res.json({
-        status: 'success',
-        data: stats,
-        ...stats
-      });
+      return res.success(stats);
     } catch (error) {
       logger.error('Error in getSignatureStatistics:', error);
-      next(error);
+      return res.error(error, { code: ERROR_CODES.INTERNAL });
     }
   }
 
@@ -180,9 +168,9 @@ class SignaturesController {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Validation failed',
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
           errors: errors.array()
         });
       }
@@ -193,21 +181,20 @@ class SignaturesController {
       const result = await signaturesService.getSignatureWorks(id, { page, limit });
       
       if (!result) {
-        return res.status(404).json({
-          status: 'error',
-          message: `Signature with ID ${id} not found`
+        return res.fail(`Signature with ID ${id} not found`, {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND
         });
       }
 
       logger.info(`Signature ${id} works retrieved: ${result.data.length} items`);
       
-      res.json({
-        status: 'success',
-        ...result
+      return res.success(result.data || result, {
+        pagination: result.pagination
       });
     } catch (error) {
       logger.error(`Error retrieving works for signature ${req.params.id}:`, error);
-      next(error);
+      return res.error(error, { code: ERROR_CODES.INTERNAL });
     }
   }
 
@@ -215,19 +202,19 @@ class SignaturesController {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return res.status(400).json({ 
-          status: 'error',
-          message: 'Validation failed', 
-          errors: errors.array() 
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
         });
       }
 
       const { q, exact = false, limit = 20, offset = 0 } = req.query;
       
       if (!q || q.trim().length === 0) {
-        return res.status(400).json({ 
-          status: 'error',
-          message: 'Search query (q) parameter is required' 
+        return res.fail('Search query (q) parameter is required', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION
         });
       }
 
@@ -246,16 +233,13 @@ class SignaturesController {
         total: result.pagination.total
       });
 
-      res.json({
-        status: 'success',
-        data: result.signatures,
+      return res.success(result.signatures, {
         pagination: result.pagination,
-        searchTerm: q.trim(),
-        exact: options.exact
+        meta: { searchTerm: q.trim(), exact: options.exact }
       });
     } catch (error) {
       logger.error(`Error in searchSignatures for query "${req.query.q}":`, error);
-      next(error);
+      return res.error(error, { code: ERROR_CODES.INTERNAL });
     }
   }
 }

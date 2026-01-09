@@ -1,20 +1,20 @@
 const coursesService = require('../services/courses.service');
 const { ERROR_CODES } = require('../utils/responseBuilder');
+const { normalizePagination } = require('../utils/pagination');
 
 class CoursesController {
 
   
   async getCourses(req, res) {
     try {
-      const limit = Math.min(Math.max(1, parseInt(req.query.limit) || 20), 100);
-      const offset = Math.max(0, parseInt(req.query.offset) || 0);
+      const pagination = normalizePagination(req.query);
       const filters = {
         program_id: req.query.program_id,
         year: req.query.year,
         semester: req.query.semester,
         search: req.query.search,
-        limit,
-        offset
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await coursesService.getCourses(filters);
@@ -95,10 +95,11 @@ class CoursesController {
   
   async getCourseInstructors(req, res) {
     try {
+      const pagination = normalizePagination(req.query);
       const filters = {
         role: req.query.role,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await coursesService.getCourseInstructors(req.params.id, filters);
@@ -122,11 +123,12 @@ class CoursesController {
   
   async getCourseBibliography(req, res) {
     try {
+      const pagination = normalizePagination(req.query);
       const filters = {
         reading_type: req.query.reading_type,
         week_number: req.query.week_number,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await coursesService.getCourseBibliography(req.params.id, filters);
@@ -151,10 +153,11 @@ class CoursesController {
   
   async getCourseSubjects(req, res) {
     try {
+      const pagination = normalizePagination(req.query);
       const filters = {
         vocabulary: req.query.vocabulary,
-        limit: req.query.limit || 50,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await coursesService.getCourseSubjects(req.params.id, filters);

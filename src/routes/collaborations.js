@@ -26,6 +26,11 @@ const validateCollaborationFilters = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer'),
     
   query('min_collaborations')
     .optional()
@@ -39,10 +44,20 @@ const validateCollaborationFilters = [
 ];
 
 const validateTopCollaborations = [
+  query('page')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Page must be a positive integer'),
+
   query('limit')
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer'),
     
   query('min_collaborations')
     .optional()
@@ -99,6 +114,7 @@ const validateNetworkDepth = [
  *           default: collaboration_count
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: Collaborators retrieved successfully
@@ -260,7 +276,9 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *         schema:
  *           type: integer
  *           example: 2024
+ *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: Top collaborations retrieved successfully

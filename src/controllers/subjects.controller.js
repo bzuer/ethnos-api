@@ -1,23 +1,38 @@
 const subjectsService = require('../services/subjects.service');
 const { handleError } = require('../middleware/errorHandler');
+const { ERROR_CODES } = require('../utils/responseBuilder');
+const { normalizePagination } = require('../utils/pagination');
+const { validationResult } = require('express-validator');
 
 class SubjectsController {
 
   
   async getSubjects(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         vocabulary: req.query.vocabulary,
         parent_id: req.query.parent_id,
         search: req.query.search,
         has_children: req.query.has_children,
-        limit: req.query.limit || 50,
-        offset: req.query.offset || 0,
+        limit: pagination.limit,
+        offset: pagination.offset,
         light: req.query.light
       };
 
       const result = await subjectsService.getSubjects(filters);
-      res.json(result);
+      return res.success(result.subjects || [], {
+        pagination: result.pagination
+      });
     } catch (error) {
       handleError(res, error);
     }
@@ -26,16 +41,25 @@ class SubjectsController {
   
   async getSubjectById(req, res) {
     try {
-      const subject = await subjectsService.getSubjectById(req.params.id);
-      
-      if (!subject) {
-        return res.status(404).json({ 
-          error: 'Subject not found',
-          message: `No subject found with ID ${req.params.id}`
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
         });
       }
 
-      res.json(subject);
+      const subject = await subjectsService.getSubjectById(req.params.id);
+      
+      if (!subject) {
+        return res.fail('Subject not found', {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND
+        });
+      }
+
+      return res.success(subject);
     } catch (error) {
       handleError(res, error);
     }
@@ -44,13 +68,25 @@ class SubjectsController {
   
   async getSubjectChildren(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
-        limit: req.query.limit || 50,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const children = await subjectsService.getSubjectChildren(req.params.id, filters);
-      res.json(children);
+      return res.success(children.data || [], {
+        pagination: children.pagination
+      });
     } catch (error) {
       handleError(res, error);
     }
@@ -59,8 +95,17 @@ class SubjectsController {
   
   async getSubjectHierarchy(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
       const hierarchy = await subjectsService.getSubjectHierarchy(req.params.id);
-      res.json(hierarchy);
+      return res.success(hierarchy);
     } catch (error) {
       handleError(res, error);
     }
@@ -69,18 +114,30 @@ class SubjectsController {
   
   async getSubjectWorks(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         min_relevance: req.query.min_relevance,
         year_from: req.query.year_from,
         year_to: req.query.year_to,
         document_type: req.query.document_type,
         language: req.query.language,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const works = await subjectsService.getSubjectWorks(req.params.id, filters);
-      res.json(works);
+      return res.success(works.data || [], {
+        pagination: works.pagination
+      });
     } catch (error) {
       handleError(res, error);
     }
@@ -89,17 +146,29 @@ class SubjectsController {
   
   async getSubjectCourses(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         year_from: req.query.year_from,
         year_to: req.query.year_to,
         program_id: req.query.program_id,
         reading_type: req.query.reading_type,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const courses = await subjectsService.getSubjectCourses(req.params.id, filters);
-      res.json(courses);
+      return res.success(courses.data || [], {
+        pagination: courses.pagination
+      });
     } catch (error) {
       handleError(res, error);
     }
@@ -108,8 +177,17 @@ class SubjectsController {
   
   async getSubjectsStatistics(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
       const statistics = await subjectsService.getSubjectsStatistics();
-      res.json(statistics);
+      return res.success(statistics);
     } catch (error) {
       handleError(res, error);
     }

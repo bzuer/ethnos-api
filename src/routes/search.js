@@ -2,7 +2,7 @@
  * @swagger
  * tags:
  *   name: Search
- *   description: Full-text search across works and persons (organizations disabled for performance)
+ *   description: Full-text search across works and persons (institutions disabled for performance)
  */
 
 const express = require('express');
@@ -79,6 +79,7 @@ const validateWorksSearch = [
  *           example: 2020
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *       - name: include_facets
  *         in: query
  *         description: When set, includes Sphinx-computed facets (requires Sphinx)
@@ -99,7 +100,7 @@ router.get('/works', validateWorksSearch, enhancedValidationHandler, searchContr
  *   get:
  *     summary: Global search across all entities
  *     tags: [Search]
- *     description: Perform simultaneous search across works and persons (organizations search disabled for performance)
+ *     description: Perform simultaneous search across works and persons (institutions search disabled for performance)
  *     parameters:
  *       - name: q
  *         in: query
@@ -139,7 +140,7 @@ router.get('/works', validateWorksSearch, enhancedValidationHandler, searchContr
  *                       type: integer
  *                     results:
  *                       type: array
- *                 organizations:
+ *                 institutions:
  *                   type: object
  *                   properties:
  *                     total:
@@ -176,6 +177,7 @@ router.get('/global', commonValidations.searchQuery, enhancedValidationHandler, 
  *           example: "John Smith"
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: Person search results
@@ -346,6 +348,16 @@ const advancedSearch = async (req, res, next) => {
 
 router.get('/advanced', commonValidations.searchQuery, enhancedValidationHandler, advancedSearch);
 
+/**
+ * @swagger
+ * /search/health:
+ *   get:
+ *     summary: Search engine health
+ *     tags: [Search]
+ *     responses:
+ *       200:
+ *         $ref: '#/components/responses/Success'
+ */
 router.get('/health', async (req, res, next) => {
   try {
     const healthStatus = sphinxHealthCheck.getHealthStatus();
@@ -360,8 +372,8 @@ router.get('/health', async (req, res, next) => {
       endpoints: {
         basic_search: '/search/works',
         advanced_search: '/search/advanced',
-        sphinx_direct: '/search/sphinx',
-        sphinx_compare: '/search/sphinx/compare'
+        sphinx_direct: '/metrics/sphinx/search',
+        sphinx_compare: '/metrics/sphinx/compare'
       }
     });
   } catch (error) {

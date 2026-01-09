@@ -25,7 +25,7 @@ class WorksService {
     const { page, limit, offset } = pagination;
     const { search, type, year_from, year_to, open_access, language } = filters;
     const effectiveLimit = Math.min(limit, 20);
-    const cacheKey = `works:vitrine:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}`;
+    const cacheKey = `works:showcase:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -49,7 +49,7 @@ class WorksService {
       await cacheService.set(cacheKey, result, 1800);
       return result;
     } catch (error) {
-      throw new Error(`Works vitrine query failed: ${error.message}`);
+      throw new Error(`Works showcase query failed: ${error.message}`);
     }
   }
 
@@ -87,7 +87,7 @@ class WorksService {
     const { type, year_from, year_to, language } = filters;
     const effectiveLimit = Math.min(limit, 100);
     
-    const cacheKey = `works:vitrine:p${page}:l${effectiveLimit}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:lang${language || 'all'}`;
+    const cacheKey = `works:showcase:p${page}:l${effectiveLimit}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:lang${language || 'all'}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -194,7 +194,7 @@ class WorksService {
           query_source: 'sphinx_works_summary',
           performance: {
             engine: 'MariaDB',
-            query_type: 'vitrine_optimized',
+            query_type: 'showcase_optimized',
             primary_query_ms: primaryQueryMs,
             total_rows_examined: works.length,
             elapsed_ms: Date.now() - t0
@@ -206,7 +206,7 @@ class WorksService {
       return result;
 
     } catch (error) {
-      throw new Error(`Works vitrine query failed: ${error.message}`);
+      throw new Error(`Works showcase query failed: ${error.message}`);
     }
   }
 
@@ -426,7 +426,7 @@ class WorksService {
       pagination: createPagination(page, limit, totalItems),
       performance: {
         engine: 'MariaDB',
-        query_type: 'vitrine_enriched',
+        query_type: 'showcase_enriched',
         primary_query_ms: primaryQueryMs,
         publications_query_ms: publicationsQueryMs,
         authors_query_ms: authorsQueryMs,
@@ -1005,7 +1005,7 @@ class WorksService {
         first_author: authors[0] || null,
         authors_preview: authors.slice(0, 3),
         added_to_database: work.created_at,
-        data_source: 'vitrine',
+        data_source: 'showcase',
         search_engine: 'MariaDB'
       };
     });
@@ -1128,7 +1128,7 @@ class WorksService {
           first_author: authors[0] || null,
           authors_preview: authors.slice(0, 3),
           added_to_database: work.created_at,
-          data_source: 'vitrine',
+          data_source: 'showcase',
           search_engine: 'Sphinx'
         };
       });

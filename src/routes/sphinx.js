@@ -5,15 +5,21 @@ const { validationResult, query } = require('express-validator');
 const { performanceMonitoring } = require('../middleware/monitoring');
 const { normalizePagination, createPagination } = require('../utils/pagination');
 const { logger } = require('../middleware/errorHandler');
+const { ERROR_CODES } = require('../utils/responseBuilder');
+const { requireInternalAccessKey } = require('../middleware/accessKey');
+
+router.use(requireInternalAccessKey);
 
 /**
  * @swagger
- * /search/sphinx:
+ * /metrics/sphinx/search:
  *   get:
  *     tags:
- *       - Search (Sphinx POC)
+ *       - Metrics
  *     summary: Search works using Sphinx Search Engine (POC)
  *     description: Full-text search through academic works using Sphinx with advanced relevance ranking and faceted filtering
+ *     security:
+ *       - XAccessKey: []
  *     parameters:
  *       - in: query
  *         name: q
@@ -31,6 +37,13 @@ const { logger } = require('../middleware/errorHandler');
  *           maximum: 100
  *           default: 20
  *         description: Number of results to return
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
  *       - in: query
  *         name: offset
  *         schema:
@@ -163,7 +176,7 @@ const { logger } = require('../middleware/errorHandler');
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/search/sphinx',
+router.get('/sphinx/search',
     [
         query('q')
             .isLength({ min: 2 })
@@ -172,6 +185,10 @@ router.get('/search/sphinx',
             .optional()
             .isInt({ min: 1, max: 100 })
             .withMessage('Limit must be between 1 and 100'),
+        query('page')
+            .optional()
+            .isInt({ min: 1 })
+            .withMessage('Page must be a positive integer'),
         query('offset')
             .optional()
             .isInt({ min: 0 })
@@ -198,10 +215,10 @@ router.get('/search/sphinx',
         try {
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
-                return res.status(400).json({
-                    status: 'error',
-                    message: 'Validation failed',
-                    details: errors.array()
+                return res.fail('Validation failed', {
+                    statusCode: 400,
+                    code: ERROR_CODES.VALIDATION,
+                    errors: errors.array()
                 });
             }
 
@@ -271,25 +288,23 @@ router.get('/search/sphinx',
 
             const totalTime = Date.now() - startTime;
 
-            res.json({
-                status: 'success',
-                data: {
-                    results: searchResults.results,
-                    total: searchResults.total,
-                    query_time: searchResults.query_time,
-                    facets: facetResults
-                },
-                performance: {
-                    search_engine: searchEngine,
-                    query_time_ms: searchResults.query_time,
-                    total_time_ms: totalTime,
-                    documents_searched: searchEngine === 'Sphinx' ? '~9000' : 'mariadb_fulltext',
-                    relevance_algorithm: searchEngine === 'Sphinx' ? 'BM25 with field weighting' : 'MariaDB FULLTEXT'
-                },
+            return res.success({
+                results: searchResults.results,
+                total: searchResults.total,
+                query_time: searchResults.query_time,
+                facets: facetResults
+            }, {
+                pagination: createPagination(pagination.page, pagination.limit, searchResults.total),
                 meta: {
+                    performance: {
+                        search_engine: searchEngine,
+                        query_time_ms: searchResults.query_time,
+                        total_time_ms: totalTime,
+                        documents_searched: searchEngine === 'Sphinx' ? '~9000' : 'mariadb_fulltext',
+                        relevance_algorithm: searchEngine === 'Sphinx' ? 'BM25 with field weighting' : 'MariaDB FULLTEXT'
+                    },
                     query,
                     filters,
-                    pagination: createPagination(pagination.page, pagination.limit, searchResults.total),
                     fallback: fallbackNotice
                 }
             });
@@ -302,12 +317,14 @@ router.get('/search/sphinx',
 
 /**
  * @swagger
- * /search/sphinx/status:
+ * /metrics/sphinx/status:
  *   get:
  *     tags:
- *       - Search (Sphinx POC)
+ *       - Metrics
  *     summary: Get Sphinx Search engine status
  *     description: Retrieve status and performance metrics from Sphinx Search engine
+ *     security:
+ *       - XAccessKey: []
  *     responses:
  *       200:
  *         description: Sphinx status information
@@ -345,14 +362,11 @@ router.get('/search/sphinx',
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/search/sphinx/status', async (req, res, next) => {
+router.get('/sphinx/status', async (req, res, next) => {
     try {
         const status = await sphinxService.getStatus();
         
-        res.json({
-            status: 'success',
-            data: status
-        });
+        return res.success(status);
     } catch (error) {
         next(error);
     }
@@ -360,12 +374,14 @@ router.get('/search/sphinx/status', async (req, res, next) => {
 
 /**
  * @swagger
- * /search/sphinx/compare:
+ * /metrics/sphinx/compare:
  *   get:
  *     tags:
- *       - Search (Sphinx POC)
+ *       - Metrics
  *     summary: Compare Sphinx vs MariaDB search performance
  *     description: Run the same query on both Sphinx and MariaDB FULLTEXT to compare performance
+ *     security:
+ *       - XAccessKey: []
  *     parameters:
  *       - in: query
  *         name: q
@@ -409,7 +425,7 @@ router.get('/search/sphinx/status', async (req, res, next) => {
  *                       type: number
  *                       description: How many times faster Sphinx is
  */
-router.get('/search/sphinx/compare',
+router.get('/sphinx/compare',
     [
         query('q')
             .isLength({ min: 2 })
@@ -419,10 +435,10 @@ router.get('/search/sphinx/compare',
         try {
             const errors = validationResult(req);
             if (!errors.isEmpty()) {
-                return res.status(400).json({
-                    status: 'error',
-                    message: 'Validation failed',
-                    details: errors.array()
+                return res.fail('Validation failed', {
+                    statusCode: 400,
+                    code: ERROR_CODES.VALIDATION,
+                    errors: errors.array()
                 });
             }
 
@@ -455,30 +471,27 @@ router.get('/search/sphinx/compare',
 
             const performanceRatio = sphinxTime > 0 ? (mariadbTime / sphinxTime) : null;
 
-            res.json({
-                status: 'success',
-                data: {
-                    query: query,
-                    sphinx: {
-                        results: sphinxResults.results.length,
-                        time_ms: sphinxTime,
-                        engine: sphinxError ? 'Sphinx (unavailable)' : 'Sphinx 2.2.11',
-                        relevance_scoring: !sphinxError,
-                        field_weighting: !sphinxError,
-                        error: sphinxError ? sphinxError.message : null
-                    },
-                    mariadb: {
-                        results: mariadbResults?.data?.results?.length || 0,
-                        time_ms: mariadbTime,
-                        engine: 'MariaDB FULLTEXT',
-                        relevance_scoring: false,
-                        field_weighting: false
-                    },
-                    performance_ratio: performanceRatio !== null ? parseFloat(performanceRatio.toFixed(2)) : null,
-                    recommendation: performanceRatio !== null ? 
-                        (performanceRatio > 2 ? `Sphinx is ${performanceRatio.toFixed(1)}x faster` : 'Performance similar') :
-                        'Sphinx comparison unavailable'
-                }
+            return res.success({
+                query: query,
+                sphinx: {
+                    results: sphinxResults.results.length,
+                    time_ms: sphinxTime,
+                    engine: sphinxError ? 'Sphinx (unavailable)' : 'Sphinx 2.2.11',
+                    relevance_scoring: !sphinxError,
+                    field_weighting: !sphinxError,
+                    error: sphinxError ? sphinxError.message : null
+                },
+                mariadb: {
+                    results: mariadbResults?.data?.results?.length || 0,
+                    time_ms: mariadbTime,
+                    engine: 'MariaDB FULLTEXT',
+                    relevance_scoring: false,
+                    field_weighting: false
+                },
+                performance_ratio: performanceRatio !== null ? parseFloat(performanceRatio.toFixed(2)) : null,
+                recommendation: performanceRatio !== null ? 
+                    (performanceRatio > 2 ? `Sphinx is ${performanceRatio.toFixed(1)}x faster` : 'Performance similar') :
+                    'Sphinx comparison unavailable'
             });
 
         } catch (error) {

@@ -25,7 +25,12 @@ const validatePagination = [
   query('limit')
     .optional()
     .isInt({ min: 1, max: 100 })
-    .withMessage('Limit must be between 1 and 100')
+    .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer')
 ];
 
 const validateCitationType = [
@@ -66,6 +71,7 @@ const validateNetworkDepth = [
  *           default: all
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
@@ -93,6 +99,7 @@ router.get('/works/:id/citations', [...validateWorkId, ...validatePagination, ..
  *           example: 1
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: References retrieved successfully

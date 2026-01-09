@@ -68,6 +68,13 @@ const validateWorksQuery = [
  *           default: 20
  *         description: Number of results per page (max 20)
  *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *         description: Number of items to skip (alternative to page parameter)
+ *       - in: query
  *         name: search
  *         schema:
  *           type: string
@@ -117,9 +124,9 @@ const validateWorksQuery = [
 
 /**
  * @swagger
- * /works/vitrine:
+ * /works/showcase:
  *   get:
- *     summary: Get works list optimized for browsing (vitrine)
+ *     summary: Get works list optimized for browsing (showcase)
  *     description: High-performance endpoint for browsing works using pre-compiled summary table. Optimized for speed with minimal JOINs.
  *     tags: [Works]
  *     parameters:
@@ -138,6 +145,13 @@ const validateWorksQuery = [
  *           maximum: 100
  *           default: 20
  *         description: Number of results per page (max 100)
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *         description: Number of items to skip (alternative to page parameter)
  *       - in: query
  *         name: type
  *         schema:
@@ -170,7 +184,7 @@ const validateWorksQuery = [
  *         example: en
  *     responses:
  *       200:
- *         description: Works vitrine retrieved successfully
+ *         description: Works showcase retrieved successfully
  *         content:
  *           application/json:
  *             schema:
@@ -194,7 +208,7 @@ const validateWorksQuery = [
  *                     performance:
  *                       $ref: '#/components/schemas/PerformanceMeta'
  */
-router.get('/vitrine', validateWorksQuery, worksController.getWorksVitrine);
+router.get('/showcase', validateWorksQuery, worksController.getWorksVitrine);
 
 router.get('/', validateWorksQuery, worksController.getWorks);
 
@@ -248,7 +262,7 @@ router.get('/:id', validateWorkId, worksController.getWork);
 
 /**
  * @swagger
- * /works/{id}/bibliography:
+ * /works/{id}/bibliographies:
  *   get:
  *     summary: Get work bibliography usage
  *     description: Retrieve courses where this work is used in bibliography, with instructor information
@@ -345,6 +359,6 @@ router.get('/:id', validateWorkId, worksController.getWork);
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/:id/bibliography', validateWorkId, worksController.getWorkBibliography);
+router.get('/:id/bibliographies', validateWorkId, worksController.getWorkBibliography);
 
 module.exports = router;

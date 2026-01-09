@@ -6,7 +6,7 @@ const request = createHttpClient(app);
 
 const getSampleBibliographyWorkId = async () => {
   const res = await request()
-    .get('/bibliography?limit=1')
+    .get('/bibliographies?limit=1')
     .expect(200);
 
   expectSuccessEnvelope(res.body, { paginated: true });
@@ -16,10 +16,10 @@ const getSampleBibliographyWorkId = async () => {
 };
 
 describe('Bibliography API Contracts', () => {
-  describe('GET /bibliography', () => {
+  describe('GET /bibliographies', () => {
     it('returns paginated bibliography entries with standard envelope', async () => {
       const res = await request()
-        .get('/bibliography?limit=10')
+        .get('/bibliographies?limit=10')
         .expect(200);
 
       expectSuccessEnvelope(res.body, { paginated: true, meta: ['pagination_extras'] });
@@ -47,7 +47,7 @@ describe('Bibliography API Contracts', () => {
 
     it('applies filters and exposes them via meta.filters', async () => {
       const res = await request()
-        .get('/bibliography?program_id=2&reading_type=RECOMMENDED&year_from=1968&year_to=1970&limit=5')
+        .get('/bibliographies?program_id=2&reading_type=RECOMMENDED&year_from=1968&year_to=1970&limit=5')
         .expect(200);
 
       expectSuccessEnvelope(res.body, { paginated: true, meta: ['pagination_extras'] });
@@ -70,7 +70,7 @@ describe('Bibliography API Contracts', () => {
 
     it('validates limit boundaries', async () => {
       const res = await request()
-        .get('/bibliography?limit=250')
+        .get('/bibliographies?limit=250')
         .expect(200);
 
       expectSuccessEnvelope(res.body, { paginated: true });
@@ -78,7 +78,7 @@ describe('Bibliography API Contracts', () => {
     });
   });
 
-  describe('GET /works/:id/bibliography', () => {
+  describe('GET /works/:id/bibliographies', () => {
     let sampleWorkId;
 
     beforeAll(async () => {
@@ -91,7 +91,7 @@ describe('Bibliography API Contracts', () => {
       }
 
       const res = await request()
-        .get(`/works/${sampleWorkId}/bibliography?limit=5`)
+        .get(`/works/${sampleWorkId}/bibliographies?limit=5`)
         .expect(200);
 
       expectSuccessEnvelope(res.body, { paginated: true });
@@ -112,17 +112,17 @@ describe('Bibliography API Contracts', () => {
 
     it('validates reading_type enum', async () => {
       const res = await request()
-        .get(`/works/${sampleWorkId ?? 1}/bibliography?reading_type=INVALID`)
+        .get(`/works/${sampleWorkId ?? 1}/bibliographies?reading_type=INVALID`)
         .expect(200);
 
       expectSuccessEnvelope(res.body, { paginated: true });
     });
   });
 
-  describe('GET /bibliography/analysis', () => {
+  describe('GET /bibliographies/analyses', () => {
     it('returns aggregated analysis with envelope', async () => {
       const res = await request()
-        .get('/bibliography/analysis?limit=5')
+        .get('/bibliographies/analyses?limit=5')
         .expect(200);
 
       expectSuccessEnvelope(res.body, { dataType: 'object' });
@@ -137,10 +137,10 @@ describe('Bibliography API Contracts', () => {
     });
   });
 
-  describe('GET /bibliography/statistics', () => {
+  describe('GET /bibliographies/statistics', () => {
     it('returns consolidated statistics with envelope', async () => {
       const res = await request()
-        .get('/bibliography/statistics')
+        .get('/bibliographies/statistics')
         .expect(200);
 
       expectSuccessEnvelope(res.body, { dataType: 'object' });

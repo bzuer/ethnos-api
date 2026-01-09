@@ -1,11 +1,24 @@
 const bibliographyService = require('../services/bibliography.service');
 const { handleError } = require('../middleware/errorHandler');
+const { normalizePagination } = require('../utils/pagination');
+const { validationResult } = require('express-validator');
+const { ERROR_CODES } = require('../utils/responseBuilder');
 
 class BibliographyController {
 
   
   async getBibliography(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         course_id: req.query.course_id,
         work_id: req.query.work_id,
@@ -16,8 +29,8 @@ class BibliographyController {
         year_to: req.query.year_to,
         program_id: req.query.program_id,
         search: req.query.search,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0,
+        limit: pagination.limit,
+        offset: pagination.offset,
         light: req.query.light
       };
 
@@ -34,16 +47,28 @@ class BibliographyController {
   
   async getWorkBibliography(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         year_from: req.query.year_from,
         year_to: req.query.year_to,
         reading_type: req.query.reading_type,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
-      const courses = await bibliographyService.getWorkBibliography(req.params.id, filters);
-      return res.success(Array.isArray(courses) ? courses : (courses?.data || []));
+      const result = await bibliographyService.getWorkBibliography(req.params.id, filters);
+      return res.success(result.data || [], {
+        pagination: result.pagination
+      });
     } catch (error) {
       handleError(res, error);
     }
@@ -52,6 +77,15 @@ class BibliographyController {
   
   async getBibliographyAnalysis(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
       const filters = {
         year_from: req.query.year_from,
         year_to: req.query.year_to,
@@ -61,7 +95,7 @@ class BibliographyController {
       };
 
       const analysis = await bibliographyService.getBibliographyAnalysis(filters);
-      res.json(analysis);
+      return res.success(analysis);
     } catch (error) {
       handleError(res, error);
     }
@@ -70,8 +104,17 @@ class BibliographyController {
   
   async getBibliographyStatistics(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
       const statistics = await bibliographyService.getBibliographyStatistics();
-      res.json(statistics);
+      return res.success(statistics);
     } catch (error) {
       handleError(res, error);
     }

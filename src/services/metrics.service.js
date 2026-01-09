@@ -1,19 +1,21 @@
 const { sequelize } = require('../config/database');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
+const { createPagination, normalizePagination } = require('../utils/pagination');
 const {
   formatAnnualStats,
   formatVenueRanking,
   formatInstitutionProductivity,
   formatPersonProduction,
-  formatCollaboration,
-  formatDashboardSummary
+  formatCollaboration
 } = require('../dto/metrics.dto');
 
 class MetricsService {
   async getAnnualStats(filters = {}) {
-    const { year_from, year_to, limit = 20 } = filters;
-    const cacheKey = `metrics:annual:${JSON.stringify(filters)}`;
+    const pagination = normalizePagination(filters);
+    const { page, limit, offset } = pagination;
+    const { year_from, year_to } = filters;
+    const cacheKey = `metrics:annual:${JSON.stringify({ page, limit, offset, year_from, year_to })}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -23,7 +25,7 @@ class MetricsService {
       }
 
       const whereConditions = [];
-      const replacements = { limit: parseInt(limit) };
+      const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
       if (year_from) {
         whereConditions.push('year >= :year_from');
@@ -37,7 +39,8 @@ class MetricsService {
 
       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-      const stats = await sequelize.query(`
+      const [stats, countRows] = await Promise.all([
+        sequelize.query(`
         SELECT 
           year,
           total_publications,
@@ -52,18 +55,29 @@ class MetricsService {
         FROM v_annual_stats
         ${whereClause}
         ORDER BY year DESC
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
       `, {
         replacements,
         type: sequelize.QueryTypes.SELECT
-      });
+      }),
+      sequelize.query(`
+        SELECT COUNT(*) AS total
+        FROM v_annual_stats
+        ${whereClause}
+      `, {
+        replacements,
+        type: sequelize.QueryTypes.SELECT
+      })
+    ]);
+      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedStats = stats.map(formatAnnualStats);
 
       const result = {
         data: formattedStats,
+        pagination: createPagination(page, limit, total),
         summary: {
-          total_years: stats.length,
+          total_years: total,
           date_range: stats.length > 0 ? 
             `${stats[stats.length - 1].year}-${stats[0].year}` : null,
           total_works_all_years: formattedStats.reduce((sum, s) => sum + s.metrics.total_publications, 0),
@@ -85,8 +99,9 @@ class MetricsService {
   }
 
   async getTopVenues(filters = {}) {
-    const { limit = 20 } = filters;
-    const cacheKey = `metrics:venues:${JSON.stringify(filters)}`;
+    const pagination = normalizePagination(filters);
+    const { page, limit, offset } = pagination;
+    const cacheKey = `metrics:venues:${JSON.stringify({ page, limit, offset })}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -95,7 +110,8 @@ class MetricsService {
         return cached;
       }
 
-      const venues = await sequelize.query(`
+      const [venues, countRows] = await Promise.all([
+        sequelize.query(`
         SELECT 
           venue_id,
           venue_name,
@@ -108,18 +124,25 @@ class MetricsService {
           open_access_works
         FROM v_venue_ranking
         ORDER BY total_works DESC
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
       `, {
-        replacements: { limit: parseInt(limit) },
+        replacements: { limit: parseInt(limit), offset: parseInt(offset) },
         type: sequelize.QueryTypes.SELECT
-      });
+      }),
+      sequelize.query(`
+        SELECT COUNT(*) AS total
+        FROM v_venue_ranking
+      `, { type: sequelize.QueryTypes.SELECT })
+    ]);
+      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedVenues = venues.map((venue, index) => formatVenueRanking(venue, index + 1));
 
       const result = {
         data: formattedVenues,
+        pagination: createPagination(page, limit, total),
         summary: {
-          total_venues_ranked: formattedVenues.length,
+          total_venues_ranked: total,
           top_venue_publications: formattedVenues.length > 0 ? formattedVenues[0].metrics.total_works : 0,
           total_unique_authors: formattedVenues.reduce((sum, v) => sum + v.metrics.unique_authors, 0),
           avg_open_access_percentage: formattedVenues.length > 0 ? 
@@ -139,8 +162,10 @@ class MetricsService {
   }
 
   async getInstitutionProductivity(filters = {}) {
-    const { limit = 20, country_code } = filters;
-    const cacheKey = `metrics:institutions:${JSON.stringify(filters)}`;
+    const pagination = normalizePagination(filters);
+    const { page, limit, offset } = pagination;
+    const { country_code } = filters;
+    const cacheKey = `metrics:institutions:${JSON.stringify({ page, limit, offset, country_code })}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -150,7 +175,7 @@ class MetricsService {
       }
 
       const whereConditions = [];
-      const replacements = { limit: parseInt(limit) };
+      const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
       if (country_code) {
         whereConditions.push('country_code = :country_code');
@@ -159,7 +184,8 @@ class MetricsService {
 
       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-      const institutions = await sequelize.query(`
+      const [institutions, countRows] = await Promise.all([
+        sequelize.query(`
         SELECT 
           id as organization_id,
           institution_name as organization_name,
@@ -173,18 +199,29 @@ class MetricsService {
         FROM v_institution_productivity
         ${whereClause}
         ORDER BY total_works DESC, total_citations DESC
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
       `, {
         replacements,
         type: sequelize.QueryTypes.SELECT
-      });
+      }),
+      sequelize.query(`
+        SELECT COUNT(*) AS total
+        FROM v_institution_productivity
+        ${whereClause}
+      `, {
+        replacements,
+        type: sequelize.QueryTypes.SELECT
+      })
+    ]);
+      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedInstitutions = institutions.map((inst, index) => formatInstitutionProductivity(inst, index + 1));
 
       const result = {
         data: formattedInstitutions,
+        pagination: createPagination(page, limit, total),
         summary: {
-          total_institutions_ranked: formattedInstitutions.length,
+          total_institutions_ranked: total,
           countries_represented: [...new Set(formattedInstitutions.map(i => i.country_code))].filter(Boolean),
           top_institution_works: formattedInstitutions.length > 0 ? formattedInstitutions[0].metrics.total_works : 0,
           avg_citations_per_work: formattedInstitutions.length > 0 ?
@@ -204,8 +241,10 @@ class MetricsService {
   }
 
   async getPersonProduction(filters = {}) {
-    const { limit = 20, organization_id } = filters;
-    const cacheKey = `metrics:persons:${JSON.stringify(filters)}`;
+    const pagination = normalizePagination(filters);
+    const { page, limit, offset } = pagination;
+    const { organization_id } = filters;
+    const cacheKey = `metrics:persons:${JSON.stringify({ page, limit, offset, organization_id })}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -215,7 +254,7 @@ class MetricsService {
       }
 
       const whereConditions = [];
-      const replacements = { limit: parseInt(limit) };
+      const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
       if (organization_id) {
         whereConditions.push(`EXISTS (
@@ -227,7 +266,8 @@ class MetricsService {
 
       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-      const persons = await sequelize.query(`
+      const [persons, countRows] = await Promise.all([
+        sequelize.query(`
         SELECT 
           id as person_id,
           preferred_name as person_name,
@@ -241,18 +281,29 @@ class MetricsService {
         FROM v_person_production vp
         ${whereClause}
         ORDER BY total_works DESC, total_citations DESC
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
       `, {
         replacements,
         type: sequelize.QueryTypes.SELECT
-      });
+      }),
+      sequelize.query(`
+        SELECT COUNT(*) AS total
+        FROM v_person_production vp
+        ${whereClause}
+      `, {
+        replacements,
+        type: sequelize.QueryTypes.SELECT
+      })
+    ]);
+      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedPersons = persons.map((person, index) => formatPersonProduction(person, index + 1));
 
       const result = {
         data: formattedPersons,
+        pagination: createPagination(page, limit, total),
         summary: {
-          total_persons_ranked: formattedPersons.length,
+          total_persons_ranked: total,
           top_person_works: formattedPersons.length > 0 ? formattedPersons[0].metrics.total_works : 0,
           avg_citations_per_work: formattedPersons.length > 0 ? 
             Math.round(formattedPersons.reduce((sum, p) => sum + p.metrics.avg_citations, 0) / formattedPersons.length * 100) / 100 : 0,
@@ -271,8 +322,10 @@ class MetricsService {
   }
 
   async getCollaborations(filters = {}) {
-    const { limit = 20, min_collaborations = 2 } = filters;
-    const cacheKey = `metrics:collaborations:${JSON.stringify(filters)}`;
+    const pagination = normalizePagination(filters);
+    const { page, limit, offset } = pagination;
+    const { min_collaborations = 2 } = filters;
+    const cacheKey = `metrics:collaborations:${JSON.stringify({ page, limit, offset, min_collaborations })}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -281,7 +334,8 @@ class MetricsService {
         return cached;
       }
 
-      const collaborations = await sequelize.query(`
+      const [collaborations, countRows] = await Promise.all([
+        sequelize.query(`
         SELECT 
           person1_id,
           person1_name,
@@ -294,21 +348,33 @@ class MetricsService {
         FROM v_collaborations
         WHERE collaboration_count >= :min_collaborations
         ORDER BY collaboration_count DESC, avg_citations_together DESC
-        LIMIT :limit
+        LIMIT :limit OFFSET :offset
       `, {
         replacements: { 
-          limit: parseInt(limit), 
+          limit: parseInt(limit),
+          offset: parseInt(offset),
           min_collaborations: parseInt(min_collaborations) 
         },
         type: sequelize.QueryTypes.SELECT
-      });
+      }),
+      sequelize.query(`
+        SELECT COUNT(*) AS total
+        FROM v_collaborations
+        WHERE collaboration_count >= :min_collaborations
+      `, {
+        replacements: { min_collaborations: parseInt(min_collaborations) },
+        type: sequelize.QueryTypes.SELECT
+      })
+    ]);
+      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedCollaborations = collaborations.map((collab, index) => formatCollaboration(collab, index + 1));
 
       const result = {
         data: formattedCollaborations,
+        pagination: createPagination(page, limit, total),
         summary: {
-          total_collaboration_pairs: formattedCollaborations.length,
+          total_collaboration_pairs: total,
           strongest_collaboration_count: formattedCollaborations.length > 0 ? formattedCollaborations[0].metrics.shared_works : 0,
           avg_collaboration_years: formattedCollaborations.length > 0 ?
             Math.round(formattedCollaborations.reduce((sum, c) => sum + c.timespan.collaboration_years, 0) / formattedCollaborations.length) : 0,
@@ -329,49 +395,6 @@ class MetricsService {
     }
   }
 
-  async getDashboardSummary() {
-    const cacheKey = 'metrics:dashboard:summary';
-    
-    try {
-      const cached = await cacheService.get(cacheKey);
-      if (cached) {
-        logger.info('Dashboard summary retrieved from cache');
-        return cached;
-      }
-
-      const [totalCounts, recentStats] = await Promise.all([
-        sequelize.query(`
-          SELECT 
-            (SELECT COUNT(*) FROM works) as total_works,
-            (SELECT COUNT(*) FROM persons) as total_persons,
-            (SELECT COUNT(*) FROM organizations) as total_organizations,
-            (SELECT COUNT(*) FROM publications) as total_publications,
-            (SELECT COUNT(DISTINCT venue_id) FROM publications WHERE venue_id IS NOT NULL) as total_venues
-        `, { type: sequelize.QueryTypes.SELECT }),
-        
-        sequelize.query(`
-          SELECT 
-            year,
-            total_publications,
-            open_access_count,
-            unique_organizations
-          FROM v_annual_stats 
-          ORDER BY year DESC 
-          LIMIT 5
-        `, { type: sequelize.QueryTypes.SELECT })
-      ]);
-
-      const result = formatDashboardSummary(totalCounts[0], recentStats);
-
-      await cacheService.set(cacheKey, result, 86400);
-      logger.info('Dashboard summary cached');
-      
-      return result;
-    } catch (error) {
-      logger.error('Error fetching dashboard summary:', error);
-      throw error;
-    }
-  }
 }
 
 const calculateGrowthTrend = (values) => {

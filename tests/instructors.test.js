@@ -161,7 +161,7 @@ describe('Instructors API Contracts', () => {
       }
 
       const res = await request()
-        .get(`/instructors/${sample.person_id}/bibliography?limit=5`)
+        .get(`/instructors/${sample.person_id}/bibliographies?limit=5`)
         .expect(200);
 
       expectSuccessEnvelope(res.body, { paginated: true });

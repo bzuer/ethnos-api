@@ -1,19 +1,31 @@
 const instructorsService = require('../services/instructors.service');
 const { ERROR_CODES } = require('../utils/responseBuilder');
+const { normalizePagination } = require('../utils/pagination');
+const { validationResult } = require('express-validator');
 
 class InstructorsController {
 
   
   async getInstructors(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         role: req.query.role,
         program_id: req.query.program_id,
         year_from: req.query.year_from,
         year_to: req.query.year_to,
         search: req.query.search,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await instructorsService.getInstructors(filters);
@@ -40,6 +52,15 @@ class InstructorsController {
   
   async getInstructorById(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
       const instructor = await instructorsService.getInstructorById(req.params.id);
       
       if (!instructor) {
@@ -60,14 +81,24 @@ class InstructorsController {
   
   async getInstructorCourses(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         year_from: req.query.year_from,
         year_to: req.query.year_to,
         program_id: req.query.program_id,
         semester: req.query.semester,
         role: req.query.role,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await instructorsService.getInstructorCourses(req.params.id, filters);
@@ -95,10 +126,20 @@ class InstructorsController {
   
   async getInstructorSubjects(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         vocabulary: req.query.vocabulary,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await instructorsService.getInstructorSubjectsExpertise(req.params.id, filters);
@@ -122,12 +163,22 @@ class InstructorsController {
   
   async getInstructorBibliography(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
+      const pagination = normalizePagination(req.query);
       const filters = {
         reading_type: req.query.reading_type,
         year_from: req.query.year_from,
         year_to: req.query.year_to,
-        limit: req.query.limit || 20,
-        offset: req.query.offset || 0
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const result = await instructorsService.getInstructorBibliography(req.params.id, filters);
@@ -153,6 +204,15 @@ class InstructorsController {
   
   async getInstructorStatistics(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
       const statistics = await instructorsService.getInstructorStatistics(req.params.id);
       
       if (!statistics) {
@@ -173,6 +233,15 @@ class InstructorsController {
   
   async getInstructorsStatistics(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.fail('Validation failed', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION,
+          errors: errors.array()
+        });
+      }
+
       const statistics = await instructorsService.getInstructorsStatistics();
       
       return res.success(statistics);

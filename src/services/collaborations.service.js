@@ -2,6 +2,8 @@ const { sequelize } = require('../models');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { withTimeout } = require('../utils/db');
+const { createPagination, normalizePagination } = require('../utils/pagination');
+const { formatCollaborator, formatTopCollaboration } = require('../dto/collaborations.dto');
 
 class CollaborationsService {
   async getPersonCollaborators(personId, filters = {}) {
@@ -102,14 +104,7 @@ class CollaborationsService {
         const emptyResult = {
           person_id: parseInt(personId),
           collaborators: [],
-          pagination: {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            total: 0,
-            totalPages: 0,
-            hasNext: false,
-            hasPrev: parseInt(page) > 1
-          },
+          pagination: createPagination(parseInt(page), parseInt(limit), 0),
           filters: {
             min_collaborations: parseInt(min_collaborations),
             sort_by: sort_by
@@ -124,32 +119,42 @@ class CollaborationsService {
         return emptyResult;
       }
 
+      let totalCount = collaboratorsList.length;
+      try {
+        const [countRows] = await sequelize.query(`
+          SELECT COUNT(*) AS total
+          FROM v_collaborations
+          WHERE (person1_id = :id OR person2_id = :id)
+            AND collaboration_count >= :min
+        `, {
+          replacements: {
+            id: parseInt(personId),
+            min: parseInt(min_collaborations)
+          },
+          type: sequelize.QueryTypes.SELECT
+        });
+        if (countRows && countRows.total !== undefined) {
+          totalCount = parseInt(countRows.total, 10);
+        }
+      } catch (error) {
+        logger.warn('Collaborators count fallback used', { error: error.message });
+      }
+
+      const formattedCollaborators = collaboratorsList.map(collab => ({
+        ...collab,
+        collaboration_strength: this.calculateCollaborationStrength(collab.collaboration_count)
+      })).map(formatCollaborator);
+
       const result = {
         person_id: parseInt(personId),
-        collaborators: collaboratorsList.map(collab => ({
-          collaborator_id: collab.collaborator_id,
-          collaborator_name: collab.collaborator_name,
-          collaboration_metrics: {
-            total_collaborations: parseInt(collab.collaboration_count),
-            collaboration_span_years: 0,
-            avg_citations_together: 0,
-          },
-          collaboration_strength: this.calculateCollaborationStrength(collab.collaboration_count)
-        })),
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: collaboratorsList.length,
-          totalPages: Math.ceil(collaboratorsList.length / limit),
-          hasNext: collaboratorsList.length === parseInt(limit),
-          hasPrev: parseInt(page) > 1
-        },
+        collaborators: formattedCollaborators,
+        pagination: createPagination(parseInt(page), parseInt(limit), totalCount),
         filters: {
           min_collaborations: parseInt(min_collaborations),
           sort_by: sort_by
         },
         summary: {
-          total_collaborators: collaboratorsList.length,
+          total_collaborators: totalCount,
           avg_collaborations_per_collaborator: collaboratorsList.length > 0 ? 
             Math.round(collaboratorsList.reduce((sum, c) => sum + c.collaboration_count, 0) / collaboratorsList.length) : 0
         }
@@ -250,9 +255,11 @@ class CollaborationsService {
   }
 
   async getTopCollaborations(filters = {}) {
-    const { limit = 20, min_collaborations = 5, year_from, year_to } = filters;
+    const pagination = normalizePagination(filters);
+    const { page, limit, offset } = pagination;
+    const { min_collaborations = 5, year_from, year_to } = filters;
     
-    const cacheKey = `top_collaborations:${JSON.stringify(filters)}`;
+    const cacheKey = `top_collaborations:${JSON.stringify({ page, limit, offset, min_collaborations, year_from, year_to })}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -273,7 +280,8 @@ class CollaborationsService {
           ...(year_from ? [parseInt(year_from, 10)] : []),
           ...(year_to ? [parseInt(year_to, 10)] : []),
           parseInt(min_collaborations, 10),
-          parseInt(limit, 10)
+          parseInt(limit, 10),
+          parseInt(offset, 10)
         ];
 
         topPairs = await Promise.race([
@@ -300,7 +308,7 @@ class CollaborationsService {
             GROUP BY p1.id, p1.preferred_name, p2.id, p2.preferred_name
             HAVING COUNT(DISTINCT a1.work_id) >= ?
             ORDER BY collaboration_count DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
           `, {
             replacements: queryReplacements,
             type: sequelize.QueryTypes.SELECT
@@ -314,38 +322,71 @@ class CollaborationsService {
               year_from,
               year_to
             });
-            return await this._getTopCollaborationsFallback({ limit, min_collaborations, year_from, year_to });
+            return await this._getTopCollaborationsFallback({ limit, offset, min_collaborations, year_from, year_to });
           }
           throw error;
         });
       }
 
       const topPairsList = Array.isArray(topPairs) ? topPairs : [];
+      let totalCount = offset + topPairsList.length;
+      try {
+        const countReplacements = [
+          ...(year_from ? [parseInt(year_from, 10)] : []),
+          ...(year_to ? [parseInt(year_to, 10)] : []),
+          parseInt(min_collaborations, 10)
+        ];
+        const [countRows] = await sequelize.query(`
+          SELECT COUNT(*) AS total
+          FROM (
+            SELECT 1
+            FROM authorships a1
+            INNER JOIN authorships a2 ON a1.work_id = a2.work_id 
+              AND a1.person_id < a2.person_id
+              AND a1.role = 'AUTHOR'
+              AND a2.role = 'AUTHOR'
+            LEFT JOIN publications pub ON a1.work_id = pub.work_id
+            WHERE 1=1
+              ${year_from ? 'AND pub.year >= ?' : ''}
+              ${year_to ? 'AND pub.year <= ?' : ''}
+            GROUP BY a1.person_id, a2.person_id
+            HAVING COUNT(DISTINCT a1.work_id) >= ?
+          ) pairs
+        `, {
+          replacements: countReplacements,
+          type: sequelize.QueryTypes.SELECT
+        });
+        if (countRows && countRows.total !== undefined) {
+          totalCount = parseInt(countRows.total, 10);
+        }
+      } catch (error) {
+        logger.warn('Top collaborations count fallback used', { error: error.message });
+      }
       
+      const formattedPairs = topPairsList.map(pair => formatTopCollaboration({
+        person1_id: pair.person1_id,
+        person1_name: pair.person1_name,
+        person2_id: pair.person2_id,
+        person2_name: pair.person2_name,
+        collaboration_count: pair.collaboration_count,
+        avg_citations_together: 0,
+        first_collaboration_year: pair.first_collaboration_year ? parseInt(pair.first_collaboration_year, 10) : null,
+        latest_collaboration_year: pair.latest_collaboration_year ? parseInt(pair.latest_collaboration_year, 10) : null,
+        collaboration_strength: this.calculateCollaborationStrength(pair.collaboration_count)
+      }));
+
       const result = {
-        top_collaborations: topPairsList.map(pair => ({
-          collaboration_pair: {
-            person1: {
-              id: pair.person1_id,
-              name: pair.person1_name
-            },
-            person2: {
-              id: pair.person2_id,
-              name: pair.person2_name
-            }
-          },
-          collaboration_metrics: {
-            total_collaborations: parseInt(pair.collaboration_count),
-            avg_citations_together: 0,
-            first_collaboration_year: pair.first_collaboration_year ? parseInt(pair.first_collaboration_year, 10) : null,
-            latest_collaboration_year: pair.latest_collaboration_year ? parseInt(pair.latest_collaboration_year, 10) : null,
-          },
-          collaboration_strength: this.calculateCollaborationStrength(pair.collaboration_count)
-        })),
+        top_collaborations: formattedPairs,
         summary: {
           total_partnerships: topPairsList.length,
           avg_collaborations: topPairsList.length > 0 ? 
             Math.round(topPairsList.reduce((sum, p) => sum + p.collaboration_count, 0) / topPairsList.length) : 0
+        },
+        pagination: createPagination(page, limit, totalCount),
+        filters: {
+          min_collaborations: parseInt(min_collaborations, 10),
+          year_from: year_from ? parseInt(year_from, 10) : null,
+          year_to: year_to ? parseInt(year_to, 10) : null
         }
       };
 
@@ -359,9 +400,9 @@ class CollaborationsService {
     }
   }
 
-  async _getTopCollaborationsFallback({ limit, min_collaborations, year_from, year_to }) {
+  async _getTopCollaborationsFallback({ limit, offset = 0, min_collaborations, year_from, year_to }) {
     try {
-      const sampleSize = Math.max(parseInt(limit, 10) * 2, 10);
+      const sampleSize = Math.max((parseInt(limit, 10) + parseInt(offset, 10)) * 2, 10);
       const samplePersons = await sequelize.query(`
         SELECT id, preferred_name
         FROM persons
@@ -374,7 +415,7 @@ class CollaborationsService {
       });
 
       const topPairs = [];
-      for (let i = 0; i < samplePersons.length - 1 && topPairs.length < limit; i += 2) {
+      for (let i = 0; i < samplePersons.length - 1 && topPairs.length < (parseInt(limit, 10) + parseInt(offset, 10)); i += 2) {
         const personA = samplePersons[i];
         const personB = samplePersons[i + 1];
         if (!personB) break;
@@ -392,7 +433,7 @@ class CollaborationsService {
         });
       }
 
-      return topPairs;
+      return topPairs.slice(parseInt(offset, 10), parseInt(offset, 10) + parseInt(limit, 10));
     } catch (fallbackError) {
       logger.error('Fallback top collaborations failed', fallbackError);
       return [];

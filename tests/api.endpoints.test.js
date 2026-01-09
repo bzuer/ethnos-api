@@ -47,6 +47,7 @@ const coursesRouter = require('../src/routes/courses');
 const instructorsRouter = require('../src/routes/instructors');
 const bibliographyRouter = require('../src/routes/bibliography');
 const securityRouter = require('../src/routes/security');
+const dashboardRouter = require('../src/routes/dashboard');
 
 const dbConfig = require('../src/config/database');
 const redisConfig = require('../src/config/redis');
@@ -80,10 +81,10 @@ afterAll(() => {
 });
 
 describe('Health', () => {
-  test('GET /health/live returns alive', async () => {
-    const req = createMockReq({ method: 'GET', path: '/health/live' });
+  test('GET /health/liveness returns alive', async () => {
+    const req = createMockReq({ method: 'GET', path: '/health/liveness' });
     const res = withResponseFormatter(req, createMockRes());
-    await invokeRouter({ router: healthRouter, method: 'get', path: '/live', req, res });
+    await invokeRouter({ router: healthRouter, method: 'get', path: '/liveness', req, res });
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe('success');
     expect(res.body.data).toHaveProperty('alive', true);
@@ -147,23 +148,23 @@ describe('Persons', () => {
 });
 
 describe('Organizations', () => {
-  test('GET /organizations returns list', async () => {
+  test('GET /institutions returns list', async () => {
     jest.spyOn(orgsService, 'getOrganizations').mockResolvedValue({
       data: [{ id: 1, name: 'Test University', identifiers: { ror_id: 'RORX' }, metrics: { works_count: 0 } }],
       pagination: pageMeta(1, 20, 1),
       performance: { engine: 'mock' },
       meta: { engine: 'mock' },
     });
-    const req = createMockReq({ method: 'GET', path: '/organizations', query: {} });
+    const req = createMockReq({ method: 'GET', path: '/institutions', query: {} });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: orgsRouter, method: 'get', path: '/', req, res });
     expect(res.statusCode).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
   });
 
-  test('GET /organizations/:id returns details', async () => {
+  test('GET /institutions/:id returns details', async () => {
     jest.spyOn(orgsService, 'getOrganizationById').mockResolvedValue({ id: 1, name: 'Test University', metrics: { works_count: 10 } });
-    const req = createMockReq({ method: 'GET', path: '/organizations/1', params: { id: '1' } });
+    const req = createMockReq({ method: 'GET', path: '/institutions/1', params: { id: '1' } });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: orgsRouter, method: 'get', path: '/:id', req, res });
     expect(res.statusCode).toBe(200);
@@ -258,6 +259,14 @@ describe('Courses & Instructors', () => {
     await invokeRouter({ router: instructorsRouter, method: 'get', path: '/', req, res });
     expect(res.statusCode).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  test('GET /instructors/:id rejects invalid id', async () => {
+    const req = createMockReq({ method: 'GET', path: '/instructors/abc', params: { id: 'abc' } });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: instructorsRouter, method: 'get', path: '/:id', req, res });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.status).toBe('error');
   });
 });
 
@@ -390,13 +399,13 @@ describe('DTOs structure', () => {
 });
 
 describe('Bibliography', () => {
-  test('GET /bibliography returns list', async () => {
+  test('GET /bibliographies returns list', async () => {
     jest.spyOn(bibliographyService, 'getBibliography').mockResolvedValue({
       data: [{ id: 1, work_id: 123, course_id: 5 }],
       pagination: pageMeta(1, 10, 1),
       meta: {},
     });
-    const req = createMockReq({ method: 'GET', path: '/bibliography', query: {} });
+    const req = createMockReq({ method: 'GET', path: '/bibliographies', query: {} });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: bibliographyRouter, method: 'get', path: '/', req, res });
     expect(res.statusCode).toBe(200);
@@ -413,5 +422,35 @@ describe('Security', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe('success');
     expect(res.body.data).toHaveProperty('stats');
+  });
+
+  test('POST /security/unblock/:ip rejects invalid ip', async () => {
+    const accessKey = process.env.API_KEY || process.env.SECURITY_ACCESS_KEY || process.env.INTERNAL_ACCESS_KEY;
+    const req = createMockReq({
+      method: 'POST',
+      path: '/security/unblock/not-an-ip',
+      params: { ip: 'not-an-ip' },
+      headers: { 'x-access-key': accessKey }
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: securityRouter, method: 'post', path: '/unblock/:ip', req, res });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.status).toBe('error');
+  });
+});
+
+describe('Dashboard', () => {
+  test('GET /dashboard/performance rejects invalid hours', async () => {
+    const accessKey = process.env.INTERNAL_ACCESS_KEY || process.env.SECURITY_ACCESS_KEY || process.env.API_KEY;
+    const req = createMockReq({
+      method: 'GET',
+      path: '/dashboard/performance',
+      query: { hours: '200' },
+      headers: { 'x-access-key': accessKey }
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: dashboardRouter, method: 'get', path: '/performance', req, res });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.status).toBe('error');
   });
 });

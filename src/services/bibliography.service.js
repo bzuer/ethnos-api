@@ -1,5 +1,7 @@
 const { pool } = require('../config/database');
 const cache = require('./cache.service');
+const { createPagination } = require('../utils/pagination');
+const { formatBibliographyItem, formatBibliographyCourseUsage } = require('../dto/bibliography.dto');
 
 class BibliographyService {
   
@@ -209,7 +211,7 @@ class BibliographyService {
     }
 
     const result = {
-      bibliography,
+      bibliography: bibliography.map(formatBibliographyItem),
       pagination: {
         total,
         limit: limitValue,
@@ -274,10 +276,33 @@ class BibliographyService {
     `;
     params.push(parseInt(limit), parseInt(offset));
 
-    const [courses] = await pool.execute(query, params);
+    const [coursesResult, countResult] = await Promise.all([
+      pool.execute(query, params),
+      pool.execute(
+        `
+          SELECT COUNT(DISTINCT cb.course_id) AS total
+          FROM course_bibliography cb
+          JOIN courses c ON cb.course_id = c.id
+          WHERE cb.work_id = ?
+          ${year_from ? ' AND c.year >= ?' : ''}
+          ${year_to ? ' AND c.year <= ?' : ''}
+          ${reading_type ? ' AND cb.reading_type = ?' : ''}
+        `,
+        params.slice(0, params.length - 2)
+      )
+    ]);
+    const courses = coursesResult[0];
+    const countRows = countResult[0];
+    const total = countRows?.[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
+    const pagination = createPagination(
+      Math.floor(parseInt(offset, 10) / Math.max(1, parseInt(limit, 10))) + 1,
+      parseInt(limit, 10),
+      total
+    );
 
-    await cache.set(cacheKey, courses, 1800);
-    return courses;
+    const result = { data: courses.map(formatBibliographyCourseUsage), pagination };
+    await cache.set(cacheKey, result, 1800);
+    return result;
   }
 
   async getBibliographyAnalysis(filters = {}) {

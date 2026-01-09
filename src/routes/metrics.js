@@ -10,12 +10,21 @@ const router = express.Router();
 const { requireInternalAccessKey } = require('../middleware/accessKey');
 const { query } = require('express-validator');
 const metricsController = require('../controllers/metrics.controller');
+const { ERROR_CODES } = require('../utils/responseBuilder');
 
 const validateLimit = [
+  query('page')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Page must be a positive integer'),
   query('limit')
     .optional()
     .isInt({ min: 1, max: 100 })
-    .withMessage('Limit must be between 1 and 100')
+    .withMessage('Limit must be between 1 and 100'),
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer')
 ];
 
 const validateAnnualStats = [
@@ -59,55 +68,7 @@ const validateCollaborations = [
     .withMessage('Minimum collaborations must be between 1 and 50')
 ];
 
-/**
- * @swagger
- * /metrics/dashboard:
- *   get:
- *     summary: Dashboard overview with key statistics
- *     tags: [Metrics]
- *     description: Get comprehensive overview including total counts and recent trends
- *     responses:
- *       200:
- *         description: Dashboard statistics
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: "success"
- *                 totals:
- *                   type: object
- *                   properties:
- *                     total_works:
- *                       type: integer
- *                       example: 650645
- *                     total_persons:
- *                       type: integer
- *                       example: 385670
- *                     total_organizations:
- *                       type: integer
- *                       example: 235833
- *                 recent_trends:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       year:
- *                         type: integer
- *                       total_publications:
- *                         type: integer
- *                       unique_organizations:
- *                         type: integer
- *                 meta:
- *                   type: object
- *                   properties:
- *                     query_time_ms:
- *                       type: integer
- */
 router.use(requireInternalAccessKey);
-router.get('/dashboard', metricsController.getDashboardSummary);
 
 /**
  * @swagger
@@ -116,6 +77,8 @@ router.get('/dashboard', metricsController.getDashboardSummary);
  *     summary: Annual publication statistics
  *     tags: [Metrics]
  *     description: Get yearly statistics from the v_annual_stats view
+ *     security:
+ *       - XAccessKey: []
  *     parameters:
  *       - name: year_from
  *         in: query
@@ -129,7 +92,9 @@ router.get('/dashboard', metricsController.getDashboardSummary);
  *         schema:
  *           type: integer
  *           example: 2024
+ *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: Annual statistics
@@ -167,16 +132,12 @@ router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
  *     summary: Top venues by publication impact
  *     description: Get the top academic venues ranked by publication count, citation metrics, and impact factors.
  *     tags: [Metrics]
+ *     security:
+ *       - XAccessKey: []
  *     parameters:
- *       - name: limit
- *         in: query
- *         required: false
- *         description: Number of venues to return (max 100)
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: Top venues list
@@ -208,16 +169,12 @@ router.get('/venues', validateLimit, metricsController.getTopVenues);
  *     summary: Institution productivity ranking
  *     description: Get academic institutions ranked by research productivity, publication count, and citation metrics.
  *     tags: [Metrics]
+ *     security:
+ *       - XAccessKey: []
  *     parameters:
- *       - name: limit
- *         in: query
- *         required: false
- *         description: Number of institutions to return (max 100)
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *       - name: country_code
  *         in: query
  *         required: false
@@ -258,16 +215,12 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  *     summary: Person production analytics
  *     description: Get researchers ranked by publication productivity and citation metrics.
  *     tags: [Metrics]
+ *     security:
+ *       - XAccessKey: []
  *     parameters:
- *       - name: limit
- *         in: query
- *         required: false
- *         description: Number of persons to return (max 100)
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *       - name: min_works
  *         in: query
  *         required: false
@@ -307,16 +260,12 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  *     summary: Collaboration network statistics
  *     description: Get statistics on research collaboration networks, including top collaborator pairs and collaboration patterns.
  *     tags: [Metrics]
+ *     security:
+ *       - XAccessKey: []
  *     parameters:
- *       - name: limit
- *         in: query
- *         required: false
- *         description: Number of collaborations to return (max 100)
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *       - name: min_collaborations
  *         in: query
  *         required: false
@@ -356,6 +305,8 @@ router.get('/collaborations', validateCollaborations, metricsController.getColla
  *     summary: Get Sphinx search engine performance metrics
  *     tags: [Metrics]
  *     description: Comprehensive performance and health metrics for the Sphinx search engine
+ *     security:
+ *       - XAccessKey: []
  *     responses:
  *       200:
  *         description: Sphinx performance metrics
@@ -390,16 +341,12 @@ router.get('/sphinx', async (req, res) => {
         await sphinxMonitoring.start();
         const metrics = sphinxMonitoring.getMetrics();
         
-        res.json({
-            status: 'success',
-            data: metrics
-        });
+        return res.success(metrics);
         
     } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            message: 'Failed to get Sphinx metrics',
-            error: error.message
+        return res.fail('Failed to get Sphinx metrics', {
+            statusCode: 500,
+            code: ERROR_CODES.INTERNAL
         });
     }
 });
@@ -411,6 +358,8 @@ router.get('/sphinx', async (req, res) => {
  *     summary: Get detailed Sphinx performance metrics with query history
  *     tags: [Metrics]
  *     description: Detailed Sphinx metrics including recent query performance and distribution analysis
+ *     security:
+ *       - XAccessKey: []
  *     responses:
  *       200:
  *         description: Detailed Sphinx metrics
@@ -439,16 +388,12 @@ router.get('/sphinx/detailed', async (req, res) => {
         await sphinxMonitoring.start();
         const detailedMetrics = sphinxMonitoring.getDetailedMetrics();
         
-        res.json({
-            status: 'success',
-            data: detailedMetrics
-        });
+        return res.success(detailedMetrics);
         
     } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            message: 'Failed to get detailed Sphinx metrics',
-            error: error.message
+        return res.fail('Failed to get detailed Sphinx metrics', {
+            statusCode: 500,
+            code: ERROR_CODES.INTERNAL
         });
     }
 });

@@ -1,5 +1,7 @@
 const { pool } = require('../config/database');
 const cache = require('./cache.service');
+const { createPagination } = require('../utils/pagination');
+const { formatSubjectListItem, formatSubjectDetails, formatSubjectWork, formatSubjectCourse } = require('../dto/subjects.dto');
 
 class SubjectsService {
   
@@ -47,7 +49,7 @@ class SubjectsService {
       const [countRows] = await pool.execute(`SELECT COUNT(*) AS total FROM subjects s ${whereLite}`, whereParams);
       const total = countRows?.[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
       const result = {
-        subjects: rows,
+        subjects: rows.map(formatSubjectListItem),
         pagination: {
           total,
           limit: liteParams[liteParams.length - 2],
@@ -142,7 +144,7 @@ class SubjectsService {
     const total = countRows[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
 
     const result = {
-      subjects,
+      subjects: subjects.map(formatSubjectListItem),
       pagination: {
         total,
         limit: limitValue,
@@ -185,7 +187,7 @@ class SubjectsService {
     const [subjects] = await pool.execute(query, [id]);
     if (!subjects.length) return null;
 
-    const subject = subjects[0];
+    const subject = formatSubjectDetails(subjects[0]);
     await cache.set(cacheKey, subject, 3600);
     return subject;
   }
@@ -217,10 +219,25 @@ class SubjectsService {
       LIMIT ? OFFSET ?
     `;
 
-    const [children] = await pool.execute(query, [id, parseInt(limit), parseInt(offset)]);
+    const [childrenResult, countResult] = await Promise.all([
+      pool.execute(query, [id, parseInt(limit, 10), parseInt(offset, 10)]),
+      pool.execute(
+        'SELECT COUNT(*) AS total FROM subjects WHERE parent_id = ?',
+        [id]
+      )
+    ]);
+    const children = childrenResult[0];
+    const countRows = countResult[0];
+    const total = countRows?.[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
+    const pagination = createPagination(
+      Math.floor(parseInt(offset, 10) / Math.max(1, parseInt(limit, 10))) + 1,
+      parseInt(limit, 10),
+      total
+    );
 
-    await cache.set(cacheKey, children, 1800);
-    return children;
+    const result = { data: children.map(formatSubjectListItem), pagination };
+    await cache.set(cacheKey, result, 1800);
+    return result;
   }
 
   async getSubjectHierarchy(id) {
@@ -324,7 +341,27 @@ class SubjectsService {
     `;
     params.push(parseInt(limit), parseInt(offset));
 
-    const [works] = await pool.execute(query, params);
+    const [worksResult, countResult] = await Promise.all([
+      pool.execute(query, params),
+      pool.execute(
+        `
+          SELECT COUNT(DISTINCT w.id) AS total
+          FROM works w
+          JOIN work_subjects ws ON w.id = ws.work_id
+          LEFT JOIN publications pub ON w.id = pub.work_id
+          WHERE ws.subject_id = ?
+          ${min_relevance ? ' AND ws.relevance_score >= ?' : ''}
+          ${year_from ? ' AND pub.year >= ?' : ''}
+          ${year_to ? ' AND pub.year <= ?' : ''}
+          ${document_type ? ' AND w.work_type = ?' : ''}
+          ${language ? ' AND w.language = ?' : ''}
+        `,
+        params.slice(0, params.length - 2)
+      )
+    ]);
+    const works = worksResult[0];
+    const countRows = countResult[0];
+    const total = countRows?.[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
 
     for (const w of works) {
       if (w.relevance_score !== undefined) {
@@ -335,8 +372,14 @@ class SubjectsService {
       }
     }
 
-    await cache.set(cacheKey, works, 1800);
-    return works;
+    const pagination = createPagination(
+      Math.floor(parseInt(offset, 10) / Math.max(1, parseInt(limit, 10))) + 1,
+      parseInt(limit, 10),
+      total
+    );
+    const result = { data: works.map(formatSubjectWork), pagination };
+    await cache.set(cacheKey, result, 1800);
+    return result;
   }
 
   async getSubjectCourses(id, filters = {}) {
@@ -401,10 +444,34 @@ class SubjectsService {
     `;
     params.push(parseInt(limit), parseInt(offset));
 
-    const [courses] = await pool.execute(query, params);
-
-    await cache.set(cacheKey, courses, 1800);
-    return courses;
+    const [coursesResult, countResult] = await Promise.all([
+      pool.execute(query, params),
+      pool.execute(
+        `
+          SELECT COUNT(DISTINCT c.id) AS total
+          FROM courses c
+          JOIN course_bibliography cb ON c.id = cb.course_id
+          JOIN work_subjects ws ON cb.work_id = ws.work_id
+          WHERE ws.subject_id = ?
+          ${year_from ? ' AND c.year >= ?' : ''}
+          ${year_to ? ' AND c.year <= ?' : ''}
+          ${program_id ? ' AND c.program_id = ?' : ''}
+          ${reading_type ? ' AND cb.reading_type = ?' : ''}
+        `,
+        params.slice(0, params.length - 2)
+      )
+    ]);
+    const courses = coursesResult[0];
+    const countRows = countResult[0];
+    const total = countRows?.[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
+    const pagination = createPagination(
+      Math.floor(parseInt(offset, 10) / Math.max(1, parseInt(limit, 10))) + 1,
+      parseInt(limit, 10),
+      total
+    );
+    const result = { data: courses.map(formatSubjectCourse), pagination };
+    await cache.set(cacheKey, result, 1800);
+    return result;
   }
 
   async getSubjectsStatistics() {

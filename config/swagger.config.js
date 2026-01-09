@@ -7,7 +7,7 @@ const options = {
         title: 'Ethnos.app Academic Bibliography API',
         version: '2.0.0',
         description: `
-REST API for academic bibliography: search, works, persons, organizations, venues, courses, citations, collaborations and health.
+REST API for academic bibliography: search, works, persons, institutions, venues, courses, citations, collaborations and health.
 
 Highlights
 - Public endpoints; selected admin/metrics routes require 'x-access-key'.
@@ -49,7 +49,7 @@ Notes
           type: 'apiKey',
           in: 'header',
           name: 'x-access-key',
-          description: 'Internal access key required for protected endpoints (security, dashboard, health except /live)'
+          description: 'Internal access key required for protected endpoints (security, dashboard, health except /liveness)'
         }
       },
       schemas: {

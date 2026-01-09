@@ -124,7 +124,7 @@ describe('Courses API Contracts', () => {
       }
 
       const res = await request()
-        .get(`/courses/${sample.id}/bibliography?limit=5`)
+        .get(`/courses/${sample.id}/bibliographies?limit=5`)
         .expect(200);
 
       expectSuccessEnvelope(res.body, { paginated: true });

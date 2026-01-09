@@ -20,6 +20,11 @@ const validatePersonsQuery = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer'),
   
   query('search')
     .optional()
@@ -74,6 +79,13 @@ const validatePersonsQuery = [
  *           maximum: 100
  *           default: 20
  *         description: Number of results per page (max 100)
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *         description: Number of items to skip (alternative to page parameter)
  *       - in: query
  *         name: search
  *         schema:
@@ -247,6 +259,13 @@ router.get('/:id', validatePersonId, personsController.getPerson);
  *           maximum: 100
  *           default: 20
  *         description: Results per page
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *         description: Number of items to skip (alternative to page parameter)
  *     responses:
  *       200:
  *         description: Signatures retrieved successfully
@@ -304,7 +323,12 @@ const validateSignaturesQuery = [
   query('limit')
     .optional()
     .isInt({ min: 1, max: 100 })
-    .withMessage('Limit must be between 1 and 100')
+    .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer')
 ];
 
 /**
@@ -337,6 +361,13 @@ const validateSignaturesQuery = [
  *           maximum: 100
  *           default: 20
  *         description: Results per page
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *         description: Number of items to skip (alternative to page parameter)
  *       - in: query
  *         name: role
  *         schema:
@@ -450,6 +481,11 @@ const validateWorksQuery = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer'),
   
   query('role')
     .optional()

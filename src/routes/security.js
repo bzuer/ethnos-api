@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const { param, validationResult } = require('express-validator');
+const validator = require('validator');
 const { getViolationStats, getBlockedIPs, unblockIP } = require('../middleware/rateLimiting');
 const { createAccessKeyGuard } = require('../middleware/accessKey');
 const { logger } = require('../middleware/errorHandler');
+const { ERROR_CODES } = require('../utils/responseBuilder');
 
 const requireAccessKey = createAccessKeyGuard({
   envVars: [
@@ -16,6 +19,26 @@ const requireAccessKey = createAccessKeyGuard({
   ],
   context: 'security API',
 });
+
+const validateIpParam = [
+  param('ip')
+    .notEmpty()
+    .withMessage('IP is required')
+    .isIP()
+    .withMessage('IP must be a valid IPv4 or IPv6 address')
+];
+
+const handleValidation = (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.fail('Validation failed', {
+      statusCode: 400,
+      code: ERROR_CODES.VALIDATION,
+      errors: errors.array()
+    });
+  }
+  return null;
+};
 
 /**
  * @swagger
@@ -221,17 +244,18 @@ router.get('/stats', requireAccessKey, (req, res) => {
  *       404:
  *         description: IP not found in blocked list
  */
-router.post('/unblock/:ip', requireAccessKey, (req, res) => {
+router.post('/unblock/:ip', requireAccessKey, validateIpParam, (req, res) => {
   try {
+    const validationError = handleValidation(req, res);
+    if (validationError) {
+      return validationError;
+    }
+
     const { ip } = req.params;
-    
-    const ipv4Pattern = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-    const ipv6Pattern = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::1$|^::$/;
-    
-    if (!ipv4Pattern.test(ip) && !ipv6Pattern.test(ip) && !ip.startsWith('::ffff:')) {
+    if (!validator.isIP(ip)) {
       return res.fail('Invalid IP address format', {
         statusCode: 400,
-        code: 'INVALID_IP'
+        code: ERROR_CODES.VALIDATION
       });
     }
     

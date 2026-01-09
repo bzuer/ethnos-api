@@ -4,10 +4,10 @@ const request = createHttpClient(app);
 const { expectSuccessEnvelope, expectStandardError } = require('./helpers/expectations');
 
 describe('Organizations API', () => {
-  describe('GET /organizations', () => {
-    it('should return paginated list of organizations', async () => {
+  describe('GET /institutions', () => {
+    it('should return paginated list of institutions', async () => {
       const res = await request()
-        .get('/organizations')
+        .get('/institutions')
         .expect(200)
         .expect('Content-Type', /json/);
 
@@ -24,7 +24,7 @@ describe('Organizations API', () => {
 
     it('should accept search parameter', async () => {
       const res = await request()
-        .get('/organizations?search=universidade')
+        .get('/institutions?search=universidade')
         .expect(200);
 
       expect(res.body).toHaveProperty('status', 'success');
@@ -34,7 +34,7 @@ describe('Organizations API', () => {
 
     it('should accept country_code filter', async () => {
       const res = await request()
-        .get('/organizations?country_code=BR')
+        .get('/institutions?country_code=BR')
         .expect(200);
 
       expect(res.body).toHaveProperty('status', 'success');
@@ -43,7 +43,7 @@ describe('Organizations API', () => {
 
     it('should accept type filter', async () => {
       const res = await request()
-        .get('/organizations?type=UNIVERSITY')
+        .get('/institutions?type=UNIVERSITY')
         .expect(200);
 
       expect(res.body).toHaveProperty('status', 'success');
@@ -52,7 +52,7 @@ describe('Organizations API', () => {
 
     it('should return 400 for invalid search length', async () => {
       const res = await request()
-        .get('/organizations?search=a')
+        .get('/institutions?search=a')
         .expect(400);
 
       expectStandardError(res.body);
@@ -60,10 +60,10 @@ describe('Organizations API', () => {
     });
   });
 
-  describe('GET /organizations/:id', () => {
+  describe('GET /institutions/:id', () => {
     it('should return organization details for valid ID', async () => {
       const res = await request()
-        .get('/organizations/1')
+        .get('/institutions/1')
         .expect(200);
 
       expectSuccessEnvelope(res.body, { dataType: 'object' });
@@ -83,7 +83,7 @@ describe('Organizations API', () => {
 
     it('should return 400 for invalid ID format', async () => {
       const res = await request()
-        .get('/organizations/invalid')
+        .get('/institutions/invalid')
         .expect(400);
 
       expectStandardError(res.body);
@@ -92,7 +92,7 @@ describe('Organizations API', () => {
 
     it('should return 404 for non-existent ID', async () => {
       const res = await request()
-        .get('/organizations/999999999')
+        .get('/institutions/999999999')
         .expect(404);
 
       expectStandardError(res.body);

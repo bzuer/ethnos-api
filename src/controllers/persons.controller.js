@@ -2,7 +2,7 @@ const personsService = require('../services/persons.service');
 const { logger } = require('../middleware/errorHandler');
 const { validationResult } = require('express-validator');
 const { ERROR_CODES } = require('../utils/responseBuilder');
-const { createPagination } = require('../utils/pagination');
+const { createPagination, normalizePagination } = require('../utils/pagination');
 
 class PersonsController {
   async getPerson(req, res, next) {
@@ -97,9 +97,10 @@ class PersonsController {
       }
 
       const { id } = req.params;
-      const { page = 1, limit = 20, role } = req.query;
+      const pagination = normalizePagination(req.query);
+      const { page, limit, offset } = pagination;
       
-      const result = await personsService.getPersonWorks(id, { page, limit, role });
+      const result = await personsService.getPersonWorks(id, { page, limit, offset, role });
       
       if (!result) {
         return res.fail(`Person with ID ${id} not found`, {
@@ -138,9 +139,10 @@ class PersonsController {
       }
 
       const { id } = req.params;
-      const { page = 1, limit = 20 } = req.query;
+      const pagination = normalizePagination(req.query);
+      const { page, limit, offset } = pagination;
       
-      const result = await personsService.getPersonSignatures(id, { page, limit });
+      const result = await personsService.getPersonSignatures(id, { page, limit, offset });
       
       if (!result) {
         return res.fail(`Person with ID ${id} not found`, {

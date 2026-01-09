@@ -2,6 +2,7 @@ const { sequelize } = require('../models');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination } = require('../utils/pagination');
+const { formatCitationWork } = require('../dto/citations.dto');
 
 class CitationsService {
   async getWorkCitations(workId, filters = {}) {
@@ -67,8 +68,7 @@ class CitationsService {
           authors_count: authorsCount,
           citation: { type: row.citation_type || null, context }
         };
-      });
-      const totalPages = Math.ceil(total / limit);
+      }).map(formatCitationWork);
 
       const result = {
         work_id: parseInt(workId),
@@ -144,8 +144,7 @@ class CitationsService {
           authors_count: authorsCount,
           citation: { type: row.citation_type || null, context }
         };
-      });
-      const totalPages = Math.ceil(total / limit);
+      }).map(formatCitationWork);
 
       const result = {
         work_id: parseInt(workId),

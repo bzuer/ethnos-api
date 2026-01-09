@@ -6,11 +6,11 @@ Public RESTful API for academic bibliographic research with high-performance sea
 
 ## System Status
 
-Production-ready system with 57 documented endpoints (per OpenAPI), Sphinx search integration with MariaDB fallback, Redis caching, and standardized response envelopes.
+Production-ready system with 78 documented endpoints (per OpenAPI), Sphinx search integration with MariaDB fallback, Redis caching, and standardized response envelopes.
 
 ## Database Schema
 
-Source of truth: `database/data_db.schema.sql`.
+Source of truth: `database/schema.sql`.
 
 ## Prerequisites
 
@@ -162,6 +162,7 @@ Deploy sequence:
     /middleware
     /utils
   /config
+  /database
   /docs
   /scripts
   /tests
@@ -185,7 +186,7 @@ npm run test:coverage
 ## Quick Checks
 
 ```bash
-curl -s http://localhost:3000/health/live
+curl -s http://localhost:3000/health/liveness
 curl -s http://localhost:3000/docs
 scripts/manage.sh sphinx status
 ```

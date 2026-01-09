@@ -46,7 +46,7 @@ app.use('/api/health', healthRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/works', worksRoutes);
 app.use('/api/persons', personsRoutes);
-app.use('/api/organizations', organizationsRoutes);
+app.use('/api/institutions', organizationsRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api', citationsRoutes);
 app.use('/api', collaborationsRoutes);
@@ -55,7 +55,7 @@ app.use('/', citationsRoutes);
 app.use('/search', searchRoutes);
 app.use('/works', worksRoutes);
 app.use('/persons', personsRoutes);
-app.use('/organizations', organizationsRoutes);
+app.use('/institutions', organizationsRoutes);
 
 app.use('*', notFoundHandler);
 app.use(errorMonitoring);

@@ -107,7 +107,7 @@ class WorksController {
         meta: result.meta
       });
     } catch (error) {
-      logger.error('Error retrieving works vitrine', {
+      logger.error('Error retrieving works showcase', {
         error: error.message
       });
       next(error);

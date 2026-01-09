@@ -6,7 +6,7 @@ const organizationsController = require('../controllers/organizations.controller
 const validateOrganizationId = [
   param('id')
     .isInt({ min: 1 })
-    .withMessage('Organization ID must be a positive integer')
+    .withMessage('Institution ID must be a positive integer')
 ];
 
 const validateOrganizationsQuery = [
@@ -19,6 +19,11 @@ const validateOrganizationsQuery = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer'),
   
   query('search')
     .optional()
@@ -55,6 +60,11 @@ const validateOrganizationWorksQuery = [
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
+
+  query('offset')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Offset must be a non-negative integer'),
   
   query('type')
     .optional()
@@ -81,11 +91,11 @@ const validateOrganizationWorksQuery = [
 
 /**
  * @swagger
- * /organizations:
+ * /institutions:
  *   get:
- *     summary: Get list of academic institutions and organizations
- *     description: Retrieve a paginated list of academic institutions including universities, research institutes, companies, and government organizations. Supports filtering by location, type, and name.
- *     tags: [Organizations]
+ *     summary: Get list of academic institutions
+ *     description: Retrieve a paginated list of academic institutions including universities, research institutes, companies, and government entities. Supports filtering by location, type, and name.
+ *     tags: [Institutions]
  *     parameters:
  *       - in: query
  *         name: page
@@ -103,12 +113,19 @@ const validateOrganizationWorksQuery = [
  *           default: 20
  *         description: Number of results per page (max 100)
  *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *           default: 0
+ *         description: Number of items to skip (alternative to page parameter)
+ *       - in: query
  *         name: search
  *         schema:
  *           type: string
  *           minLength: 2
  *           maxLength: 255
- *         description: Search term to filter organizations by name
+ *         description: Search term to filter institutions by name
  *         example: Stanford University
  *       - in: query
  *         name: country
@@ -148,11 +165,11 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
 
 /**
  * @swagger
- * /organizations/{id}:
+ * /institutions/{id}:
  *   get:
  *     summary: Get specific organization by ID
  *     description: Retrieve detailed information about a specific academic institution or organization by their unique identifier.
- *     tags: [Organizations]
+ *     tags: [Institutions]
  *     parameters:
  *       - in: path
  *         name: id
@@ -178,11 +195,11 @@ router.get('/:id', validateOrganizationId, organizationsController.getOrganizati
 
 /**
  * @swagger
- * /organizations/{id}/works:
+ * /institutions/{id}/works:
  *   get:
  *     summary: Get works published by organization members
  *     description: Retrieve a paginated list of academic works (publications, papers, articles) authored by members affiliated with the specified organization. Supports filtering by work type, publication year, and language.
- *     tags: [Organizations]
+ *     tags: [Institutions]
  *     parameters:
  *       - in: path
  *         name: id
