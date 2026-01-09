@@ -17,6 +17,7 @@ This document guides automated agents and collaborators on how to analyze, imple
   - Generated documentation: `docs/`
 
 Operational directive: keep absolute cleanliness, technical clarity, hierarchy, and standardization. Do not version generated artifacts, logs, backups, or dumps. Remove out-of-scope content.
+Operational directive: at the end of each session or significant change, create a commit summarizing the work.
 
 ## Response Conventions
 - Respond via `responseFormatter` (global in `src/app.js`).
