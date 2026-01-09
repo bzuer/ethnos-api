@@ -99,6 +99,7 @@ class PersonsController {
       const { id } = req.params;
       const pagination = normalizePagination(req.query);
       const { page, limit, offset } = pagination;
+      const { role } = req.query;
       
       const result = await personsService.getPersonWorks(id, { page, limit, offset, role });
       
