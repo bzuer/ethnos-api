@@ -137,6 +137,7 @@ is_running() {
 
 cleanup_ports() {
     local ports=("$API_PORT" "6379")
+    local failed=0
     
     for port in "${ports[@]}"; do
         log "Checking port $port..."
@@ -159,16 +160,26 @@ cleanup_ports() {
                 fi
             done
             
-            sleep 1
-            if lsof -i:$port &>/dev/null; then
+            local attempt
+            local freed=0
+            for attempt in 1 2 3 4 5; do
+                if ! lsof -i:$port &>/dev/null; then
+                    log "Port $port is now available"
+                    freed=1
+                    break
+                fi
+                sleep 1
+            done
+            if [ "$freed" -eq 0 ]; then
                 error "Failed to free port $port"
-            else
-                log "Port $port is now available"
+                failed=1
             fi
         else
             log "Port $port is available"
         fi
     done
+
+    return "$failed"
 }
 
 kill_all_processes() {
@@ -335,6 +346,7 @@ hard_restart() {
 }
 
 start_server() {
+    local pm2_attempted=0
     if pm2_is_online; then
         warning "Server is already running under PM2"
         return 1
@@ -362,7 +374,10 @@ start_server() {
     fi
 
     ensure_directories
-    cleanup_ports
+    if ! cleanup_ports; then
+        error "Required ports are still in use"
+        return 1
+    fi
     log "Checking database connection..."
     # Create temporary MySQL config file
     MYSQL_CONFIG=$(mktemp)
@@ -383,9 +398,13 @@ EOF
     rm -f "$MYSQL_CONFIG"
 
     if pm2_can_start; then
+        pm2_attempted=1
         log "Starting server with PM2 using $PM2_CONFIG"
-        "$PM2_BIN_RESOLVED" start "$PM2_CONFIG" --only "$PM2_APP_NAME" --env production >/dev/null
-        "$PM2_BIN_RESOLVED" save >/dev/null 2>&1 || true
+        if "$PM2_BIN_RESOLVED" start "$PM2_CONFIG" --only "$PM2_APP_NAME" --env production >/dev/null; then
+            "$PM2_BIN_RESOLVED" save >/dev/null 2>&1 || true
+        else
+            warning "PM2 start returned a non-zero exit code"
+        fi
         sleep 3
         if pm2_is_online; then
             log "Server started successfully under PM2"
@@ -394,10 +413,10 @@ EOF
         fi
         error "PM2 failed to start the server"
         "$PM2_BIN_RESOLVED" logs "$PM2_APP_NAME" --lines 20 --nostream 2>/dev/null || true
-        return 1
+        warning "Falling back to nohup start"
     fi
 
-    if [ "$USE_PM2" -eq 1 ]; then
+    if [ "$USE_PM2" -eq 1 ] && [ "$pm2_attempted" -eq 0 ]; then
         if pm2_can_control; then
             warning "PM2 configuration missing at $PM2_CONFIG; starting with nohup"
         else
