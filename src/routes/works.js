@@ -127,7 +127,7 @@ const validateWorksQuery = [
  * /works/showcase:
  *   get:
  *     summary: Get works list optimized for browsing (showcase)
- *     description: High-performance endpoint for browsing works using pre-compiled summary table. Optimized for speed with minimal JOINs.
+ *     description: High-performance endpoint for browsing works using pre-compiled summary table. Returns all columns from sphinx_works_summary plus derived browsing fields.
  *     tags: [Works]
  *     parameters:
  *       - in: query

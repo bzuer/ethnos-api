@@ -130,9 +130,45 @@ Notes
               example: 'This paper presents a comprehensive survey of machine learning applications in academic research, covering methodologies, tools, and emerging trends across multiple disciplines. We analyze current approaches, identify gaps, and propose future research directions.',
               description: 'Abstract or summary of the work'
             },
+            author_string: {
+              type: 'string',
+              nullable: true,
+              example: 'Maria S. Santos;Joao C. Lima;Ana P. Costa',
+              description: 'Raw author list from summary index'
+            },
+            subjects_string: {
+              type: 'string',
+              nullable: true,
+              example: 'machine learning; bibliometrics; data mining',
+              description: 'Raw subjects list from summary index'
+            },
+            venue_name: {
+              type: 'string',
+              nullable: true,
+              example: 'Nature Machine Intelligence',
+              description: 'Raw venue name from summary index'
+            },
+            created_ts: {
+              type: 'integer',
+              nullable: true,
+              example: 1705365000,
+              description: 'Unix timestamp from summary index'
+            },
+            year: {
+              type: 'integer',
+              nullable: true,
+              example: 2023,
+              description: 'Year from summary index'
+            },
+            work_type: {
+              type: 'string',
+              enum: ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'],
+              example: 'ARTICLE',
+              description: 'Raw work type from summary index'
+            },
             type: {
               type: 'string',
-              enum: ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'REPORT', 'DATASET', 'OTHER'],
+              enum: ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'],
               example: 'ARTICLE',
               description: 'Type of academic work'
             },

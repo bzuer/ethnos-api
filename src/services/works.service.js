@@ -146,16 +146,20 @@ class WorksService {
           id,
           title,
           subtitle,
+          abstract,
+          author_string,
+          venue_name,
+          doi,
+          created_ts,
+          year as publication_year,
+          year,
           work_type,
           language,
-          FROM_UNIXTIME(created_ts) as created_at,
-          author_string,
-          (LENGTH(author_string) - LENGTH(REPLACE(author_string, ';', '')) + 1) as author_count,
-          venue_name,
-          year as publication_year,
-          doi,
           open_access,
-          peer_reviewed
+          peer_reviewed,
+          subjects_string,
+          FROM_UNIXTIME(created_ts) as created_at,
+          (LENGTH(author_string) - LENGTH(REPLACE(author_string, ';', '')) + 1) as author_count
         FROM sphinx_works_summary
         WHERE ${whereConditions.join(' AND ')}
         ORDER BY id DESC
@@ -172,20 +176,36 @@ class WorksService {
       
       const primaryQueryMs = Number(((process.hrtime.bigint() - primaryQueryStart) / BigInt(1e6)).toString());
 
-      const formattedWorks = works.map(work => ({
-        id: work.id,
-        title: work.title,
-        type: work.work_type,
-        publication_year: work.publication_year,
-        language: work.language,
-        open_access: Boolean(work.open_access),
-        peer_reviewed: Boolean(work.peer_reviewed),
-        doi: work.doi,
-        venue: work.venue_name ? { name: work.venue_name, type: null } : null,
-        authors_preview: work.author_string ? work.author_string.split(';').map(a => a.trim()) : [],
-        author_count: work.author_count,
-        first_author: work.author_string ? work.author_string.split(';')[0]?.trim() : null
-      }));
+      const formattedWorks = works.map(work => {
+        const base = formatWorkListItem({
+          id: work.id,
+          title: work.title,
+          subtitle: work.subtitle,
+          abstract: work.abstract,
+          work_type: work.work_type,
+          language: work.language,
+          publication_year: work.publication_year,
+          doi: work.doi,
+          open_access: work.open_access,
+          peer_reviewed: work.peer_reviewed,
+          venue_name: work.venue_name,
+          author_string: work.author_string,
+          author_count: work.author_count,
+          first_author: work.author_string ? work.author_string.split(';')[0]?.trim() : null,
+          created_at: work.created_at
+        });
+
+        return {
+          ...base,
+          author_string: typeof work.author_string === 'string' ? work.author_string : null,
+          subjects_string: typeof work.subjects_string === 'string' ? work.subjects_string : null,
+          venue_name: typeof work.venue_name === 'string' ? work.venue_name : null,
+          work_type: work.work_type || null,
+          year: work.year !== undefined && work.year !== null ? work.year : null,
+          created_ts: work.created_ts !== undefined && work.created_ts !== null ? work.created_ts : null,
+          created_at: work.created_at || null
+        };
+      });
 
       const result = {
         data: formattedWorks,
