@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_SCRIPT="$ROOT_DIR/server.sh"
 DATA_CHECK_SCRIPT="$ROOT_DIR/scripts/check-data-integrity.js"
+SERVICE_NAME="${SERVICE_NAME:-ethnos-api.service}"
 # Canonical Sphinx configuration (consolidated)
 SPHINX_CONFIG_TEMPLATE="${SPHINX_CONFIG_TEMPLATE:-$ROOT_DIR/config/sphinx-unified.conf}"
 SPHINX_CONFIG_RENDERED="${SPHINX_CONFIG_RENDERED:-/var/run/ethnos-api/sphinx.conf}"
@@ -35,6 +36,34 @@ require_command() {
   if ! command -v "$1" &>/dev/null; then
     err "Required command '$1' not found in PATH"
     exit 1
+  fi
+}
+
+systemd_available() {
+  command -v systemctl >/dev/null 2>&1
+}
+
+systemd_service_available() {
+  systemd_available || return 1
+  systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}' | grep -Fxq "$SERVICE_NAME"
+}
+
+systemd_run() {
+  if [ "$(id -u)" -eq 0 ]; then
+    systemctl "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo systemctl "$@"
+  else
+    systemctl "$@"
+  fi
+}
+
+api_control() {
+  local action="$1"
+  if systemd_service_available; then
+    systemd_run "$action" "$SERVICE_NAME"
+  else
+    "$SERVER_SCRIPT" "$action"
   fi
 }
 
@@ -266,7 +295,7 @@ ensure_server_script_ready() {
 run_core_maintenance_steps() {
   ensure_server_script_ready
   log "Stopping existing server (if running)"
-  "$SERVER_SCRIPT" stop || true
+  api_control stop || true
   log "Stopping Sphinx searchd (if running)"
   cmd_sphinx_stop || true
   log "Cleaning repository logs"
@@ -313,17 +342,17 @@ cmd_deploy() {
   run_full_test_suite
 
   log "Restarting server"
-  "$SERVER_SCRIPT" restart
+  api_control restart
 
   log "Deploy completed"
 }
 
 cmd_start() {
-  "$SERVER_SCRIPT" start
+  api_control start
 }
 
 cmd_stop() {
-  "$SERVER_SCRIPT" stop
+  api_control stop
 }
 
 cmd_restart() {
@@ -336,7 +365,7 @@ cmd_restart() {
   cmd_sphinx_start || true
 
   log "Restarting server"
-  "$SERVER_SCRIPT" restart
+  api_control restart
 
   log "Restart sequence completed"
 }
