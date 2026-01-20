@@ -11,7 +11,7 @@ ENV_FILE="/etc/node-backend.env"
 PM2_APP_NAME="${PM2_APP_NAME:-$API_NAME}"
 PM2_CONFIG="${PM2_CONFIG:-$ROOT_DIR/pm2.config.cjs}"
 PM2_BIN_RESOLVED=""
-USE_PM2_VALUE="${USE_PM2:-1}"
+USE_PM2_VALUE="${USE_PM2:-0}"
 
 case "$USE_PM2_VALUE" in
     0|false|FALSE|no|NO|disabled|DISABLED)
