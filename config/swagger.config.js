@@ -63,17 +63,6 @@ Notes
           },
           required: ['status', 'data']
         },
-        Pagination: {
-          type: 'object',
-          properties: {
-            total: { type: 'integer', example: 6894 },
-            limit: { type: 'integer', example: 20 },
-            offset: { type: 'integer', example: 0 },
-            pages: { type: 'integer', example: 345 },
-            hasNext: { type: 'boolean', example: true },
-            hasPrev: { type: 'boolean', example: false }
-          }
-        },
         PerformanceMeta: {
           type: 'object',
           properties: {
