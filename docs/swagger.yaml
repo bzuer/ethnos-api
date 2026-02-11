@@ -3239,6 +3239,17 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/SuccessEnvelope"
+    WorkDetailsSuccess:
+      description: Work details retrieved successfully
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessEnvelope"
+              - type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Work"
     CourseDetailsSuccess:
       description: Course details retrieved successfully
       content:
@@ -3408,6 +3419,9 @@ tags:
       url: https://ethnos.app
   - name: Dashboard
     description: Real-time analytics and trends (access key required).
+    externalDocs:
+      description: Dashboard API Documentation
+      url: https://ethnos.app
   - name: Courses
     description: Academic courses with instructors, bibliography and subjects.
     externalDocs:
@@ -3430,6 +3444,9 @@ tags:
       url: https://ethnos.app
   - name: Subjects
     description: Subject taxonomy and subject-linked listings
+    externalDocs:
+      description: Subjects API Documentation
+      url: https://ethnos.app
 paths:
   /bibliographies:
     get:
@@ -6780,7 +6797,7 @@ paths:
           example: true
       responses:
         "200":
-          $ref: "#/components/responses/Success"
+          $ref: "#/components/responses/WorkDetailsSuccess"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -6821,7 +6838,6 @@ paths:
           schema:
             type: integer
             minimum: 1900
-            maximum: 2030
           description: Filter courses from this year
           example: 2020
         - in: query
@@ -6829,7 +6845,6 @@ paths:
           schema:
             type: integer
             minimum: 1900
-            maximum: 2030
           description: Filter courses up to this year
           example: 2025
         - in: query

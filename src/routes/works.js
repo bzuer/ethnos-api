@@ -240,7 +240,7 @@ router.get('/', validateWorksQuery, worksController.getWorks);
  *         example: true
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         $ref: '#/components/responses/WorkDetailsSuccess'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       404:
@@ -280,7 +280,6 @@ router.get('/:id', validateWorkId, worksController.getWork);
  *         schema:
  *           type: integer
  *           minimum: 1900
- *           maximum: 2030
  *         description: Filter courses from this year
  *         example: 2020
  *       - in: query
@@ -288,7 +287,6 @@ router.get('/:id', validateWorkId, worksController.getWork);
  *         schema:
  *           type: integer
  *           minimum: 1900
- *           maximum: 2030
  *         description: Filter courses up to this year
  *         example: 2025
  *       - in: query

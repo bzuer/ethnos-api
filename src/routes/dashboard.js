@@ -3,6 +3,9 @@
  * tags:
  *   name: Dashboard
  *   description: Real-time analytics dashboard for search performance and system metrics
+ *   externalDocs:
+ *     description: Dashboard API Documentation
+ *     url: https://ethnos.app
  */
 
 const express = require('express');

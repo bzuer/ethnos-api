@@ -1,3 +1,13 @@
+/**
+ * @swagger
+ * tags:
+ *   name: Security
+ *   description: Security metrics, rate limiting stats, and IP management
+ *   externalDocs:
+ *     description: Security API Documentation
+ *     url: https://ethnos.app
+ */
+
 const express = require('express');
 const router = express.Router();
 const { param, validationResult } = require('express-validator');

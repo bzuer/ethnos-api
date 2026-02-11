@@ -3772,6 +3772,24 @@ const options = {
             }
           }
         },
+        WorkDetailsSuccess: {
+          description: 'Work details retrieved successfully',
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/SuccessEnvelope' },
+                  {
+                    type: 'object',
+                    properties: {
+                      data: { $ref: '#/components/schemas/Work' }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
         CourseDetailsSuccess: {
           description: 'Course details retrieved successfully',
           content: {
@@ -4038,7 +4056,11 @@ const options = {
 
       {
         name: 'Dashboard',
-        description: 'Real-time analytics and trends (access key required).'
+        description: 'Real-time analytics and trends (access key required).',
+        externalDocs: {
+          description: 'Dashboard API Documentation',
+          url: 'https://ethnos.app'
+        }
       },
       {
         name: 'Courses',
@@ -4070,6 +4092,14 @@ const options = {
         description: 'Name signatures and author-identity linkage operations.',
         externalDocs: {
           description: 'Signatures API Documentation',
+          url: 'https://ethnos.app'
+        }
+      },
+      {
+        name: 'Subjects',
+        description: 'Subject taxonomy and subject-linked listings',
+        externalDocs: {
+          description: 'Subjects API Documentation',
           url: 'https://ethnos.app'
         }
       }

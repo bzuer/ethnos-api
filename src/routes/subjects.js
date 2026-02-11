@@ -3,6 +3,9 @@
  * tags:
  *   name: Subjects
  *   description: Subject taxonomy and subject-linked listings
+ *   externalDocs:
+ *     description: Subjects API Documentation
+ *     url: https://ethnos.app
  */
 
 const express = require('express');

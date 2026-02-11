@@ -4198,6 +4198,28 @@
           }
         }
       },
+      "WorkDetailsSuccess": {
+        "description": "Work details retrieved successfully",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Work"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
       "CourseDetailsSuccess": {
         "description": "Course details retrieved successfully",
         "content": {
@@ -4483,7 +4505,11 @@
     },
     {
       "name": "Dashboard",
-      "description": "Real-time analytics and trends (access key required)."
+      "description": "Real-time analytics and trends (access key required).",
+      "externalDocs": {
+        "description": "Dashboard API Documentation",
+        "url": "https://ethnos.app"
+      }
     },
     {
       "name": "Courses",
@@ -4519,7 +4545,11 @@
     },
     {
       "name": "Subjects",
-      "description": "Subject taxonomy and subject-linked listings"
+      "description": "Subject taxonomy and subject-linked listings",
+      "externalDocs": {
+        "description": "Subjects API Documentation",
+        "url": "https://ethnos.app"
+      }
     }
   ],
   "paths": {
@@ -9695,7 +9725,7 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Success"
+            "$ref": "#/components/responses/WorkDetailsSuccess"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -9751,8 +9781,7 @@
             "name": "year_from",
             "schema": {
               "type": "integer",
-              "minimum": 1900,
-              "maximum": 2030
+              "minimum": 1900
             },
             "description": "Filter courses from this year",
             "example": 2020
@@ -9762,8 +9791,7 @@
             "name": "year_to",
             "schema": {
               "type": "integer",
-              "minimum": 1900,
-              "maximum": 2030
+              "minimum": 1900
             },
             "description": "Filter courses up to this year",
             "example": 2025
