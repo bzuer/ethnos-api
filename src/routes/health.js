@@ -27,7 +27,7 @@ const router = express.Router();
  *       200:
  *         $ref: '#/components/responses/Success'
  *       503:
- *         $ref: '#/components/responses/BadRequest'
+ *         $ref: '#/components/responses/ServiceUnavailable'
  */
 router.get('/readiness', requireInternalAccessKey, catchAsync(async (req, res) => {
   const dbStatus = await testConnection().catch(() => false);

@@ -3,7 +3,7 @@
   "info": {
     "title": "Ethnos.app Academic Bibliography API",
     "version": "2.0.0",
-    "description": "REST API for academic bibliography: search, works, persons, institutions, venues, courses, citations, collaborations and health.\n\nHighlights\n- Public endpoints; selected admin/metrics routes require 'x-access-key'.\n- Standard response envelope: { status, data, pagination?, meta? }.\n- Pagination supports page/limit and offset/limit.\n- Identifiers: DOI, ORCID, ROR, ISSN.\n\nNotes\n- Rate limiting is configurable via environment and enabled by default.\n- Performance and dataset size vary by deployment.",
+    "description": "REST API for academic bibliography: search, works, persons, institutions, venues, courses, citations, collaborations and health.\n\nHighlights\n- Public endpoints; selected admin/metrics routes require 'x-access-key'.\n- API is read-only by design; the only mutating endpoint is POST /security/unblock/{ip}.\n- Standard response envelope: { status, data, pagination?, meta? }.\n- Pagination supports page/limit and offset/limit.\n- Identifiers: DOI, ORCID, ROR, ISSN.\n\nNotes\n- Rate limiting is configurable via environment and enabled by default.\n- Performance and dataset size vary by deployment.",
     "contact": {
       "name": "Bruno Cesar Cunha Cruz, PhD Student"
     },
@@ -602,7 +602,12 @@
             "example": "2023-06-20T14:22:00Z",
             "description": "Last update timestamp"
           }
-        }
+        },
+        "required": [
+          "id",
+          "title",
+          "type"
+        ]
       },
       "Person": {
         "type": "object",
@@ -1477,7 +1482,15 @@
             "example": false,
             "description": "Whether there is a previous page"
           }
-        }
+        },
+        "required": [
+          "total",
+          "page",
+          "limit",
+          "totalPages",
+          "hasNext",
+          "hasPrev"
+        ]
       },
       "HealthStatus": {
         "type": "object",
@@ -1643,9 +1656,20 @@
                     "type": "integer",
                     "example": 1000
                   }
-                }
+                },
+                "required": [
+                  "avg_response_time_ms",
+                  "p95_response_time_ms",
+                  "total_samples"
+                ]
               }
-            }
+            },
+            "required": [
+              "total",
+              "by_status",
+              "top_endpoints",
+              "performance"
+            ]
           },
           "errors": {
             "type": "object",
@@ -1669,7 +1693,13 @@
                 "format": "float",
                 "example": 0.78
               }
-            }
+            },
+            "required": [
+              "total",
+              "by_type",
+              "recent_count",
+              "error_rate"
+            ]
           },
           "system": {
             "type": "object",
@@ -1703,9 +1733,23 @@
                 "type": "integer",
                 "example": 16384
               }
-            }
+            },
+            "required": [
+              "memory",
+              "cpu_cores",
+              "load_average",
+              "free_memory_mb",
+              "total_memory_mb"
+            ]
           }
-        }
+        },
+        "required": [
+          "uptime_ms",
+          "uptime_human",
+          "requests",
+          "errors",
+          "system"
+        ]
       },
       "DashboardStats": {
         "type": "object",
@@ -2294,7 +2338,18 @@
             "type": "object",
             "additionalProperties": true
           }
-        }
+        },
+        "required": [
+          "id",
+          "code",
+          "name",
+          "program_id",
+          "semester",
+          "year",
+          "metrics",
+          "instructors_preview",
+          "created_at"
+        ]
       },
       "CourseInstructor": {
         "type": "object",
@@ -2626,7 +2681,16 @@
             "format": "date-time",
             "nullable": true
           }
-        }
+        },
+        "required": [
+          "person_id",
+          "preferred_name",
+          "identifiers",
+          "is_verified",
+          "teaching_metrics",
+          "roles",
+          "program_ids"
+        ]
       },
       "Subject": {
         "type": "object",
@@ -2940,7 +3004,18 @@
             },
             "description": "Course distribution by semester"
           }
-        }
+        },
+        "required": [
+          "total_courses",
+          "programs_count",
+          "earliest_year",
+          "latest_year",
+          "semesters_count",
+          "avg_credits",
+          "courses_with_credits",
+          "year_distribution",
+          "semester_distribution"
+        ]
       },
       "InstructorsStatistics": {
         "type": "object",
@@ -3016,7 +3091,15 @@
             },
             "description": "Top instructors by course count"
           }
-        }
+        },
+        "required": [
+          "total_instructors",
+          "total_courses_taught",
+          "programs_with_instructors",
+          "avg_courses_per_instructor",
+          "role_distribution",
+          "top_instructors"
+        ]
       },
       "SubjectsStatistics": {
         "type": "object",
@@ -4285,6 +4368,21 @@
           }
         }
       },
+      "ServiceUnavailable": {
+        "description": "Service unavailable - Required dependencies are unavailable",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "status": "error",
+              "message": "Service dependencies are not available",
+              "code": "INTERNAL_ERROR"
+            }
+          }
+        }
+      },
       "Forbidden": {
         "description": "Access forbidden - Insufficient permissions",
         "content": {
@@ -4413,7 +4511,11 @@
     },
     {
       "name": "Signatures",
-      "description": "Name signatures and author identification"
+      "description": "Name signatures and author-identity linkage operations.",
+      "externalDocs": {
+        "description": "Signatures API Documentation",
+        "url": "https://ethnos.app"
+      }
     },
     {
       "name": "Subjects",
@@ -5506,7 +5608,7 @@
             "$ref": "#/components/responses/Success"
           },
           "503": {
-            "$ref": "#/components/responses/BadRequest"
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -6655,14 +6757,7 @@
             }
           },
           "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/responses/RateLimitExceeded"
-                }
-              }
-            }
+            "$ref": "#/components/responses/RateLimitExceeded"
           },
           "500": {
             "description": "Internal server error"

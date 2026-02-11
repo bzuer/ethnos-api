@@ -355,11 +355,7 @@ router.get('/:id', validateOrganizationId, organizationsController.getOrganizati
  *             schema:
  *               $ref: '#/components/schemas/Error'
  *       429:
- *         description: Rate limit exceeded
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/responses/RateLimitExceeded'
+ *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         description: Internal server error
  */

@@ -11,6 +11,7 @@ const options = {
           '',
           'Highlights',
           "- Public endpoints; selected admin/metrics routes require 'x-access-key'.",
+          '- API is read-only by design; the only mutating endpoint is POST /security/unblock/{ip}.',
           '- Standard response envelope: { status, data, pagination?, meta? }.',
           '- Pagination supports page/limit and offset/limit.',
           '- Identifiers: DOI, ORCID, ROR, ISSN.',
@@ -430,7 +431,8 @@ const options = {
               example: '2023-06-20T14:22:00Z',
               description: 'Last update timestamp'
             }
-          }
+          },
+          required: ['id', 'title', 'type']
         },
         Person: {
           type: 'object',
@@ -1255,7 +1257,8 @@ const options = {
               example: false,
               description: 'Whether there is a previous page'
             }
-          }
+          },
+          required: ['total', 'page', 'limit', 'totalPages', 'hasNext', 'hasPrev']
         },
         HealthStatus: {
           type: 'object',
@@ -1411,9 +1414,11 @@ const options = {
                       type: 'integer',
                       example: 1000
                     }
-                  }
+                  },
+                  required: ['avg_response_time_ms', 'p95_response_time_ms', 'total_samples']
                 }
-              }
+              },
+              required: ['total', 'by_status', 'top_endpoints', 'performance']
             },
             errors: {
               type: 'object',
@@ -1437,7 +1442,8 @@ const options = {
                   format: 'float',
                   example: 0.78
                 }
-              }
+              },
+              required: ['total', 'by_type', 'recent_count', 'error_rate']
             },
             system: {
               type: 'object',
@@ -1467,9 +1473,11 @@ const options = {
                   type: 'integer',
                   example: 16384
                 }
-              }
+              },
+              required: ['memory', 'cpu_cores', 'load_average', 'free_memory_mb', 'total_memory_mb']
             }
-          }
+          },
+          required: ['uptime_ms', 'uptime_human', 'requests', 'errors', 'system']
         },
         DashboardStats: {
           type: 'object',
@@ -2036,7 +2044,8 @@ const options = {
               type: 'object',
               additionalProperties: true
             }
-          }
+          },
+          required: ['id', 'code', 'name', 'program_id', 'semester', 'year', 'metrics', 'instructors_preview', 'created_at']
         },
         CourseInstructor: {
           type: 'object',
@@ -2350,7 +2359,8 @@ const options = {
               format: 'date-time',
               nullable: true
             }
-          }
+          },
+          required: ['person_id', 'preferred_name', 'identifiers', 'is_verified', 'teaching_metrics', 'roles', 'program_ids']
         },
         Subject: {
           type: 'object',
@@ -2643,7 +2653,8 @@ const options = {
               },
               description: 'Course distribution by semester'
             }
-          }
+          },
+          required: ['total_courses', 'programs_count', 'earliest_year', 'latest_year', 'semesters_count', 'avg_credits', 'courses_with_credits', 'year_distribution', 'semester_distribution']
         },
         InstructorsStatistics: {
           type: 'object',
@@ -2719,7 +2730,8 @@ const options = {
               },
               description: 'Top instructors by course count'
             }
-          }
+          },
+          required: ['total_instructors', 'total_courses_taught', 'programs_with_instructors', 'avg_courses_per_instructor', 'role_distribution', 'top_instructors']
         },
         SubjectsStatistics: {
           type: 'object',
@@ -3910,6 +3922,21 @@ const options = {
             }
           }
         },
+        ServiceUnavailable: {
+          description: 'Service unavailable - Required dependencies are unavailable',
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/Error'
+              },
+              example: {
+                status: 'error',
+                message: 'Service dependencies are not available',
+                code: 'INTERNAL_ERROR'
+              }
+            }
+          }
+        },
         Forbidden: {
           description: 'Access forbidden - Insufficient permissions',
           content: {
@@ -4035,6 +4062,14 @@ const options = {
         description: 'Course bibliography, usage analysis, assignments.',
         externalDocs: {
           description: 'Bibliography API Documentation',
+          url: 'https://ethnos.app'
+        }
+      },
+      {
+        name: 'Signatures',
+        description: 'Name signatures and author-identity linkage operations.',
+        externalDocs: {
+          description: 'Signatures API Documentation',
           url: 'https://ethnos.app'
         }
       }
