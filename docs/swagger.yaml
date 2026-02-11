@@ -6306,21 +6306,28 @@ paths:
       tags:
         - Works
       parameters:
-        - in: query
-          name: include_citations
+        - in: path
+          name: id
           required: true
           schema:
-            type: boolean
+            type: integer
             minimum: 1
+          description: Unique identifier of the work
+          example: 123456
+        - in: query
+          name: include_citations
+          schema:
+            type: boolean
             default: true
           description: Include inline citations (cited_by) in the work payload
-          example: 123456
+          example: true
         - in: query
           name: include_references
           schema:
             type: boolean
             default: true
           description: Include inline references list in the work payload
+          example: true
       responses:
         "200":
           $ref: "#/components/responses/Success"

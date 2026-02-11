@@ -228,6 +228,20 @@ router.get('/', validateWorksQuery, worksController.getWorks);
  *           minimum: 1
  *         description: Unique identifier of the work
  *         example: 123456
+ *       - in: query
+ *         name: include_citations
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include inline citations (cited_by) in the work payload
+ *         example: true
+ *       - in: query
+ *         name: include_references
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include inline references list in the work payload
+ *         example: true
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
@@ -239,24 +253,6 @@ router.get('/', validateWorksQuery, worksController.getWorks);
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
- */
-/**
- * @swagger
- * /works/{id}:
- *   get:
- *     parameters:
- *       - in: query
- *         name: include_citations
- *         schema:
- *           type: boolean
- *           default: true
- *         description: Include inline citations (cited_by) in the work payload
- *       - in: query
- *         name: include_references
- *         schema:
- *           type: boolean
- *           default: true
- *         description: Include inline references list in the work payload
  */
 router.get('/:id', validateWorkId, worksController.getWork);
 

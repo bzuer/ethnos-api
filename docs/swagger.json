@@ -9037,16 +9037,25 @@
         ],
         "parameters": [
           {
-            "in": "query",
-            "name": "include_citations",
+            "in": "path",
+            "name": "id",
             "required": true,
             "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Unique identifier of the work",
+            "example": 123456
+          },
+          {
+            "in": "query",
+            "name": "include_citations",
+            "schema": {
               "type": "boolean",
-              "minimum": 1,
               "default": true
             },
             "description": "Include inline citations (cited_by) in the work payload",
-            "example": 123456
+            "example": true
           },
           {
             "in": "query",
@@ -9055,7 +9064,8 @@
               "type": "boolean",
               "default": true
             },
-            "description": "Include inline references list in the work payload"
+            "description": "Include inline references list in the work payload",
+            "example": true
           }
         ],
         "responses": {
