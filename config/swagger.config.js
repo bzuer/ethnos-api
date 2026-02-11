@@ -96,6 +96,7 @@ Notes
         },
         Work: {
           type: 'object',
+          description: 'Canonical work payload used across list and detail endpoints. List responses expose top-level publication_year; detailed responses expose publication.year. Legacy aliases work_type and year may appear in /works/showcase for backward compatibility.',
           properties: {
             id: {
               type: 'integer',
@@ -147,25 +148,29 @@ Notes
               type: 'integer',
               nullable: true,
               example: 2023,
-              description: 'Year from summary index'
+              deprecated: true,
+              description: 'Legacy alias from sphinx_works_summary. Returned only by /works/showcase. Prefer publication_year in list payloads or publication.year in detailed payloads.'
             },
             work_type: {
               type: 'string',
+              nullable: true,
               enum: ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'],
               example: 'ARTICLE',
-              description: 'Raw work type from summary index'
+              deprecated: true,
+              description: 'Legacy alias from sphinx_works_summary. Returned only by /works/showcase. Prefer type.'
             },
             type: {
               type: 'string',
+              nullable: true,
               enum: ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'],
               example: 'ARTICLE',
-              description: 'Type of academic work'
+              description: 'Canonical work type used by list/search/detail responses. In /works/showcase, this is semantically equivalent to work_type.'
             },
             publication_year: {
               type: 'integer',
               nullable: true,
               example: 2023,
-              description: 'Publication year for list items (also present as publication.year in details)'
+              description: 'Canonical top-level publication year for list/search/showcase responses. In detailed /works/{id} responses, the canonical year is publication.year.'
             },
             language: {
               type: 'string',
@@ -196,7 +201,7 @@ Notes
                   type: 'integer',
                   nullable: true,
                   example: 2023,
-                  description: 'Publication year'
+                  description: 'Canonical publication year in detailed /works/{id} responses. Equivalent to publication_year in list/search/showcase responses.'
                 },
                 volume: {
                   type: 'string',
