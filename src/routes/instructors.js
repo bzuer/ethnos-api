@@ -153,7 +153,7 @@ router.get('/', validateInstructorList, instructorsController.getInstructors);
  *     tags: [Instructors]
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         $ref: '#/components/responses/InstructorsStatisticsSuccess'
  */
 router.get('/statistics', instructorsController.getInstructorsStatistics);
 
@@ -171,7 +171,7 @@ router.get('/statistics', instructorsController.getInstructorsStatistics);
  *           type: integer
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         $ref: '#/components/responses/InstructorDetailsSuccess'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  */

@@ -89,7 +89,7 @@ router.get('/', validateCoursesList, coursesController.getCourses);
  *     tags: [Courses]
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         $ref: '#/components/responses/CoursesStatisticsSuccess'
  */
 router.get('/statistics', coursesController.getCoursesStatistics);
 
@@ -107,7 +107,7 @@ router.get('/statistics', coursesController.getCoursesStatistics);
  *           type: integer
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         $ref: '#/components/responses/CourseDetailsSuccess'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  */

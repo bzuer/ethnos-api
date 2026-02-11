@@ -74,7 +74,7 @@ router.get('/liveness', (req, res) => {
  *       - XAccessKey: []
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         $ref: '#/components/responses/HealthMetricsSuccess'
  */
 router.get('/metrics', requireInternalAccessKey, catchAsync(async (req, res) => {
   const metrics = getMetrics();

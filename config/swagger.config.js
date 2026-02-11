@@ -6,19 +6,19 @@ const options = {
     info: {
         title: 'Ethnos.app Academic Bibliography API',
         version: '2.0.0',
-        description: `
-REST API for academic bibliography: search, works, persons, institutions, venues, courses, citations, collaborations and health.
-
-Highlights
-- Public endpoints; selected admin/metrics routes require 'x-access-key'.
-- Standard response envelope: { status, data, pagination?, meta? }.
-- Pagination supports page/limit and offset/limit.
-- Identifiers: DOI, ORCID, ROR, ISSN.
-
-Notes
-- Rate limiting is configurable via environment and enabled by default.
-- Performance and dataset size vary by deployment.
-        `,
+        description: [
+          'REST API for academic bibliography: search, works, persons, institutions, venues, courses, citations, collaborations and health.',
+          '',
+          'Highlights',
+          "- Public endpoints; selected admin/metrics routes require 'x-access-key'.",
+          '- Standard response envelope: { status, data, pagination?, meta? }.',
+          '- Pagination supports page/limit and offset/limit.',
+          '- Identifiers: DOI, ORCID, ROR, ISSN.',
+          '',
+          'Notes',
+          '- Rate limiting is configurable via environment and enabled by default.',
+          '- Performance and dataset size vary by deployment.'
+        ].join('\n'),
       contact: {
         name: 'Bruno Cesar Cunha Cruz, PhD Student',
       },
@@ -1159,9 +1159,16 @@ Notes
               example: 789012,
               description: 'SciMag database identifier'
             },
+            openaccess_id: {
+              type: 'string',
+              nullable: true,
+              example: 'OA-123456',
+              description: 'Canonical identifier referencing the open access catalog'
+            },
             openacess_id: {
               type: 'string',
               nullable: true,
+              deprecated: true,
               example: 'OA-123456',
               description: 'Identifier referencing the open access catalog (files.openacess_id)'
             }
@@ -1339,6 +1346,126 @@ Notes
                       example: '0.5%'
                     }
                   }
+                }
+              }
+            }
+          }
+        },
+        HealthMetrics: {
+          type: 'object',
+          properties: {
+            uptime_ms: {
+              type: 'integer',
+              example: 86400000
+            },
+            uptime_human: {
+              type: 'string',
+              example: '1d 0h 0m'
+            },
+            requests: {
+              type: 'object',
+              properties: {
+                total: {
+                  type: 'integer',
+                  example: 15420
+                },
+                by_status: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'integer'
+                  },
+                  example: {
+                    200: 15000,
+                    404: 300,
+                    500: 120
+                  }
+                },
+                top_endpoints: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      endpoint: {
+                        type: 'string',
+                        example: 'GET /works'
+                      },
+                      count: {
+                        type: 'integer',
+                        example: 2140
+                      }
+                    }
+                  }
+                },
+                performance: {
+                  type: 'object',
+                  properties: {
+                    avg_response_time_ms: {
+                      type: 'integer',
+                      example: 63
+                    },
+                    p95_response_time_ms: {
+                      type: 'integer',
+                      example: 180
+                    },
+                    total_samples: {
+                      type: 'integer',
+                      example: 1000
+                    }
+                  }
+                }
+              }
+            },
+            errors: {
+              type: 'object',
+              properties: {
+                total: {
+                  type: 'integer',
+                  example: 120
+                },
+                by_type: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'integer'
+                  }
+                },
+                recent_count: {
+                  type: 'integer',
+                  example: 17
+                },
+                error_rate: {
+                  type: 'number',
+                  format: 'float',
+                  example: 0.78
+                }
+              }
+            },
+            system: {
+              type: 'object',
+              properties: {
+                memory: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'integer'
+                  }
+                },
+                cpu_cores: {
+                  type: 'integer',
+                  example: 8
+                },
+                load_average: {
+                  type: 'array',
+                  items: {
+                    type: 'number'
+                  },
+                  example: [0.42, 0.56, 0.61]
+                },
+                free_memory_mb: {
+                  type: 'integer',
+                  example: 6144
+                },
+                total_memory_mb: {
+                  type: 'integer',
+                  example: 16384
                 }
               }
             }
@@ -1700,6 +1827,217 @@ Notes
             }
           }
         },
+        CourseDetailedPayload: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'integer',
+              example: 25
+            },
+            code: {
+              type: 'string',
+              example: 'MNA201'
+            },
+            name: {
+              type: 'string',
+              example: 'AS-201 Instituições Comparadas'
+            },
+            credits: {
+              type: 'integer',
+              nullable: true,
+              example: 4
+            },
+            program_id: {
+              type: 'integer',
+              example: 2
+            },
+            semester: {
+              type: 'string',
+              example: '2'
+            },
+            year: {
+              type: 'integer',
+              example: 1968
+            },
+            metrics: {
+              type: 'object',
+              properties: {
+                instructor_count: {
+                  type: 'integer',
+                  example: 2
+                },
+                bibliography_count: {
+                  type: 'integer',
+                  example: 25
+                },
+                subject_count: {
+                  type: 'integer',
+                  example: 15
+                }
+              }
+            },
+            instructors_preview: {
+              type: 'array',
+              items: {
+                type: 'string'
+              },
+              example: ['Bruce Corrie', 'Roque de Barros Laraia']
+            },
+            created_at: {
+              type: 'string',
+              format: 'date-time',
+              nullable: true
+            },
+            source_file: {
+              type: 'string',
+              nullable: true,
+              example: '1968.2_-_mna201_-_bruce_corrie___roque_laraia.json'
+            },
+            bibliography: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  work_id: {
+                    type: 'integer',
+                    example: 2715248
+                  },
+                  title: {
+                    type: 'string',
+                    example: 'Changing Emphases in Social Structure'
+                  },
+                  publication_year: {
+                    type: 'integer',
+                    nullable: true,
+                    example: 1965
+                  },
+                  language: {
+                    type: 'string',
+                    nullable: true,
+                    example: 'en'
+                  },
+                  document_type: {
+                    type: 'string',
+                    example: 'ARTICLE'
+                  },
+                  open_access: {
+                    type: 'boolean',
+                    example: false
+                  },
+                  reading_type: {
+                    type: 'string',
+                    enum: ['REQUIRED', 'RECOMMENDED', 'SUPPLEMENTARY', 'OPTIONAL'],
+                    example: 'RECOMMENDED'
+                  },
+                  week_number: {
+                    type: 'integer',
+                    nullable: true,
+                    example: 3
+                  },
+                  notes: {
+                    type: 'string',
+                    nullable: true
+                  },
+                  authors_preview: {
+                    type: 'array',
+                    items: {
+                      type: 'string'
+                    }
+                  },
+                  author_count: {
+                    type: 'integer',
+                    example: 1
+                  },
+                  first_author_name: {
+                    type: 'string',
+                    nullable: true
+                  }
+                }
+              }
+            },
+            instructors: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  person_id: {
+                    type: 'integer',
+                    example: 31
+                  },
+                  preferred_name: {
+                    type: 'string',
+                    example: 'Bruce Corrie'
+                  },
+                  given_names: {
+                    type: 'string',
+                    nullable: true
+                  },
+                  family_name: {
+                    type: 'string',
+                    nullable: true
+                  },
+                  role: {
+                    type: 'string',
+                    example: 'PROFESSOR'
+                  },
+                  identifiers: {
+                    type: 'object',
+                    properties: {
+                      orcid: {
+                        type: 'string',
+                        nullable: true
+                      }
+                    }
+                  },
+                  is_verified: {
+                    type: 'boolean',
+                    example: true
+                  }
+                }
+              }
+            },
+            subjects: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'integer',
+                    example: 1
+                  },
+                  term: {
+                    type: 'string',
+                    example: 'Anthropology'
+                  },
+                  vocabulary: {
+                    type: 'string',
+                    example: 'KEYWORD'
+                  },
+                  parent_id: {
+                    type: 'integer',
+                    nullable: true
+                  },
+                  work_count: {
+                    type: 'integer',
+                    example: 15
+                  }
+                }
+              }
+            },
+            bibliography_statistics: {
+              type: 'object',
+              additionalProperties: true
+            },
+            instructor_statistics: {
+              type: 'object',
+              additionalProperties: true
+            },
+            subject_statistics: {
+              type: 'object',
+              additionalProperties: true
+            }
+          }
+        },
         CourseInstructor: {
           type: 'object',
           properties: {
@@ -1913,6 +2251,104 @@ Notes
               type: 'string',
               format: 'date-time',
               description: 'Creation timestamp'
+            }
+          }
+        },
+        InstructorDetailedPayload: {
+          type: 'object',
+          properties: {
+            person_id: {
+              type: 'integer',
+              example: 31
+            },
+            preferred_name: {
+              type: 'string',
+              example: 'Bruce Corrie'
+            },
+            given_names: {
+              type: 'string',
+              nullable: true,
+              example: 'Bruce'
+            },
+            family_name: {
+              type: 'string',
+              nullable: true,
+              example: 'Corrie'
+            },
+            identifiers: {
+              type: 'object',
+              properties: {
+                orcid: {
+                  type: 'string',
+                  nullable: true,
+                  example: '0000-0002-1825-0097'
+                },
+                lattes_id: {
+                  type: 'string',
+                  nullable: true,
+                  example: '1234567890123456'
+                },
+                scopus_id: {
+                  type: 'string',
+                  nullable: true,
+                  example: '57194582100'
+                }
+              }
+            },
+            is_verified: {
+              type: 'boolean',
+              example: true
+            },
+            teaching_metrics: {
+              type: 'object',
+              properties: {
+                courses_taught: {
+                  type: 'integer',
+                  example: 15
+                },
+                programs_count: {
+                  type: 'integer',
+                  example: 3
+                },
+                bibliography_contributed: {
+                  type: 'integer',
+                  example: 250
+                },
+                teaching_span: {
+                  type: 'object',
+                  properties: {
+                    earliest_year: {
+                      type: 'integer',
+                      nullable: true,
+                      example: 1968
+                    },
+                    latest_year: {
+                      type: 'integer',
+                      nullable: true,
+                      example: 2024
+                    }
+                  }
+                }
+              }
+            },
+            roles: {
+              type: 'array',
+              items: {
+                type: 'string'
+              },
+              example: ['PROFESSOR']
+            },
+            program_ids: {
+              type: 'array',
+              items: {
+                type: 'integer'
+              },
+              example: [2, 3]
+            },
+            created_at: {
+              type: 'string',
+              format: 'date-time',
+              nullable: true
             }
           }
         },
@@ -2736,8 +3172,8 @@ Notes
                   example: null
                 },
                 is_verified: {
-                  type: 'integer',
-                  example: 1
+                  type: 'boolean',
+                  example: true
                 },
                 created_at: {
                   type: 'string',
@@ -3299,8 +3735,7 @@ Notes
           required: false,
           schema: {
             type: 'integer',
-            minimum: 1900,
-            maximum: 2030
+            minimum: 1900
           }
         },
         yearToParam: {
@@ -3310,8 +3745,7 @@ Notes
           required: false,
           schema: {
             type: 'integer',
-            minimum: 1900,
-            maximum: 2030
+            minimum: 1900
           }
         }
       },
@@ -3322,6 +3756,96 @@ Notes
             'application/json': {
               schema: {
                 $ref: '#/components/schemas/SuccessEnvelope'
+              }
+            }
+          }
+        },
+        CourseDetailsSuccess: {
+          description: 'Course details retrieved successfully',
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/SuccessEnvelope' },
+                  {
+                    type: 'object',
+                    properties: {
+                      data: { $ref: '#/components/schemas/CourseDetailedPayload' }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        CoursesStatisticsSuccess: {
+          description: 'Course statistics retrieved successfully',
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/SuccessEnvelope' },
+                  {
+                    type: 'object',
+                    properties: {
+                      data: { $ref: '#/components/schemas/CoursesStatistics' }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        InstructorDetailsSuccess: {
+          description: 'Instructor details retrieved successfully',
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/SuccessEnvelope' },
+                  {
+                    type: 'object',
+                    properties: {
+                      data: { $ref: '#/components/schemas/InstructorDetailedPayload' }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        InstructorsStatisticsSuccess: {
+          description: 'Instructors statistics retrieved successfully',
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/SuccessEnvelope' },
+                  {
+                    type: 'object',
+                    properties: {
+                      data: { $ref: '#/components/schemas/InstructorsStatistics' }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        HealthMetricsSuccess: {
+          description: 'Detailed health metrics retrieved successfully',
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/SuccessEnvelope' },
+                  {
+                    type: 'object',
+                    properties: {
+                      data: { $ref: '#/components/schemas/HealthMetrics' }
+                    }
+                  }
+                ]
               }
             }
           }

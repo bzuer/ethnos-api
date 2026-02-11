@@ -381,7 +381,7 @@ describe('DTOs structure', () => {
     expect(listItem).toHaveProperty('openalex_id', 'W-1');
   });
 
-  test('Work DTO exposes openacess identifier for files', () => {
+  test('Work DTO exposes openaccess identifier while keeping legacy openacess alias', () => {
     const { formatWorkDetails } = require('../src/dto/work.dto');
     const work = {
       id: 99,
@@ -394,6 +394,7 @@ describe('DTOs structure', () => {
     };
     const details = formatWorkDetails(work);
     expect(details.files).toHaveLength(1);
+    expect(details.files[0]).toHaveProperty('openaccess_id', 'OA-999');
     expect(details.files[0]).toHaveProperty('openacess_id', 'OA-999');
   });
 });

@@ -74,12 +74,12 @@ const validateOrganizationWorksQuery = [
   
   query('year_from')
     .optional()
-    .isInt({ min: 1900, max: new Date().getFullYear() })
+    .isInt({ min: 1900 })
     .withMessage('Year from must be a valid year'),
   
   query('year_to')
     .optional()
-    .isInt({ min: 1900, max: new Date().getFullYear() })
+    .isInt({ min: 1900 })
     .withMessage('Year to must be a valid year'),
   
   query('language')
@@ -237,7 +237,6 @@ router.get('/:id', validateOrganizationId, organizationsController.getOrganizati
  *         schema:
  *           type: integer
  *           minimum: 1900
- *           maximum: 2024
  *         description: Filter works published from this year onwards
  *         example: 2020
  *       - in: query
@@ -245,7 +244,6 @@ router.get('/:id', validateOrganizationId, organizationsController.getOrganizati
  *         schema:
  *           type: integer
  *           minimum: 1900
- *           maximum: 2024
  *         description: Filter works published up to this year
  *         example: 2024
  *       - in: query

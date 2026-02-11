@@ -351,7 +351,6 @@ router.get(
  *         schema:
  *           type: integer
  *           minimum: 1900
- *           maximum: 2100
  *         description: Filter by publication year
  *     responses:
  *       200:
@@ -389,8 +388,8 @@ router.get(
       .withMessage('Offset must be a non-negative integer'),
     query('year')
       .optional()
-      .isInt({ min: 1900, max: 2100 })
-      .withMessage('Year must be between 1900 and 2100')
+      .isInt({ min: 1900 })
+      .withMessage('Year must be equal to or greater than 1900')
   ],
   enhancedValidationHandler,
   venuesController.getVenueWorks

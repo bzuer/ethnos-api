@@ -33,12 +33,12 @@ const validateWorksQuery = [
   
   query('year_from')
     .optional()
-    .isInt({ min: 1000, max: 2030 })
+    .isInt({ min: 1000 })
     .withMessage('Year from must be a valid year'),
   
   query('year_to')
     .optional()
-    .isInt({ min: 1000, max: 2030 })
+    .isInt({ min: 1000 })
     .withMessage('Year to must be a valid year'),
   
 ];
@@ -94,7 +94,6 @@ const validateWorksQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1000
- *           maximum: 2030
  *         description: Filter works published from this year onwards
  *         example: 2020
  *       - in: query
@@ -102,7 +101,6 @@ const validateWorksQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1000
- *           maximum: 2030
  *         description: Filter works published up to this year
  *         example: 2023
  *       - in: query
@@ -164,7 +162,6 @@ const validateWorksQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1000
- *           maximum: 2030
  *         description: Filter works from this year
  *         example: 2020
  *       - in: query
@@ -172,7 +169,6 @@ const validateWorksQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1000
- *           maximum: 2030
  *         description: Filter works up to this year
  *         example: 2023
  *       - in: query

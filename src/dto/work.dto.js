@@ -260,7 +260,8 @@ function formatWorkDetails(work = {}) {
         ipfs_cid: file.ipfs_cid || null,
         libgen_id: file.libgen_id || null,
         scimag_id: file.scimag_id || null,
-        openacess_id: file.openacess_id || null,
+        openaccess_id: file.openaccess_id || file.openacess_id || null,
+        openacess_id: file.openaccess_id || file.openacess_id || null,
         format: file.format || file.file_format || null,
         version: file.version || null,
         size:
