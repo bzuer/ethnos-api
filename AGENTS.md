@@ -40,6 +40,8 @@ Operational directive: at the end of each session or significant change, create 
 - Errors: `res.fail(...)` and `res.error(err, ...)` with `ERROR_CODES`.
 - Raw SQL via `sequelize.query`.
 - Schema source of truth: `database/schema.sql`.
+- For citation/reference logic, use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`) and never rely on legacy `citations` or `unresolved_citations`.
+- Keep citation/reference behavior aligned with `docs/data_dev.schema.sql`, and mirror structural changes to `database/schema.sql` when updating baseline schema.
 
 ## Documentation (OpenAPI)
 - UI: `/docs` (Swagger UI) sourced from `/docs.json`.

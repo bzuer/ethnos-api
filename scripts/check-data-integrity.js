@@ -42,9 +42,9 @@ const REQUIRED_TABLES = {
     columns: ['work_id', 'funder_id', 'grant_number'],
     indexes: ['PRIMARY', 'idx_funding_work_funder']
   },
-  citations: {
-    columns: ['citing_work_id', 'cited_work_id', 'citation_type'],
-    indexes: ['PRIMARY', 'idx_citations_cited_work', 'idx_citations_citing_work']
+  work_references: {
+    columns: ['citing_work_id', 'cited_work_id', 'cited_doi', 'status', 'citation_type'],
+    indexes: ['PRIMARY', 'uq_reference', 'idx_cited_doi', 'idx_status', 'fk_ref_cited_work']
   },
   publication_files: {
     columns: ['publication_id', 'file_id', 'file_role', 'quality'],

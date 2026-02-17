@@ -18,29 +18,28 @@ class CitationsService {
         return cached;
       }
 
-      const whereConditions = ['c.cited_work_id = :workId'];
+      const whereConditions = ['wr.cited_work_id = :workId', "wr.status = 'RESOLVED'"];
       const replacements = { workId: parseInt(workId), limit: parseInt(limit), offset: parseInt(offset) };
       if (type !== 'all' && ['POSITIVE', 'NEUTRAL', 'NEGATIVE', 'SELF'].includes(String(type).toUpperCase())) {
-        whereConditions.push('c.citation_type = :type');
+        whereConditions.push('wr.citation_type = :type');
         replacements.type = String(type).toUpperCase();
       }
       const whereClause = whereConditions.join(' AND ');
 
       const citingRows = await sequelize.query(`
         SELECT 
-          c.citing_work_id,
-          MIN(c.citation_type) AS citation_type,
-          MIN(c.citation_context) AS citation_context
-        FROM citations c
+          wr.citing_work_id,
+          MIN(wr.citation_type) AS citation_type
+        FROM work_references wr
         WHERE ${whereClause}
-        GROUP BY c.citing_work_id
-        ORDER BY c.citing_work_id DESC
+        GROUP BY wr.citing_work_id
+        ORDER BY wr.citing_work_id DESC
         LIMIT :limit OFFSET :offset
       `, { replacements, type: sequelize.QueryTypes.SELECT });
 
       const [countRow] = await sequelize.query(`
-        SELECT COUNT(DISTINCT c.citing_work_id) AS total
-        FROM citations c
+        SELECT COUNT(DISTINCT wr.citing_work_id) AS total
+        FROM work_references wr
         WHERE ${whereClause}
       `, { replacements: Object.fromEntries(Object.entries(replacements).filter(([k]) => !['limit','offset'].includes(k))), type: sequelize.QueryTypes.SELECT });
       const total = parseInt(countRow?.total || 0);
@@ -58,7 +57,6 @@ class CitationsService {
       const citingWorks = citingRows.map(row => {
         const sw = sphinxMap[row.citing_work_id] || {};
         const authorsCount = sw.author_string ? sw.author_string.split(';').filter(Boolean).length : 0;
-        const context = row.citation_context ? (row.citation_context.length > 200 ? row.citation_context.substring(0,200) + '...' : row.citation_context) : null;
         return {
           citing_work_id: row.citing_work_id,
           title: sw.title || null,
@@ -66,7 +64,7 @@ class CitationsService {
           year: sw.year || null,
           doi: sw.doi || null,
           authors_count: authorsCount,
-          citation: { type: row.citation_type || null, context }
+          citation: { type: row.citation_type || null, context: null }
         };
       }).map(formatCitationWork);
 
@@ -102,26 +100,40 @@ class CitationsService {
         return cached;
       }
 
-      const referencedRows = await sequelize.query(`
+      const referencesRows = await sequelize.query(`
         SELECT 
-          c.cited_work_id,
-          MIN(c.citation_type) AS citation_type,
-          MIN(c.citation_context) AS citation_context
-        FROM citations c
-        WHERE c.citing_work_id = :workId
-        GROUP BY c.cited_work_id
-        ORDER BY c.cited_work_id DESC
+          wr.id,
+          wr.cited_work_id,
+          wr.cited_doi,
+          wr.status,
+          wr.citation_type,
+          wr.created_at,
+          wr.resolved_at
+        FROM work_references wr
+        WHERE wr.citing_work_id = :workId
+        ORDER BY wr.id DESC
         LIMIT :limit OFFSET :offset
       `, { replacements: { workId: parseInt(workId), limit: parseInt(limit), offset: parseInt(offset) }, type: sequelize.QueryTypes.SELECT });
 
       const [refCount] = await sequelize.query(`
-        SELECT COUNT(DISTINCT c.cited_work_id) AS total
-        FROM citations c
-        WHERE c.citing_work_id = :workId
+        SELECT COUNT(*) AS total
+        FROM work_references wr
+        WHERE wr.citing_work_id = :workId
       `, { replacements: { workId: parseInt(workId) }, type: sequelize.QueryTypes.SELECT });
       const total = parseInt(refCount?.total || 0);
 
-      const refIds = referencedRows.map(r => r.cited_work_id);
+      const resolvedByWorkId = new Map();
+      referencesRows.forEach((row) => {
+        if (!row.cited_work_id || row.status !== 'RESOLVED') {
+          return;
+        }
+        if (!resolvedByWorkId.has(row.cited_work_id)) {
+          resolvedByWorkId.set(row.cited_work_id, row);
+        }
+      });
+
+      const resolvedRows = Array.from(resolvedByWorkId.values());
+      const refIds = resolvedRows.map(r => r.cited_work_id);
       let refSphinxMap = {};
       if (refIds.length) {
         const placeholders = refIds.map(() => '?').join(',');
@@ -131,24 +143,34 @@ class CitationsService {
         );
         refSphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
       }
-      const referencedWorks = referencedRows.map(row => {
+      const referencedWorks = resolvedRows.map(row => {
         const sw = refSphinxMap[row.cited_work_id] || {};
         const authorsCount = sw.author_string ? sw.author_string.split(';').filter(Boolean).length : 0;
-        const context = row.citation_context ? (row.citation_context.length > 200 ? row.citation_context.substring(0,200) + '...' : row.citation_context) : null;
         return {
           cited_work_id: row.cited_work_id,
           title: sw.title || null,
           type: sw.work_type || null,
           year: sw.year || null,
-          doi: sw.doi || null,
+          doi: sw.doi || row.cited_doi || null,
           authors_count: authorsCount,
-          citation: { type: row.citation_type || null, context }
+          citation: { type: row.citation_type || null, context: null }
         };
       }).map(formatCitationWork);
+
+      const unresolvedReferences = referencesRows
+        .filter(row => !row.cited_work_id || row.status !== 'RESOLVED')
+        .map(row => ({
+          cited_doi: row.cited_doi || null,
+          status: row.status || 'PENDING',
+          citation_type: row.citation_type || 'NEUTRAL',
+          created_at: row.created_at || null,
+          resolved_at: row.resolved_at || null
+        }));
 
       const result = {
         work_id: parseInt(workId),
         referenced_works: referencedWorks,
+        unresolved_references: unresolvedReferences,
         pagination: createPagination(parseInt(page), parseInt(limit), parseInt(total))
       };
 
@@ -187,7 +209,7 @@ class CitationsService {
             w.id as work_id,
             w.title,
             w.work_type,
-            pub.year,
+            pub_year.year,
             COALESCE(cite_stats.total_citations_received, 0) as total_citations_received,
             COALESCE(ref_stats.total_references_made, 0) as total_references_made,
             COALESCE(cite_stats.unique_citing_works, 0) as unique_citing_works,
@@ -199,31 +221,39 @@ class CitationsService {
             cite_stats.latest_citation_year
              
           FROM works w
-          LEFT JOIN publications pub ON w.id = pub.work_id
+          LEFT JOIN (
+            SELECT p.work_id, MIN(p.year) AS year
+            FROM publications p
+            GROUP BY p.work_id
+          ) pub_year ON w.id = pub_year.work_id
           LEFT JOIN (
             SELECT 
-              cited_work_id,
+              wr.cited_work_id,
               COUNT(*) as total_citations_received,
-              COUNT(DISTINCT citing_work_id) as unique_citing_works,
-              SUM(CASE WHEN citation_type = 'POSITIVE' THEN 1 ELSE 0 END) as positive_citations,
-              SUM(CASE WHEN citation_type = 'NEUTRAL' THEN 1 ELSE 0 END) as neutral_citations,
-              SUM(CASE WHEN citation_type = 'NEGATIVE' THEN 1 ELSE 0 END) as negative_citations,
-              SUM(CASE WHEN citation_type = 'SELF' THEN 1 ELSE 0 END) as self_citations,
+              COUNT(DISTINCT wr.citing_work_id) as unique_citing_works,
+              SUM(CASE WHEN wr.citation_type = 'POSITIVE' THEN 1 ELSE 0 END) as positive_citations,
+              SUM(CASE WHEN wr.citation_type = 'NEUTRAL' THEN 1 ELSE 0 END) as neutral_citations,
+              SUM(CASE WHEN wr.citation_type = 'NEGATIVE' THEN 1 ELSE 0 END) as negative_citations,
+              SUM(CASE WHEN wr.citation_type = 'SELF' THEN 1 ELSE 0 END) as self_citations,
               MIN(citing_pub.year) as first_citation_year,
               MAX(citing_pub.year) as latest_citation_year
-            FROM citations c
-            LEFT JOIN works citing_w ON c.citing_work_id = citing_w.id
-            LEFT JOIN publications citing_pub ON citing_w.id = citing_pub.work_id
-            WHERE c.cited_work_id = :workId
-            GROUP BY c.cited_work_id
+            FROM work_references wr
+            LEFT JOIN (
+              SELECT p.work_id, MIN(p.year) AS year
+              FROM publications p
+              GROUP BY p.work_id
+            ) citing_pub ON wr.citing_work_id = citing_pub.work_id
+            WHERE wr.cited_work_id = :workId
+              AND wr.status = 'RESOLVED'
+            GROUP BY wr.cited_work_id
           ) cite_stats ON w.id = cite_stats.cited_work_id
           LEFT JOIN (
             SELECT 
-              citing_work_id,
+              wr.citing_work_id,
               COUNT(*) as total_references_made
-            FROM citations
-            WHERE citing_work_id = :workId
-            GROUP BY citing_work_id
+            FROM work_references wr
+            WHERE wr.citing_work_id = :workId
+            GROUP BY wr.citing_work_id
           ) ref_stats ON w.id = ref_stats.citing_work_id
           WHERE w.id = :workId
         `, {
@@ -323,26 +353,28 @@ class CitationsService {
         const [rows] = await Promise.all([
           sequelize.query(`
           WITH RECURSIVE citation_network AS (
-            -- Base case: direct citations
             SELECT 
-              c.citing_work_id as source_work_id,
-              c.cited_work_id as target_work_id,
+              wr.citing_work_id as source_work_id,
+              wr.cited_work_id as target_work_id,
               1 as depth,
-              c.citation_type
-            FROM citations c
-            WHERE c.cited_work_id = :workId OR c.citing_work_id = :workId
+              wr.citation_type
+            FROM work_references wr
+            WHERE wr.status = 'RESOLVED'
+              AND wr.cited_work_id IS NOT NULL
+              AND (wr.cited_work_id = :workId OR wr.citing_work_id = :workId)
             
             UNION ALL
             
-            -- Recursive case: citations of citations (limited depth)
             SELECT 
-              c.citing_work_id as source_work_id,
-              c.cited_work_id as target_work_id,
+              wr.citing_work_id as source_work_id,
+              wr.cited_work_id as target_work_id,
               cn.depth + 1,
-              c.citation_type
-            FROM citations c
-            INNER JOIN citation_network cn ON (c.cited_work_id = cn.source_work_id OR c.citing_work_id = cn.target_work_id)
+              wr.citation_type
+            FROM work_references wr
+            INNER JOIN citation_network cn ON (wr.cited_work_id = cn.source_work_id OR wr.citing_work_id = cn.target_work_id)
             WHERE cn.depth < :maxDepth
+              AND wr.status = 'RESOLVED'
+              AND wr.cited_work_id IS NOT NULL
           )
           SELECT 
             cn.source_work_id,
@@ -372,21 +404,23 @@ class CitationsService {
         });
         networkData = await sequelize.query(
           `SELECT 
-            c.citing_work_id as source_work_id,
-            c.cited_work_id as target_work_id,
+            wr.citing_work_id as source_work_id,
+            wr.cited_work_id as target_work_id,
             1 as depth,
-            c.citation_type,
+            wr.citation_type,
             w1.title as source_title,
             w2.title as target_title,
             pub1.year as source_year,
             pub2.year as target_year
-          FROM citations c
-          LEFT JOIN works w1 ON c.citing_work_id = w1.id
-          LEFT JOIN works w2 ON c.cited_work_id = w2.id
+          FROM work_references wr
+          LEFT JOIN works w1 ON wr.citing_work_id = w1.id
+          LEFT JOIN works w2 ON wr.cited_work_id = w2.id
           LEFT JOIN publications pub1 ON w1.id = pub1.work_id
           LEFT JOIN publications pub2 ON w2.id = pub2.work_id
-          WHERE c.cited_work_id = :workId OR c.citing_work_id = :workId
-          ORDER BY c.citing_work_id, c.cited_work_id
+          WHERE wr.status = 'RESOLVED'
+            AND wr.cited_work_id IS NOT NULL
+            AND (wr.cited_work_id = :workId OR wr.citing_work_id = :workId)
+          ORDER BY wr.citing_work_id, wr.cited_work_id
           LIMIT 100`,
           { replacements: { workId: parseInt(workId) }, type: sequelize.QueryTypes.SELECT }
         );

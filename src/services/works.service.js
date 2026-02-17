@@ -743,28 +743,41 @@ class WorksService {
 
     let citedBy = [];
     let references = [];
+    let unresolvedReferences = [];
     try {
       const incomingRows = await sequelize.query(
-        `SELECT c.citing_work_id, MIN(c.citation_type) AS citation_type, MIN(c.citation_context) AS citation_context
-         FROM citations c
-         WHERE c.cited_work_id = ?
-         GROUP BY c.citing_work_id
-         ORDER BY c.citing_work_id DESC
+        `SELECT wr.citing_work_id, MIN(wr.citation_type) AS citation_type
+         FROM work_references wr
+         WHERE wr.cited_work_id = ?
+           AND wr.status = 'RESOLVED'
+         GROUP BY wr.citing_work_id
+         ORDER BY wr.citing_work_id DESC
          LIMIT 100`,
         { replacements: [id], type: sequelize.QueryTypes.SELECT }
       );
-      const outgoingRows = await sequelize.query(
-        `SELECT c.cited_work_id, MIN(c.citation_type) AS citation_type, MIN(c.citation_context) AS citation_context
-         FROM citations c
-         WHERE c.citing_work_id = ?
-         GROUP BY c.cited_work_id
-         ORDER BY c.cited_work_id DESC
+      const outgoingResolvedRows = await sequelize.query(
+        `SELECT wr.cited_work_id, MIN(wr.citation_type) AS citation_type, MIN(wr.cited_doi) AS cited_doi
+         FROM work_references wr
+         WHERE wr.citing_work_id = ?
+           AND wr.cited_work_id IS NOT NULL
+           AND wr.status = 'RESOLVED'
+         GROUP BY wr.cited_work_id
+         ORDER BY wr.cited_work_id DESC
+         LIMIT 100`,
+        { replacements: [id], type: sequelize.QueryTypes.SELECT }
+      );
+      const unresolvedRows = await sequelize.query(
+        `SELECT wr.cited_doi, wr.status, wr.created_at, wr.resolved_at, wr.citation_type
+         FROM work_references wr
+         WHERE wr.citing_work_id = ?
+           AND (wr.cited_work_id IS NULL OR wr.status <> 'RESOLVED')
+         ORDER BY wr.id DESC
          LIMIT 100`,
         { replacements: [id], type: sequelize.QueryTypes.SELECT }
       );
 
       const inIds = incomingRows.map(r => r.citing_work_id);
-      const outIds = outgoingRows.map(r => r.cited_work_id);
+      const outIds = outgoingResolvedRows.map(r => r.cited_work_id);
       const allIds = Array.from(new Set([...inIds, ...outIds]));
       let sphinxMap = {};
       if (allIds.length) {
@@ -786,11 +799,11 @@ class WorksService {
           venue_name: sw.venue_name || null,
           open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
-          citation_context: row.citation_context || null
+          citation_context: null
         };
       }) : [];
 
-      references = includeReferences ? outgoingRows.map(row => {
+      references = includeReferences ? outgoingResolvedRows.map(row => {
         const sw = sphinxMap[row.cited_work_id] || {};
         return {
           work_id: row.cited_work_id,
@@ -798,12 +811,20 @@ class WorksService {
           authors: sw.author_string || null,
           publication_year: sw.year || null,
           venue_name: sw.venue_name || null,
-          doi: sw.doi || null,
+          doi: sw.doi || row.cited_doi || null,
           open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
-          citation_context: row.citation_context || null
+          citation_context: null
         };
       }) : [];
+
+      unresolvedReferences = includeReferences ? unresolvedRows.map(row => ({
+        cited_doi: row.cited_doi || null,
+        status: row.status || 'PENDING',
+        citation_type: row.citation_type || 'NEUTRAL',
+        created_at: row.created_at || null,
+        resolved_at: row.resolved_at || null
+      })) : [];
     } catch (_) {}
 
     const completeWork = {
@@ -891,7 +912,7 @@ class WorksService {
       citations: {
         cited_by: citedBy,
         references: references,
-        unresolved_references: []
+        unresolved_references: unresolvedReferences
       },
 
       files: filesData,
