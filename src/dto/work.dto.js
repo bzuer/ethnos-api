@@ -207,6 +207,7 @@ function formatWorkDetails(work = {}) {
           authors: citation.authors || null,
           publication_year: toOptionalInteger(citation.publication_year),
           venue_name: citation.venue_name || null,
+          open_access: toOptionalBoolean(citation.open_access),
           citation_type: citation.citation_type || 'NEUTRAL',
           citation_context: citation.citation_context || null
         }))
@@ -219,6 +220,7 @@ function formatWorkDetails(work = {}) {
           publication_year: toOptionalInteger(ref.publication_year),
           venue_name: ref.venue_name || null,
           doi: ref.doi || null,
+          open_access: toOptionalBoolean(ref.open_access),
           citation_type: ref.citation_type || 'NEUTRAL',
           citation_context: ref.citation_context || null
         }))

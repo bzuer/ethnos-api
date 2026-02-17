@@ -349,6 +349,7 @@ const options = {
                       authors: { type: 'string', nullable: true },
                       publication_year: { type: 'integer', nullable: true },
                       venue_name: { type: 'string', nullable: true },
+                      open_access: { type: 'boolean', nullable: true },
                       citation_type: { type: 'string', nullable: true },
                       citation_context: { type: 'string', nullable: true }
                     }
@@ -365,6 +366,7 @@ const options = {
                       publication_year: { type: 'integer', nullable: true },
                       venue_name: { type: 'string', nullable: true },
                       doi: { type: 'string', nullable: true },
+                      open_access: { type: 'boolean', nullable: true },
                       citation_type: { type: 'string', nullable: true },
                       citation_context: { type: 'string', nullable: true }
                     }

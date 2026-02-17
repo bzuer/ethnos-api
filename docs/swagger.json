@@ -421,6 +421,10 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "open_access": {
+                      "type": "boolean",
+                      "nullable": true
+                    },
                     "citation_type": {
                       "type": "string",
                       "nullable": true
@@ -458,6 +462,10 @@
                     },
                     "doi": {
                       "type": "string",
+                      "nullable": true
+                    },
+                    "open_access": {
+                      "type": "boolean",
                       "nullable": true
                     },
                     "citation_type": {

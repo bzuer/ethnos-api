@@ -397,6 +397,31 @@ describe('DTOs structure', () => {
     expect(details.files[0]).toHaveProperty('openaccess_id', 'OA-999');
     expect(details.files[0]).toHaveProperty('openacess_id', 'OA-999');
   });
+
+  test('Work DTO normalizes open_access in citations and references', () => {
+    const { formatWorkDetails } = require('../src/dto/work.dto');
+    const work = {
+      id: 101,
+      citations: {
+        cited_by: [
+          {
+            work_id: 11,
+            open_access: 1
+          }
+        ],
+        references: [
+          {
+            work_id: 22,
+            open_access: 'false'
+          }
+        ]
+      }
+    };
+
+    const details = formatWorkDetails(work);
+    expect(details.citations.cited_by[0]).toHaveProperty('open_access', true);
+    expect(details.citations.references[0]).toHaveProperty('open_access', false);
+  });
 });
 
 describe('Bibliography', () => {

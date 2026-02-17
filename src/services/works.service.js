@@ -770,7 +770,7 @@ class WorksService {
       if (allIds.length) {
         const placeholders = allIds.map(() => '?').join(',');
         const sphinxRows = await sequelize.query(
-          `SELECT id, title, year, author_string, venue_name, doi FROM sphinx_works_summary WHERE id IN (${placeholders})`,
+          `SELECT id, title, year, author_string, venue_name, doi, open_access FROM sphinx_works_summary WHERE id IN (${placeholders})`,
           { replacements: allIds, type: sequelize.QueryTypes.SELECT }
         );
         sphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
@@ -784,6 +784,7 @@ class WorksService {
           authors: sw.author_string || null,
           publication_year: sw.year || null,
           venue_name: sw.venue_name || null,
+          open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
           citation_context: row.citation_context || null
         };
@@ -798,6 +799,7 @@ class WorksService {
           publication_year: sw.year || null,
           venue_name: sw.venue_name || null,
           doi: sw.doi || null,
+          open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
           citation_context: row.citation_context || null
         };

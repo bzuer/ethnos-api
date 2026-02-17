@@ -105,6 +105,9 @@ describe('Works API Contracts', () => {
       expect(Array.isArray(detail.funding)).toBe(true);
       expect(detail).toHaveProperty('files');
       expect(Array.isArray(detail.files)).toBe(true);
+      expect(detail).toHaveProperty('citations');
+      expect(Array.isArray(detail.citations.cited_by)).toBe(true);
+      expect(Array.isArray(detail.citations.references)).toBe(true);
 
       detail.authors.forEach((author) => {
         expect(author).toHaveProperty('preferred_name');
@@ -123,6 +126,16 @@ describe('Works API Contracts', () => {
             })
           );
         }
+      });
+
+      detail.citations.cited_by.forEach((citation) => {
+        expect(citation).toHaveProperty('open_access');
+        expect([true, false, null]).toContain(citation.open_access);
+      });
+
+      detail.citations.references.forEach((reference) => {
+        expect(reference).toHaveProperty('open_access');
+        expect([true, false, null]).toContain(reference.open_access);
       });
     });
 
