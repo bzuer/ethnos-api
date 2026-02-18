@@ -4,6 +4,34 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination } = require('../utils/pagination');
 const { formatCitationWork } = require('../dto/citations.dto');
 
+const normalizeDoiValue = (value) => {
+  if (!value) return null;
+  const normalized = String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/doi\.org\//, '')
+    .replace(/^doi:/, '')
+    .replace(/\/+$/, '');
+  return normalized || null;
+};
+
+const buildDoiCandidates = (dois = []) => {
+  const candidates = new Set();
+  for (const doi of dois) {
+    if (!doi) continue;
+    const raw = String(doi).trim();
+    const normalized = normalizeDoiValue(raw);
+    if (!normalized) continue;
+    candidates.add(raw);
+    candidates.add(normalized);
+    candidates.add(`https://doi.org/${normalized}`);
+    candidates.add(`http://doi.org/${normalized}`);
+    candidates.add(`doi:${normalized}`);
+    candidates.add(`DOI:${normalized}`);
+  }
+  return Array.from(candidates);
+};
+
 class CitationsService {
   async getWorkCitations(workId, filters = {}) {
     const { page = 1, limit = 20, type = 'all' } = filters;
@@ -18,30 +46,53 @@ class CitationsService {
         return cached;
       }
 
-      const whereConditions = ['wr.cited_work_id = :workId', "wr.status = 'RESOLVED'"];
-      const replacements = { workId: parseInt(workId), limit: parseInt(limit), offset: parseInt(offset) };
-      if (type !== 'all' && ['POSITIVE', 'NEUTRAL', 'NEGATIVE', 'SELF'].includes(String(type).toUpperCase())) {
-        whereConditions.push('wr.citation_type = :type');
-        replacements.type = String(type).toUpperCase();
+      const workIdInt = parseInt(workId);
+      const [targetDoiRows] = await Promise.all([
+        sequelize.query(
+          `SELECT doi
+           FROM publications
+           WHERE work_id = :workId
+             AND doi IS NOT NULL
+             AND TRIM(doi) <> ''`,
+          { replacements: { workId: workIdInt }, type: sequelize.QueryTypes.SELECT }
+        )
+      ]);
+      const doiCandidates = buildDoiCandidates((targetDoiRows || []).map(row => row.doi));
+      const targetConditions = ['wr.cited_work_id = ?'];
+      const targetReplacements = [workIdInt];
+      if (doiCandidates.length) {
+        targetConditions.push(`wr.cited_doi IN (${doiCandidates.map(() => '?').join(',')})`);
+        targetReplacements.push(...doiCandidates);
       }
-      const whereClause = whereConditions.join(' AND ');
+      const typeFilterEnabled = type !== 'all' && ['POSITIVE', 'NEUTRAL', 'NEGATIVE', 'SELF'].includes(String(type).toUpperCase());
+      if (typeFilterEnabled) {
+        targetConditions.push('wr.citation_type = ?');
+        targetReplacements.push(String(type).toUpperCase());
+      }
+      const whereClause = `(${targetConditions.slice(0, doiCandidates.length ? 2 : 1).map(cond => `(${cond})`).join(' OR ')})${typeFilterEnabled ? ` AND (${targetConditions[targetConditions.length - 1]})` : ''}`;
+      const queryReplacements = [...targetReplacements, parseInt(limit), parseInt(offset)];
 
       const citingRows = await sequelize.query(`
         SELECT 
           wr.citing_work_id,
-          MIN(wr.citation_type) AS citation_type
+          MIN(wr.citation_type) AS citation_type,
+          CASE
+            WHEN SUM(CASE WHEN wr.status = 'RESOLVED' THEN 1 ELSE 0 END) > 0 THEN 'RESOLVED'
+            WHEN SUM(CASE WHEN wr.status = 'PENDING' THEN 1 ELSE 0 END) > 0 THEN 'PENDING'
+            ELSE 'FAILED'
+          END AS citation_status
         FROM work_references wr
         WHERE ${whereClause}
         GROUP BY wr.citing_work_id
-        ORDER BY wr.citing_work_id DESC
-        LIMIT :limit OFFSET :offset
-      `, { replacements, type: sequelize.QueryTypes.SELECT });
+        ORDER BY MAX(wr.id) DESC
+        LIMIT ? OFFSET ?
+      `, { replacements: queryReplacements, type: sequelize.QueryTypes.SELECT });
 
       const [countRow] = await sequelize.query(`
         SELECT COUNT(DISTINCT wr.citing_work_id) AS total
         FROM work_references wr
         WHERE ${whereClause}
-      `, { replacements: Object.fromEntries(Object.entries(replacements).filter(([k]) => !['limit','offset'].includes(k))), type: sequelize.QueryTypes.SELECT });
+      `, { replacements: targetReplacements, type: sequelize.QueryTypes.SELECT });
       const total = parseInt(countRow?.total || 0);
 
       const ids = citingRows.map(r => r.citing_work_id);
@@ -64,7 +115,7 @@ class CitationsService {
           year: sw.year || null,
           doi: sw.doi || null,
           authors_count: authorsCount,
-          citation: { type: row.citation_type || null, context: null }
+          citation: { type: row.citation_type || null, status: row.citation_status || null, context: null }
         };
       }).map(formatCitationWork);
 
@@ -158,7 +209,7 @@ class CitationsService {
       }).map(formatCitationWork);
 
       const unresolvedReferences = referencesRows
-        .filter(row => !row.cited_work_id || row.status !== 'RESOLVED')
+        .filter(row => row.status === 'PENDING' || row.status === 'FAILED')
         .map(row => ({
           cited_doi: row.cited_doi || null,
           status: row.status || 'PENDING',
@@ -171,6 +222,7 @@ class CitationsService {
         work_id: parseInt(workId),
         referenced_works: referencedWorks,
         unresolved_references: unresolvedReferences,
+        unsolved: unresolvedReferences,
         pagination: createPagination(parseInt(page), parseInt(limit), parseInt(total))
       };
 

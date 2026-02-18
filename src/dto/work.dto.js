@@ -209,6 +209,7 @@ function formatWorkDetails(work = {}) {
           venue_name: citation.venue_name || null,
           open_access: toOptionalBoolean(citation.open_access),
           citation_type: citation.citation_type || 'NEUTRAL',
+          citation_status: citation.citation_status || null,
           citation_context: citation.citation_context || null
         }))
       : [],
@@ -229,10 +230,13 @@ function formatWorkDetails(work = {}) {
       ? citations.unresolved_references.map(unres => ({
           cited_doi: unres.cited_doi || null,
           status: unres.status || 'PENDING',
-          created_at: unres.created_at || null
+          citation_type: unres.citation_type || 'NEUTRAL',
+          created_at: unres.created_at || null,
+          resolved_at: unres.resolved_at || null
         }))
       : []
   };
+  processedCitations.unsolved = processedCitations.unresolved_references;
 
   const funding = Array.isArray(work.funding)
     ? work.funding.map(item => ({

@@ -5,6 +5,34 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
 const { withTimeout } = require('../utils/db');
+
+const normalizeDoiValue = (value) => {
+  if (!value) return null;
+  const normalized = String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/doi\.org\//, '')
+    .replace(/^doi:/, '')
+    .replace(/\/+$/, '');
+  return normalized || null;
+};
+
+const buildDoiCandidates = (dois = []) => {
+  const candidates = new Set();
+  for (const doi of dois) {
+    if (!doi) continue;
+    const raw = String(doi).trim();
+    const normalized = normalizeDoiValue(raw);
+    if (!normalized) continue;
+    candidates.add(raw);
+    candidates.add(normalized);
+    candidates.add(`https://doi.org/${normalized}`);
+    candidates.add(`http://doi.org/${normalized}`);
+    candidates.add(`doi:${normalized}`);
+    candidates.add(`DOI:${normalized}`);
+  }
+  return Array.from(candidates);
+};
 const uniqueById = (items) => {
   const seen = new Set();
   const result = [];
@@ -745,15 +773,28 @@ class WorksService {
     let references = [];
     let unresolvedReferences = [];
     try {
+      const doiCandidates = buildDoiCandidates(identifiersAggPlain.doi || []);
+      const incomingConditions = ['wr.cited_work_id = ?'];
+      const incomingReplacements = [id];
+      if (doiCandidates.length) {
+        incomingConditions.push(`wr.cited_doi IN (${doiCandidates.map(() => '?').join(',')})`);
+        incomingReplacements.push(...doiCandidates);
+      }
       const incomingRows = await sequelize.query(
-        `SELECT wr.citing_work_id, MIN(wr.citation_type) AS citation_type
+        `SELECT 
+           wr.citing_work_id,
+           MIN(wr.citation_type) AS citation_type,
+           CASE
+             WHEN SUM(CASE WHEN wr.status = 'RESOLVED' THEN 1 ELSE 0 END) > 0 THEN 'RESOLVED'
+             WHEN SUM(CASE WHEN wr.status = 'PENDING' THEN 1 ELSE 0 END) > 0 THEN 'PENDING'
+             ELSE 'FAILED'
+           END AS citation_status
          FROM work_references wr
-         WHERE wr.cited_work_id = ?
-           AND wr.status = 'RESOLVED'
+         WHERE ${incomingConditions.map(cond => `(${cond})`).join(' OR ')}
          GROUP BY wr.citing_work_id
-         ORDER BY wr.citing_work_id DESC
+         ORDER BY MAX(wr.id) DESC
          LIMIT 100`,
-        { replacements: [id], type: sequelize.QueryTypes.SELECT }
+        { replacements: incomingReplacements, type: sequelize.QueryTypes.SELECT }
       );
       const outgoingResolvedRows = await sequelize.query(
         `SELECT wr.cited_work_id, MIN(wr.citation_type) AS citation_type, MIN(wr.cited_doi) AS cited_doi
@@ -770,7 +811,7 @@ class WorksService {
         `SELECT wr.cited_doi, wr.status, wr.created_at, wr.resolved_at, wr.citation_type
          FROM work_references wr
          WHERE wr.citing_work_id = ?
-           AND (wr.cited_work_id IS NULL OR wr.status <> 'RESOLVED')
+           AND wr.status IN ('PENDING', 'FAILED')
          ORDER BY wr.id DESC
          LIMIT 100`,
         { replacements: [id], type: sequelize.QueryTypes.SELECT }
@@ -799,6 +840,7 @@ class WorksService {
           venue_name: sw.venue_name || null,
           open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
+          citation_status: row.citation_status || null,
           citation_context: null
         };
       }) : [];
@@ -912,7 +954,8 @@ class WorksService {
       citations: {
         cited_by: citedBy,
         references: references,
-        unresolved_references: unresolvedReferences
+        unresolved_references: unresolvedReferences,
+        unsolved: unresolvedReferences
       },
 
       files: filesData,
