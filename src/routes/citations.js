@@ -53,7 +53,7 @@ const validateNetworkDepth = [
  *   get:
  *     summary: Get works that cite this work
  *     tags: [Citations]
- *     description: Retrieve all works that cite the specified work with citation context and metrics
+ *     description: Retrieve works that cite the target, resolved by direct work link or DOI matching. Each citation entry includes `citation.type` and `citation.status`.
  *     parameters:
  *       - name: id
  *         in: path
@@ -88,7 +88,7 @@ router.get('/works/:id/citations', [...validateWorkId, ...validatePagination, ..
  *   get:
  *     summary: Get works referenced by this work
  *     tags: [Citations]
- *     description: Retrieve all works referenced/cited by the specified work
+ *     description: Retrieve resolved references and unresolved DOI references (`unresolved_references`, alias `unsolved`) for the specified work.
  *     parameters:
  *       - name: id
  *         in: path

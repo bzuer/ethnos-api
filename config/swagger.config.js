@@ -351,6 +351,11 @@ const options = {
                       venue_name: { type: 'string', nullable: true },
                       open_access: { type: 'boolean', nullable: true },
                       citation_type: { type: 'string', nullable: true },
+                      citation_status: {
+                        type: 'string',
+                        nullable: true,
+                        enum: ['PENDING', 'RESOLVED', 'FAILED']
+                      },
                       citation_context: { type: 'string', nullable: true }
                     }
                   }
@@ -369,6 +374,52 @@ const options = {
                       open_access: { type: 'boolean', nullable: true },
                       citation_type: { type: 'string', nullable: true },
                       citation_context: { type: 'string', nullable: true }
+                    }
+                  }
+                },
+                unresolved_references: {
+                  type: 'array',
+                  description: 'Outgoing references that are not resolved to a target work (status PENDING/FAILED)',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      cited_doi: { type: 'string', nullable: true },
+                      status: {
+                        type: 'string',
+                        enum: ['PENDING', 'RESOLVED', 'FAILED'],
+                        example: 'PENDING'
+                      },
+                      citation_type: {
+                        type: 'string',
+                        enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE', 'SELF'],
+                        nullable: true,
+                        example: 'NEUTRAL'
+                      },
+                      created_at: { type: 'string', format: 'date-time', nullable: true },
+                      resolved_at: { type: 'string', format: 'date-time', nullable: true }
+                    }
+                  }
+                },
+                unsolved: {
+                  type: 'array',
+                  description: 'Alias for unresolved_references, kept for compatibility',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      cited_doi: { type: 'string', nullable: true },
+                      status: {
+                        type: 'string',
+                        enum: ['PENDING', 'RESOLVED', 'FAILED'],
+                        example: 'PENDING'
+                      },
+                      citation_type: {
+                        type: 'string',
+                        enum: ['POSITIVE', 'NEUTRAL', 'NEGATIVE', 'SELF'],
+                        nullable: true,
+                        example: 'NEUTRAL'
+                      },
+                      created_at: { type: 'string', format: 'date-time', nullable: true },
+                      resolved_at: { type: 'string', format: 'date-time', nullable: true }
                     }
                   }
                 }

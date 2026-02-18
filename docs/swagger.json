@@ -429,6 +429,15 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "citation_status": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "PENDING",
+                        "RESOLVED",
+                        "FAILED"
+                      ]
+                    },
                     "citation_context": {
                       "type": "string",
                       "nullable": true
@@ -474,6 +483,92 @@
                     },
                     "citation_context": {
                       "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              },
+              "unresolved_references": {
+                "type": "array",
+                "description": "Outgoing references that are not resolved to a target work (status PENDING/FAILED)",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "cited_doi": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "RESOLVED",
+                        "FAILED"
+                      ],
+                      "example": "PENDING"
+                    },
+                    "citation_type": {
+                      "type": "string",
+                      "enum": [
+                        "POSITIVE",
+                        "NEUTRAL",
+                        "NEGATIVE",
+                        "SELF"
+                      ],
+                      "nullable": true,
+                      "example": "NEUTRAL"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "resolved_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    }
+                  }
+                }
+              },
+              "unsolved": {
+                "type": "array",
+                "description": "Alias for unresolved_references, kept for compatibility",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "cited_doi": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "RESOLVED",
+                        "FAILED"
+                      ],
+                      "example": "PENDING"
+                    },
+                    "citation_type": {
+                      "type": "string",
+                      "enum": [
+                        "POSITIVE",
+                        "NEUTRAL",
+                        "NEGATIVE",
+                        "SELF"
+                      ],
+                      "nullable": true,
+                      "example": "NEUTRAL"
+                    },
+                    "created_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "resolved_at": {
+                      "type": "string",
+                      "format": "date-time",
                       "nullable": true
                     }
                   }
@@ -4724,7 +4819,7 @@
         "tags": [
           "Citations"
         ],
-        "description": "Retrieve all works that cite the specified work with citation context and metrics",
+        "description": "Retrieve works that cite the target, resolved by direct work link or DOI matching. Each citation entry includes `citation.type` and `citation.status`.",
         "parameters": [
           {
             "name": "id",
@@ -4781,7 +4876,7 @@
         "tags": [
           "Citations"
         ],
-        "description": "Retrieve all works referenced/cited by the specified work",
+        "description": "Retrieve resolved references and unresolved DOI references (`unresolved_references`, alias `unsolved`) for the specified work.",
         "parameters": [
           {
             "name": "id",
