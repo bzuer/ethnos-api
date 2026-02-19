@@ -36,6 +36,7 @@ const buildSummarySnapshotObject = (row = {}) => {
   const snapshot = {
     id: row.id ?? null,
     name: row.name ?? null,
+    abbreviated_name: row.abbreviated_name ?? null,
     type: row.type ?? null,
     publisher_name: row.publisher_name ?? null,
     country_code: row.country_code ?? null,
@@ -89,6 +90,7 @@ class VenuesService {
       SELECT
         v.id,
         v.name,
+        v.abbreviated_name,
         v.type,
         v.issn,
         v.eissn,
@@ -129,6 +131,7 @@ class VenuesService {
       SELECT
         v.id,
         v.name,
+        v.abbreviated_name,
         v.type,
         v.issn,
         v.eissn,
@@ -382,6 +385,7 @@ class VenuesService {
         base: {
           id: row.id,
           name: summarySnapshot?.name ?? row.name,
+          abbreviated_name: summarySnapshot?.abbreviated_name ?? row.abbreviated_name ?? null,
           type: summarySnapshot?.type ?? row.type,
           issn: summarySnapshot?.issn ?? row.issn,
           eissn: summarySnapshot?.eissn ?? row.eissn,
@@ -572,6 +576,7 @@ class VenuesService {
         SELECT 
           v.id,
           v.name,
+          v.abbreviated_name,
           v.type,
           v.issn,
           v.eissn,
@@ -631,6 +636,7 @@ class VenuesService {
               SELECT 
                 v.id,
                 v.name,
+                v.abbreviated_name,
                 v.type,
                 v.issn,
                 v.eissn,
@@ -847,6 +853,7 @@ class VenuesService {
         svs.last_updated AS summary_last_updated,
         v.id,
         v.name,
+        v.abbreviated_name,
         v.type,
         v.issn,
         v.eissn,
@@ -885,6 +892,7 @@ class VenuesService {
       SELECT 
         v.id,
         v.name,
+        v.abbreviated_name,
         v.type,
         v.issn,
         v.eissn,
@@ -924,6 +932,7 @@ class VenuesService {
         SELECT 
           v.id,
           v.name,
+          v.abbreviated_name,
           v.type,
           v.issn,
           v.eissn,
@@ -1027,6 +1036,7 @@ class VenuesService {
         rawVenues.map((row) => ({
           id: row.summary_id ?? row.id,
           name: row.summary_name ?? row.name,
+          abbreviated_name: row.abbreviated_name ?? null,
           type: row.summary_type ?? row.type,
           issn: row.summary_issn ?? row.issn,
           eissn: row.summary_eissn ?? row.eissn,
@@ -1060,6 +1070,7 @@ class VenuesService {
           summary_snapshot: row.summary_id !== undefined ? {
             id: row.summary_id ?? row.id ?? null,
             name: row.summary_name ?? row.name ?? null,
+            abbreviated_name: row.abbreviated_name ?? null,
             type: row.summary_type ?? row.type ?? null,
             publisher_name: row.summary_publisher_name ?? null,
             country_code: row.summary_country_code ?? null,
@@ -1251,6 +1262,7 @@ class VenuesService {
       SELECT 
         v.id,
         v.name,
+        v.abbreviated_name,
         v.type,
         v.issn,
         v.eissn,
@@ -1299,6 +1311,7 @@ class VenuesService {
       rawVenues.map(row => ({
         id: row.id,
         name: row.name,
+        abbreviated_name: row.abbreviated_name,
         type: row.type,
         issn: row.issn,
         eissn: row.eissn,

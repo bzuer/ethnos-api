@@ -262,6 +262,7 @@ describe('DTOs structure', () => {
     const input = {
       id: 1,
       name: 'Test Venue',
+      abbreviated_name: 'T. Venue',
       type: 'JOURNAL',
       scopus_id: '12345',
       wikidata_id: 'Q123',
@@ -275,6 +276,7 @@ describe('DTOs structure', () => {
     expect(out).toHaveProperty('wikidata_id', 'Q123');
     expect(out).toHaveProperty('openalex_id', 'V123');
     expect(out).toHaveProperty('mag_id', 'M123');
+    expect(out).toHaveProperty('abbreviated_name', 'T. Venue');
   });
 
   test('Person DTO includes explicit IDs and name_variations', () => {

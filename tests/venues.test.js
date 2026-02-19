@@ -42,6 +42,7 @@ describe('Venues API', () => {
         const venue = response.body.data[0];
         expect(venue).toHaveProperty('id');
         expect(venue).toHaveProperty('name');
+        expect(venue).toHaveProperty('abbreviated_name');
         expect(venue).toHaveProperty('type');
         expect(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES']).toContain(venue.type);
         expect(venue).toHaveProperty('works_count');
@@ -173,6 +174,7 @@ describe('Venues API', () => {
       expect(response.body).toHaveProperty('meta');
       expect(response.body.data).toHaveProperty('id', venueId);
       expect(response.body.data).toHaveProperty('name');
+      expect(response.body.data).toHaveProperty('abbreviated_name');
       expect(response.body.data).toHaveProperty('type');
       expect(response.body.data).toHaveProperty('works_count');
       expect(response.body.data).toHaveProperty('created_at');

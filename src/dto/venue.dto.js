@@ -139,6 +139,7 @@ const buildSummarySnapshot = (venue = {}) => {
   return {
     id: summary.id ?? venue.id ?? null,
     name: summary.name ?? venue.name ?? null,
+    abbreviated_name: summary.abbreviated_name ?? venue.abbreviated_name ?? null,
     type: summary.type ?? venue.type ?? null,
     publisher_name: summary.publisher_name ?? venue.publisher_name ?? venue.publisher?.name ?? null,
     country_code: summary.country_code ?? venue.country_code ?? venue.publisher_country ?? null,
@@ -166,6 +167,7 @@ const baseVenue = (venue = {}, options = {}) => {
   const base = {
     id: venue.id,
     name: venue.name,
+    abbreviated_name: coalesce(venue.abbreviated_name, summarySnapshot?.abbreviated_name),
     type: venue.type,
     open_access: toBoolean(venue.open_access),
     works_count: toInteger(

@@ -905,6 +905,12 @@
             "example": "American Anthropologist",
             "description": "Official name of the venue"
           },
+          "abbreviated_name": {
+            "type": "string",
+            "nullable": true,
+            "example": "Am. Anthropol.",
+            "description": "Standard abbreviated name of the venue"
+          },
           "type": {
             "type": "string",
             "enum": [

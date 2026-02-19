@@ -105,6 +105,7 @@ Operational directive: at the end of each session or significant change, create 
 - Nested endpoints remain active.
 ## Route Standards (Current)
 - Use plural collections: `/bibliographies`, `/institutions`.
+- Venue payloads (`/venues`, `/venues/{id}`, `/venues/search`) must expose `abbreviated_name` when available.
 - Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
 - Works listing: `/works/showcase`.
 - Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
