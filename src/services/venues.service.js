@@ -564,7 +564,7 @@ class VenuesService {
     const currentLimit = Math.min(Math.max(1, parseInt(limit, 10) || 20), 100);
     const currentOffset = Math.max(0, parseInt(offset, 10) || 0);
 
-    const cacheKey = `venues:search:${query}:${JSON.stringify(normalizedOptions)}`;
+      const cacheKey = `venues:search:${query}:${JSON.stringify(normalizedOptions)}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -573,103 +573,132 @@ class VenuesService {
         return cached;
       }
 
-      const baseQuery = `
-        SELECT 
+      const searchTerm = `%${query}%`;
+      let usedFallbackSearch = false;
+      let usedFallbackCount = false;
+      const summaryListQuery = `
+        SELECT
           v.id,
-          v.name,
-          v.abbreviated_name,
-          v.type,
-          v.issn,
-          v.eissn,
-          v.scopus_id AS scopus_source_id,
-          v.publisher_id,
-          v.impact_factor,
-          v.citescore,
-          v.sjr,
-          v.snip,
-          v.created_at,
-          v.updated_at,
-          v.open_access,
-          v.aggregation_type,
-          v.coverage_start_year,
-          v.coverage_end_year,
-          v.is_indexed_in_scopus,
-          v.\`2yr_mean_citedness\` AS two_year_mean_citedness,
-          v.homepage_url,
-          v.country_code,
-          v.is_in_doaj,
-          COALESCE(v.works_count, 0) as works_count,
-          pub.name as publisher_name,
-          pub.type as publisher_type,
-          pub.country_code as publisher_country
-        FROM venues v
-        LEFT JOIN organizations pub ON v.publisher_id = pub.id
-        WHERE (v.name LIKE ? OR v.abbreviated_name LIKE ?)
+          COALESCE(svs.works_count, v.works_count, 0) AS works_count
+        FROM sphinx_venues_summary svs
+        INNER JOIN venues v ON v.id = svs.id
+        WHERE (
+          svs.name LIKE ?
+          OR svs.abbreviated_name LIKE ?
+          OR svs.issn LIKE ?
+          OR svs.eissn LIKE ?
+        )
         ${type ? 'AND v.type = ?' : ''}
-        ORDER BY works_count DESC, v.name ASC
+        ORDER BY
+          MATCH(svs.name, svs.abbreviated_name, svs.subjects_string, svs.top_works_string) AGAINST(? IN NATURAL LANGUAGE MODE) DESC,
+          COALESCE(svs.works_count, v.works_count, 0) DESC,
+          svs.name ASC
         LIMIT ? OFFSET ?
       `;
 
-      const searchTerm = `%${query}%`;
-      const listParams = type
-        ? [searchTerm, searchTerm, type, currentLimit, currentOffset]
-        : [searchTerm, searchTerm, currentLimit, currentOffset];
-
-      const countQuery = `
-        SELECT COUNT(*) as total 
-        FROM venues v 
-        WHERE (v.name LIKE ? OR v.abbreviated_name LIKE ?)
+      const summaryCountQuery = `
+        SELECT COUNT(*) as total
+        FROM sphinx_venues_summary svs
+        INNER JOIN venues v ON v.id = svs.id
+        WHERE (
+          svs.name LIKE ?
+          OR svs.abbreviated_name LIKE ?
+          OR svs.issn LIKE ?
+          OR svs.eissn LIKE ?
+        )
         ${type ? 'AND v.type = ?' : ''}
       `;
-      const countParams = type ? [searchTerm, searchTerm, type] : [searchTerm, searchTerm];
+
+      const fallbackListQuery = `
+        SELECT
+          v.id,
+          COALESCE(v.works_count, 0) AS works_count
+        FROM venues v
+        WHERE (
+          v.name LIKE ?
+          OR v.abbreviated_name LIKE ?
+          OR v.issn LIKE ?
+          OR v.eissn LIKE ?
+        )
+        ${type ? 'AND v.type = ?' : ''}
+        ORDER BY COALESCE(v.works_count, 0) DESC, v.name ASC
+        LIMIT ? OFFSET ?
+      `;
+
+      const fallbackCountQuery = `
+        SELECT COUNT(*) as total
+        FROM venues v
+        WHERE (
+          v.name LIKE ?
+          OR v.abbreviated_name LIKE ?
+          OR v.issn LIKE ?
+          OR v.eissn LIKE ?
+        )
+        ${type ? 'AND v.type = ?' : ''}
+      `;
+
+      const summaryListParams = type
+        ? [searchTerm, searchTerm, searchTerm, searchTerm, type, query, currentLimit, currentOffset]
+        : [searchTerm, searchTerm, searchTerm, searchTerm, query, currentLimit, currentOffset];
+      const summaryCountParams = type
+        ? [searchTerm, searchTerm, searchTerm, searchTerm, type]
+        : [searchTerm, searchTerm, searchTerm, searchTerm];
+      const fallbackListParams = type
+        ? [searchTerm, searchTerm, searchTerm, searchTerm, type, currentLimit, currentOffset]
+        : [searchTerm, searchTerm, searchTerm, searchTerm, currentLimit, currentOffset];
+      const fallbackCountParams = type
+        ? [searchTerm, searchTerm, searchTerm, searchTerm, type]
+        : [searchTerm, searchTerm, searchTerm, searchTerm];
 
       const executeSearchQuery = async () => {
         try {
-          return await sequelize.query(baseQuery, {
-            replacements: listParams,
+          return await sequelize.query(summaryListQuery, {
+            replacements: summaryListParams,
             type: sequelize.QueryTypes.SELECT
           });
         } catch (err) {
           const code = err?.original?.code || err?.parent?.code || err?.code;
-          if (code === 'ER_BAD_FIELD_ERROR' || code === '42S22') {
-            logger.warn('Venues search query falling back to minimal schema', { error: err.message });
-            const fallbackQuery = `
-              SELECT 
-                v.id,
-                v.name,
-                v.abbreviated_name,
-                v.type,
-                v.issn,
-                v.eissn,
-                NULL AS scopus_source_id,
-                v.publisher_id,
-                v.impact_factor,
-                NULL AS citescore,
-                NULL AS sjr,
-                NULL AS snip,
-                v.created_at,
-                v.updated_at,
-                v.open_access,
-                v.aggregation_type,
-                v.coverage_start_year,
-                v.coverage_end_year,
-                v.is_indexed_in_scopus,
-                v.\`2yr_mean_citedness\` AS two_year_mean_citedness,
-                NULL AS homepage_url,
-                NULL AS country_code,
-                NULL AS is_in_doaj,
-                COALESCE(v.works_count, 0) as works_count,
-                NULL as publisher_name,
-                NULL as publisher_type,
-                NULL as publisher_country
-              FROM venues v
-              WHERE (v.name LIKE ? OR v.abbreviated_name LIKE ?)
-              ${type ? 'AND v.type = ?' : ''}
-              ORDER BY works_count DESC, v.name ASC
-              LIMIT ? OFFSET ?
-            `;
-            return await sequelize.query(fallbackQuery, {
-              replacements: listParams,
+          const errno = err?.original?.errno || err?.parent?.errno;
+          if (
+            code === 'ER_NO_SUCH_TABLE' ||
+            code === '42S02' ||
+            code === 'ER_BAD_FIELD_ERROR' ||
+            code === '42S22' ||
+            code === 'ER_FT_MATCHING_KEY_NOT_FOUND' ||
+            errno === 1191
+          ) {
+            logger.warn('Venues summary search query unavailable, falling back to base venues', { error: err.message });
+            usedFallbackSearch = true;
+            return await sequelize.query(fallbackListQuery, {
+              replacements: fallbackListParams,
+              type: sequelize.QueryTypes.SELECT
+            });
+          }
+          throw err;
+        }
+      };
+
+      const executeCountQuery = async () => {
+        try {
+          return await sequelize.query(summaryCountQuery, {
+            replacements: summaryCountParams,
+            type: sequelize.QueryTypes.SELECT
+          });
+        } catch (err) {
+          const code = err?.original?.code || err?.parent?.code || err?.code;
+          const errno = err?.original?.errno || err?.parent?.errno;
+          if (
+            code === 'ER_NO_SUCH_TABLE' ||
+            code === '42S02' ||
+            code === 'ER_BAD_FIELD_ERROR' ||
+            code === '42S22' ||
+            code === 'ER_FT_MATCHING_KEY_NOT_FOUND' ||
+            errno === 1191
+          ) {
+            logger.warn('Venues summary count query unavailable, falling back to base venues', { error: err.message });
+            usedFallbackCount = true;
+            return await sequelize.query(fallbackCountQuery, {
+              replacements: fallbackCountParams,
               type: sequelize.QueryTypes.SELECT
             });
           }
@@ -679,21 +708,13 @@ class VenuesService {
 
       const [rawVenues, countResult] = await Promise.all([
         executeSearchQuery(),
-        sequelize.query(countQuery, {
-          replacements: countParams,
-          type: sequelize.QueryTypes.SELECT
-        })
+        executeCountQuery()
       ]);
 
       const enrichedList = await this._enrichVenues(
         rawVenues.map((row) => ({
-          ...row,
-          impact_factor: toNullableFloat(row.impact_factor),
-          citescore: toNullableFloat(row.citescore),
-          sjr: toNullableFloat(row.sjr),
-          snip: toNullableFloat(row.snip),
-          open_access: toNullableBoolean(row.open_access),
-          is_in_doaj: toNullableBoolean(row.is_in_doaj)
+          id: row.id,
+          works_count: toInt(row.works_count, 0)
         })),
         { includeSubjects: true }
       );
@@ -707,7 +728,7 @@ class VenuesService {
       const paginationData = createPagination(currentPage, currentLimit, total);
 
       const meta = {
-        source: 'mariadb',
+        source: usedFallbackSearch || usedFallbackCount ? 'mariadb_fallback' : 'sphinx_venues_summary',
         query: query
       };
       if (type) {
