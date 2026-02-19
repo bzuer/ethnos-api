@@ -171,6 +171,7 @@ class VenuesService {
       SELECT
         id,
         name,
+        abbreviated_name,
         type,
         publisher_name,
         country_code,
@@ -603,7 +604,7 @@ class VenuesService {
           pub.country_code as publisher_country
         FROM venues v
         LEFT JOIN organizations pub ON v.publisher_id = pub.id
-        WHERE v.name LIKE ?
+        WHERE (v.name LIKE ? OR v.abbreviated_name LIKE ?)
         ${type ? 'AND v.type = ?' : ''}
         ORDER BY works_count DESC, v.name ASC
         LIMIT ? OFFSET ?
@@ -611,16 +612,16 @@ class VenuesService {
 
       const searchTerm = `%${query}%`;
       const listParams = type
-        ? [searchTerm, type, currentLimit, currentOffset]
-        : [searchTerm, currentLimit, currentOffset];
+        ? [searchTerm, searchTerm, type, currentLimit, currentOffset]
+        : [searchTerm, searchTerm, currentLimit, currentOffset];
 
       const countQuery = `
         SELECT COUNT(*) as total 
         FROM venues v 
-        WHERE v.name LIKE ?
+        WHERE (v.name LIKE ? OR v.abbreviated_name LIKE ?)
         ${type ? 'AND v.type = ?' : ''}
       `;
-      const countParams = type ? [searchTerm, type] : [searchTerm];
+      const countParams = type ? [searchTerm, searchTerm, type] : [searchTerm, searchTerm];
 
       const executeSearchQuery = async () => {
         try {
@@ -662,7 +663,7 @@ class VenuesService {
                 NULL as publisher_type,
                 NULL as publisher_country
               FROM venues v
-              WHERE v.name LIKE ?
+              WHERE (v.name LIKE ? OR v.abbreviated_name LIKE ?)
               ${type ? 'AND v.type = ?' : ''}
               ORDER BY works_count DESC, v.name ASC
               LIMIT ? OFFSET ?
@@ -797,8 +798,8 @@ class VenuesService {
 
     if (search && search.trim().length > 0) {
       const term = `%${search.trim()}%`;
-      filterTemplates.push('({{alias}}.name LIKE ? OR {{alias}}.issn LIKE ? OR {{alias}}.eissn LIKE ?)');
-      filterParams.push(term, term, term);
+      filterTemplates.push('({{alias}}.name LIKE ? OR {{alias}}.abbreviated_name LIKE ? OR {{alias}}.issn LIKE ? OR {{alias}}.eissn LIKE ?)');
+      filterParams.push(term, term, term, term);
     }
 
     const buildWhereClause = (alias) => {
@@ -838,6 +839,7 @@ class VenuesService {
       SELECT
         svs.id AS summary_id,
         svs.name AS summary_name,
+        svs.abbreviated_name AS summary_abbreviated_name,
         svs.type AS summary_type,
         svs.publisher_name AS summary_publisher_name,
         svs.country_code AS summary_country_code,
@@ -992,7 +994,7 @@ class VenuesService {
           return rows;
         } catch (err) {
           const code = err?.original?.code || err?.parent?.code || err?.code;
-          if (code === 'ER_NO_SUCH_TABLE' || code === '42S02') {
+          if (code === 'ER_NO_SUCH_TABLE' || code === '42S02' || code === 'ER_BAD_FIELD_ERROR' || code === '42S22') {
             logger.warn('Venues summary table not available, falling back to base venues data', { error: err.message });
             return executeFallbackVenuesQuery();
           }
@@ -1012,7 +1014,7 @@ class VenuesService {
           });
         } catch (err) {
           const code = err?.original?.code || err?.parent?.code || err?.code;
-          if (code === 'ER_NO_SUCH_TABLE' || code === '42S02') {
+          if (code === 'ER_NO_SUCH_TABLE' || code === '42S02' || code === 'ER_BAD_FIELD_ERROR' || code === '42S22') {
             logger.warn('Venues summary count fallback triggered', { error: err.message });
             return sequelize.query(`
               SELECT COUNT(*) as total 
@@ -1036,7 +1038,7 @@ class VenuesService {
         rawVenues.map((row) => ({
           id: row.summary_id ?? row.id,
           name: row.summary_name ?? row.name,
-          abbreviated_name: row.abbreviated_name ?? null,
+          abbreviated_name: row.summary_abbreviated_name ?? row.abbreviated_name ?? null,
           type: row.summary_type ?? row.type,
           issn: row.summary_issn ?? row.issn,
           eissn: row.summary_eissn ?? row.eissn,
@@ -1070,7 +1072,7 @@ class VenuesService {
           summary_snapshot: row.summary_id !== undefined ? {
             id: row.summary_id ?? row.id ?? null,
             name: row.summary_name ?? row.name ?? null,
-            abbreviated_name: row.abbreviated_name ?? null,
+            abbreviated_name: row.summary_abbreviated_name ?? row.abbreviated_name ?? null,
             type: row.summary_type ?? row.type ?? null,
             publisher_name: row.summary_publisher_name ?? null,
             country_code: row.summary_country_code ?? null,

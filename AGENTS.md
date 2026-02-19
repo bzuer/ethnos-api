@@ -45,6 +45,7 @@ Operational directive: at the end of each session or significant change, create 
 - For citation/reference logic, use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`) and never rely on legacy `citations` or `unresolved_citations`.
 - Person-signature relation is direct via `persons.signature_id`; do not use legacy `persons_signatures`.
 - Publication-file relation is direct in `files` (`publication_id`, `work_id`, `file_role`); do not use legacy `publication_files`.
+- Sphinx summaries must stay aligned with DB routines: `sphinx_works_summary.venue_abbrev` and `sphinx_venues_summary.abbreviated_name` are part of current query contracts.
 
 ## Documentation (OpenAPI)
 - UI: `/docs` (Swagger UI) sourced from `/docs.json`.

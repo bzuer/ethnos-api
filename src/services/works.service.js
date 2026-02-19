@@ -177,6 +177,7 @@ class WorksService {
           abstract,
           author_string,
           venue_name,
+          venue_abbrev,
           doi,
           created_ts,
           year as publication_year,
@@ -216,7 +217,7 @@ class WorksService {
           doi: work.doi,
           open_access: work.open_access,
           peer_reviewed: work.peer_reviewed,
-          venue_name: work.venue_name,
+          venue_name: work.venue_name || work.venue_abbrev || null,
           author_string: work.author_string,
           author_count: work.author_count,
           first_author: work.author_string ? work.author_string.split(';')[0]?.trim() : null,
@@ -227,7 +228,7 @@ class WorksService {
           ...base,
           author_string: typeof work.author_string === 'string' ? work.author_string : null,
           subjects_string: typeof work.subjects_string === 'string' ? work.subjects_string : null,
-          venue_name: typeof work.venue_name === 'string' ? work.venue_name : null,
+          venue_name: typeof (work.venue_name || work.venue_abbrev) === 'string' ? (work.venue_name || work.venue_abbrev) : null,
           work_type: work.work_type || null,
           year: work.year !== undefined && work.year !== null ? work.year : null,
           created_ts: work.created_ts !== undefined && work.created_ts !== null ? work.created_ts : null,
@@ -321,6 +322,7 @@ class WorksService {
         abstract,
         author_string,
         venue_name,
+        venue_abbrev,
         doi,
         year,
         work_type,
@@ -358,7 +360,7 @@ class WorksService {
         doi: work.doi,
         peer_reviewed: work.peer_reviewed === 1,
         open_access: work.open_access === 1,
-        venue: work.venue_name ? { name: work.venue_name } : null,
+        venue: (work.venue_name || work.venue_abbrev) ? { name: work.venue_name || work.venue_abbrev } : null,
         author_count: authors.length,
         first_author: authors.length > 0 ? authors[0] : null,
         authors_preview: authors.slice(0, 3),
@@ -823,7 +825,7 @@ class WorksService {
       if (allIds.length) {
         const placeholders = allIds.map(() => '?').join(',');
         const sphinxRows = await sequelize.query(
-          `SELECT id, title, year, author_string, venue_name, doi, open_access FROM sphinx_works_summary WHERE id IN (${placeholders})`,
+          `SELECT id, title, year, author_string, venue_name, venue_abbrev, doi, open_access FROM sphinx_works_summary WHERE id IN (${placeholders})`,
           { replacements: allIds, type: sequelize.QueryTypes.SELECT }
         );
         sphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
@@ -836,7 +838,7 @@ class WorksService {
           title: sw.title || null,
           authors: sw.author_string || null,
           publication_year: sw.year || null,
-          venue_name: sw.venue_name || null,
+          venue_name: sw.venue_name || sw.venue_abbrev || null,
           open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
           citation_status: row.citation_status || null,
@@ -851,7 +853,7 @@ class WorksService {
           title: sw.title || null,
           authors: sw.author_string || null,
           publication_year: sw.year || null,
-          venue_name: sw.venue_name || null,
+          venue_name: sw.venue_name || sw.venue_abbrev || null,
           doi: sw.doi || row.cited_doi || null,
           open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
