@@ -1,135 +1,10 @@
 'use strict';
 
-const path = require('path');
-const Module = require('module');
 const nodeTest = require('node:test');
 
 const matcherTypeSymbol = Symbol('matcherType');
 const matcherAny = 'any';
 const matcherObjectContaining = 'objectContaining';
-const trackedSpies = new Set();
-const trackedMocks = new Set();
-
-function getCallerFile() {
-  const previous = Error.prepareStackTrace;
-  Error.prepareStackTrace = (_, stack) => stack;
-  const err = {};
-  Error.captureStackTrace(err, getCallerFile);
-  const stack = err.stack || [];
-  Error.prepareStackTrace = previous;
-
-  for (const callSite of stack) {
-    const fileName = callSite && typeof callSite.getFileName === 'function' ? callSite.getFileName() : null;
-    if (!fileName) continue;
-    if (fileName === __filename) continue;
-    if (fileName.includes('node:internal')) continue;
-    return fileName;
-  }
-
-  return path.join(process.cwd(), 'index.js');
-}
-
-function createMockFunction(implementation) {
-  const mockFn = function mockFnWrapper(...args) {
-    mockFn.mock.calls.push(args);
-    mockFn.mock.instances.push(this);
-    return mockFn._implementation.apply(this, args);
-  };
-
-  mockFn._implementation = typeof implementation === 'function' ? implementation : () => undefined;
-  mockFn.mock = { calls: [], instances: [] };
-
-  mockFn.mockImplementation = (nextImplementation) => {
-    mockFn._implementation = typeof nextImplementation === 'function' ? nextImplementation : () => undefined;
-    return mockFn;
-  };
-
-  mockFn.mockResolvedValue = (value) => {
-    mockFn._implementation = () => Promise.resolve(value);
-    return mockFn;
-  };
-
-  mockFn.mockRejectedValue = (error) => {
-    mockFn._implementation = () => Promise.reject(error);
-    return mockFn;
-  };
-
-  mockFn.mockReturnValue = (value) => {
-    mockFn._implementation = () => value;
-    return mockFn;
-  };
-
-  mockFn.mockClear = () => {
-    mockFn.mock.calls = [];
-    mockFn.mock.instances = [];
-    return mockFn;
-  };
-
-  mockFn.mockReset = () => {
-    mockFn.mockClear();
-    mockFn._implementation = () => undefined;
-    return mockFn;
-  };
-
-  trackedMocks.add(mockFn);
-  return mockFn;
-}
-
-function spyOn(target, methodName) {
-  if (!target || typeof target[methodName] !== 'function') {
-    throw new Error(`Cannot spy on ${String(methodName)}`);
-  }
-
-  const original = target[methodName];
-  const spy = createMockFunction(function callOriginal(...args) {
-    return original.apply(this, args);
-  });
-
-  const restore = () => {
-    target[methodName] = original;
-    trackedSpies.delete(restore);
-  };
-
-  spy.mockRestore = restore;
-  trackedSpies.add(restore);
-  target[methodName] = spy;
-
-  return spy;
-}
-
-function resolveFromCaller(modulePath) {
-  const caller = getCallerFile();
-  return require.resolve(modulePath, { paths: [path.dirname(caller)] });
-}
-
-function mock(modulePath, factory) {
-  const resolvedPath = resolveFromCaller(modulePath);
-  const exportsValue = typeof factory === 'function' ? factory() : factory;
-  const mockedModule = new Module(resolvedPath, module);
-  mockedModule.filename = resolvedPath;
-  mockedModule.paths = Module._nodeModulePaths(path.dirname(resolvedPath));
-  mockedModule.loaded = true;
-  mockedModule.exports = exportsValue;
-  require.cache[resolvedPath] = mockedModule;
-}
-
-function restoreAllMocks() {
-  for (const restore of Array.from(trackedSpies)) {
-    restore();
-  }
-}
-
-function clearAllMocks() {
-  for (const mockFn of trackedMocks) {
-    mockFn.mockClear();
-  }
-}
-
-function resetAllMocks() {
-  for (const mockFn of trackedMocks) {
-    mockFn.mockReset();
-  }
-}
 
 function createAnyMatcher(ctor) {
   return {
@@ -344,11 +219,3 @@ global.afterAll = nodeTest.after;
 global.beforeEach = nodeTest.beforeEach;
 global.afterEach = nodeTest.afterEach;
 global.expect = expectValue;
-global.jest = {
-  fn: createMockFunction,
-  spyOn,
-  mock,
-  restoreAllMocks,
-  clearAllMocks,
-  resetAllMocks,
-};

@@ -1,36 +1,9 @@
 
 
 process.env.NODE_ENV = 'test';
-process.env.JEST_FAST = '1';
+process.env.TEST_FAST = '1';
 process.env.INTERNAL_ACCESS_KEY = process.env.INTERNAL_ACCESS_KEY || 'test-internal-key';
 process.env.SECURITY_ACCESS_KEY = process.env.SECURITY_ACCESS_KEY || 'test-security-key';
-
-jest.mock('../src/config/database', () => {
-  const QueryTypes = { SELECT: 'SELECT' };
-  const define = jest.fn(() => ({
-    belongsTo: jest.fn(),
-    belongsToMany: jest.fn(),
-    hasMany: jest.fn(),
-  }));
-  return {
-    sequelize: {
-      query: jest.fn().mockResolvedValue([{ exists_check: 1 }]),
-      QueryTypes,
-      close: jest.fn().mockResolvedValue(true),
-      define,
-    },
-    testConnection: jest.fn().mockResolvedValue(true),
-    closePool: jest.fn().mockResolvedValue(true),
-    pool: {},
-    config: {},
-  };
-});
-
-jest.mock('../src/config/redis', () => ({
-  testRedisConnection: jest.fn().mockResolvedValue(true),
-  quit: jest.fn().mockResolvedValue(),
-  connected: false,
-}));
 
 const { createMockReq, createMockRes, withResponseFormatter } = require('./helpers/mock-express');
 const { invokeRouter } = require('./helpers/router-invoke');
@@ -49,8 +22,6 @@ const bibliographyRouter = require('../src/routes/bibliography');
 const securityRouter = require('../src/routes/security');
 const dashboardRouter = require('../src/routes/dashboard');
 
-const dbConfig = require('../src/config/database');
-const redisConfig = require('../src/config/redis');
 const worksService = require('../src/services/works.service');
 const personsService = require('../src/services/persons.service');
 const orgsService = require('../src/services/organizations.service');
@@ -61,6 +32,7 @@ const collaborationsService = require('../src/services/collaborations.service');
 const coursesService = require('../src/services/courses.service');
 const instructorsService = require('../src/services/instructors.service');
 const bibliographyService = require('../src/services/bibliography.service');
+const restoreStack = [];
 
 const pageMeta = (page = 1, limit = 10, total = 2) => ({
   page,
@@ -71,13 +43,27 @@ const pageMeta = (page = 1, limit = 10, total = 2) => ({
   hasPrev: page > 1,
 });
 
-beforeAll(() => {
-  dbConfig.testConnection.mockResolvedValue(true);
-  redisConfig.testRedisConnection.mockResolvedValue(true);
-});
+const restoreStubs = () => {
+  while (restoreStack.length > 0) {
+    const restore = restoreStack.pop();
+    restore();
+  }
+};
 
-afterAll(() => {
-  jest.restoreAllMocks();
+const stubMethod = (target, methodName, replacement) => {
+  const original = target[methodName];
+  target[methodName] = replacement;
+  restoreStack.push(() => {
+    target[methodName] = original;
+  });
+};
+
+const stubResolved = (target, methodName, value) => {
+  stubMethod(target, methodName, async () => value);
+};
+
+afterEach(() => {
+  restoreStubs();
 });
 
 describe('Health', () => {
@@ -94,7 +80,7 @@ describe('Health', () => {
 
 describe('Works', () => {
   test('GET /works returns paginated list', async () => {
-    jest.spyOn(worksService, 'getWorks').mockResolvedValue({
+    stubResolved(worksService, 'getWorks', {
       data: [
         { id: 1, title: 'Sample Work', type: 'ARTICLE', authors_preview: [], venue: { name: 'Test' }, publication_year: 2020, data_source: 'TEST' },
         { id: 2, title: 'Another Work', type: 'BOOK', authors_preview: [], venue: { name: 'Test' }, publication_year: 2019, data_source: 'TEST' },
@@ -113,7 +99,7 @@ describe('Works', () => {
   });
 
   test('GET /works/:id returns work object', async () => {
-    jest.spyOn(worksService, 'getWorkById').mockResolvedValue({ id: 123, title: 'Work 123' });
+    stubResolved(worksService, 'getWorkById', { id: 123, title: 'Work 123' });
     const req = createMockReq({ method: 'GET', path: '/works/123', params: { id: '123' } });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: worksRouter, method: 'get', path: '/:id', req, res });
@@ -125,7 +111,7 @@ describe('Works', () => {
 
 describe('Persons', () => {
   test('GET /persons returns paginated list', async () => {
-    jest.spyOn(personsService, 'getPersons').mockResolvedValue({
+    stubResolved(personsService, 'getPersons', {
       data: [{ id: 1, preferred_name: 'Test', metrics: { works_count: 0 } }],
       pagination: pageMeta(1, 10, 1),
       performance: { engine: 'mock', elapsed_ms: 1 },
@@ -138,7 +124,7 @@ describe('Persons', () => {
   });
 
   test('GET /persons/:id returns person', async () => {
-    jest.spyOn(personsService, 'getPersonById').mockResolvedValue({ id: 7, preferred_name: 'Jane Doe' });
+    stubResolved(personsService, 'getPersonById', { id: 7, preferred_name: 'Jane Doe' });
     const req = createMockReq({ method: 'GET', path: '/persons/7', params: { id: '7' } });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: personsRouter, method: 'get', path: '/:id', req, res });
@@ -149,7 +135,7 @@ describe('Persons', () => {
 
 describe('Organizations', () => {
   test('GET /institutions returns list', async () => {
-    jest.spyOn(orgsService, 'getOrganizations').mockResolvedValue({
+    stubResolved(orgsService, 'getOrganizations', {
       data: [{ id: 1, name: 'Test University', identifiers: { ror_id: 'RORX' }, metrics: { works_count: 0 } }],
       pagination: pageMeta(1, 20, 1),
       performance: { engine: 'mock' },
@@ -163,7 +149,7 @@ describe('Organizations', () => {
   });
 
   test('GET /institutions/:id returns details', async () => {
-    jest.spyOn(orgsService, 'getOrganizationById').mockResolvedValue({ id: 1, name: 'Test University', metrics: { works_count: 10 } });
+    stubResolved(orgsService, 'getOrganizationById', { id: 1, name: 'Test University', metrics: { works_count: 10 } });
     const req = createMockReq({ method: 'GET', path: '/institutions/1', params: { id: '1' } });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: orgsRouter, method: 'get', path: '/:id', req, res });
@@ -174,7 +160,7 @@ describe('Organizations', () => {
 
 describe('Venues', () => {
   test('GET /venues returns list', async () => {
-    jest.spyOn(venuesService, 'getVenues').mockResolvedValue({
+    stubResolved(venuesService, 'getVenues', {
       data: [{ id: 1, name: 'Journal of Tests', type: 'JOURNAL', works_count: 0 }],
       pagination: { total: 1, limit: 20, offset: 0, pages: 1 },
       meta: { engine: 'mock' },
@@ -189,7 +175,7 @@ describe('Venues', () => {
 
 describe('Search', () => {
   test('GET /search/works returns results', async () => {
-    jest.spyOn(searchService, 'searchWorks').mockResolvedValue({
+    stubResolved(searchService, 'searchWorks', {
       data: [{ id: 101, title: 'Anthropology 101', type: 'ARTICLE', authors_preview: [], venue: { name: 'X' } }],
       pagination: pageMeta(1, 10, 1),
       meta: { performance: { engine: 'mock' }, query: 'anthropology' },
@@ -205,7 +191,7 @@ describe('Search', () => {
 
 describe('Citations', () => {
   test('GET /works/:id/citations returns list', async () => {
-    jest.spyOn(citationsService, 'getWorkCitations').mockResolvedValue({
+    stubResolved(citationsService, 'getWorkCitations', {
       work_id: 5,
       citing_works: [{ id: 1, citing_work_id: 2 }],
       pagination: pageMeta(1, 10, 1),
@@ -221,7 +207,7 @@ describe('Citations', () => {
 
 describe('Collaborations', () => {
   test('GET /persons/:id/collaborators returns list', async () => {
-    jest.spyOn(collaborationsService, 'getPersonCollaborators').mockResolvedValue({
+    stubResolved(collaborationsService, 'getPersonCollaborators', {
       person_id: 1,
       total_collaborators: 1,
       collaborators: [{ collaborator_id: 2, collaborator_name: 'X' }],
@@ -237,7 +223,7 @@ describe('Collaborations', () => {
 
 describe('Courses & Instructors', () => {
   test('GET /courses returns list', async () => {
-    jest.spyOn(coursesService, 'getCourses').mockResolvedValue({
+    stubResolved(coursesService, 'getCourses', {
       data: [{ id: 1, name: 'Anthropology Intro' }],
       pagination: pageMeta(1, 10, 1),
       meta: {},
@@ -249,7 +235,7 @@ describe('Courses & Instructors', () => {
   });
 
   test('GET /instructors returns list', async () => {
-    jest.spyOn(instructorsService, 'getInstructors').mockResolvedValue({
+    stubResolved(instructorsService, 'getInstructors', {
       data: [{ id: 10, preferred_name: 'Prof. Test' }],
       pagination: pageMeta(1, 10, 1),
       meta: {},
@@ -426,7 +412,7 @@ describe('DTOs structure', () => {
 
 describe('Bibliography', () => {
   test('GET /bibliographies returns list', async () => {
-    jest.spyOn(bibliographyService, 'getBibliography').mockResolvedValue({
+    stubResolved(bibliographyService, 'getBibliography', {
       data: [{ id: 1, work_id: 123, course_id: 5 }],
       pagination: pageMeta(1, 10, 1),
       meta: {},

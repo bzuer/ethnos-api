@@ -440,27 +440,30 @@ const gracefulShutdown = async (signal) => {
   setTimeout(() => process.exit(1), 10000);
 };
 
-process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception:', err);
-  process.exit(1);
-});
+const registerProcessHandlers = () => {
+  process.on('uncaughtException', (err) => {
+    logger.error('Uncaught Exception:', err);
+    process.exit(1);
+  });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    process.exit(1);
+  });
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGQUIT', () => gracefulShutdown('SIGQUIT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGQUIT', () => gracefulShutdown('SIGQUIT'));
 
-process.on('message', (msg) => {
-  if (msg === 'shutdown') {
-    gracefulShutdown('PM2_SHUTDOWN');
-  }
-});
+  process.on('message', (msg) => {
+    if (msg === 'shutdown') {
+      gracefulShutdown('PM2_SHUTDOWN');
+    }
+  });
+};
 
 if (require.main === module) {
+  registerProcessHandlers();
   startServer();
 }
 

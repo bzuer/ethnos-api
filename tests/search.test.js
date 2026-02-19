@@ -4,7 +4,7 @@ const request = createHttpClient(app);
 const { expectSuccessEnvelope, expectStandardError } = require('./helpers/expectations');
 
 describe('Search API', () => {
-  const sphinxIntegration = process.env.JEST_ENABLE_SPHINX === '1';
+  const sphinxIntegration = process.env.TEST_ENABLE_SPHINX === '1';
   describe('GET /search/works', () => {
     it('should return fulltext search results for works', async () => {
       const res = await request()
