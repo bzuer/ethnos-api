@@ -46,9 +46,9 @@ const REQUIRED_TABLES = {
     columns: ['citing_work_id', 'cited_work_id', 'cited_doi', 'status', 'citation_type'],
     indexes: ['PRIMARY', 'uq_reference', 'idx_cited_doi', 'idx_status', 'fk_ref_cited_work']
   },
-  publication_files: {
-    columns: ['publication_id', 'file_id', 'file_role', 'quality'],
-    indexes: ['PRIMARY', 'idx_publication_files_publication_id']
+  files: {
+    columns: ['id', 'publication_id', 'work_id', 'file_role', 'file_format'],
+    indexes: ['PRIMARY', 'uq_md5_publication', 'idx_files_publication_id']
   },
   persons: {
     columns: ['id', 'preferred_name', 'is_verified'],

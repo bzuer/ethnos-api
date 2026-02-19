@@ -39,9 +39,12 @@ Operational directive: at the end of each session or significant change, create 
 - DTOs per domain (e.g., `work.dto.js`, `person.dto.js`, `organization.dto.js`, `venue.dto.js`).
 - Errors: `res.fail(...)` and `res.error(err, ...)` with `ERROR_CODES`.
 - Raw SQL via `sequelize.query`.
-- Schema source of truth: `database/schema.sql`.
+- Schema comparison inputs: `database/database_old.schema.sql` and `database/database_new.schema.sql`.
+- Schema source of truth: `database/schema.sql` (must mirror `database/database_new.schema.sql`).
+- Canonical development snapshot: `data_dev.schema.sql` (keep synchronized with `database/schema.sql`).
 - For citation/reference logic, use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`) and never rely on legacy `citations` or `unresolved_citations`.
-- Keep citation/reference behavior aligned with `docs/data_dev.schema.sql`, and mirror structural changes to `database/schema.sql` when updating baseline schema.
+- Person-signature relation is direct via `persons.signature_id`; do not use legacy `persons_signatures`.
+- Publication-file relation is direct in `files` (`publication_id`, `work_id`, `file_role`); do not use legacy `publication_files`.
 
 ## Documentation (OpenAPI)
 - UI: `/docs` (Swagger UI) sourced from `/docs.json`.
@@ -75,7 +78,7 @@ Operational directive: at the end of each session or significant change, create 
 - Runtime: `/var/lib/ethnos-api/sphinx`, logs: `/var/log/ethnos-api`, PID: `/var/run/ethnos-api/sphinx.pid`.
 
 ## Repository Hygiene
-- Ignore/clean: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql` (except `database/schema.sql`), `node_modules/`.
+- Ignore/clean: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql` (except `database/schema.sql`, `database/database_old.schema.sql`, `database/database_new.schema.sql`), `node_modules/`.
 - Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `models/`, `ssl/`, `database/`.
 - Remove stale or out-of-scope content.
 - Repo logs must be cleared at the start of `deploy` and `restart`.
@@ -108,7 +111,7 @@ Operational directive: at the end of each session or significant change, create 
 - Sphinx endpoints: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
 
 ## Tests
-- Framework: Jest + Supertest.
+- Framework: Node test runner (`node --test`) + Supertest.
 - Commands: `npm test`, `npm run test:watch`, `npm run test:coverage`.
 - When changing behavior, prefer adding or updating tests in `tests/`.
 

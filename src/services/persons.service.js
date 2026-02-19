@@ -21,8 +21,7 @@ class PersonsService {
       const person = await sequelize.query(withTimeout(`
         SELECT p.*, s.signature as name_signature
         FROM persons p
-        LEFT JOIN persons_signatures ps ON p.id = ps.person_id
-        LEFT JOIN signatures s ON ps.signature_id = s.id
+        LEFT JOIN signatures s ON p.signature_id = s.id
         WHERE p.id = :id
         LIMIT 1
       `), {
@@ -275,8 +274,7 @@ class PersonsService {
               p.is_verified,
               s.signature as name_signature
             FROM persons p
-            INNER JOIN persons_signatures ps ON p.id = ps.person_id
-            INNER JOIN signatures s ON ps.signature_id = s.id
+            INNER JOIN signatures s ON p.signature_id = s.id
             WHERE s.signature LIKE :signature
             ORDER BY p.id DESC
             LIMIT :limit OFFSET :offset
@@ -287,8 +285,7 @@ class PersonsService {
           sequelize.query(`
             SELECT COUNT(DISTINCT p.id) as total
             FROM persons p
-            INNER JOIN persons_signatures ps ON p.id = ps.person_id
-            INNER JOIN signatures s ON ps.signature_id = s.id
+            INNER JOIN signatures s ON p.signature_id = s.id
             WHERE s.signature LIKE :signature
           `, {
             replacements: { signature: signatureQuery },
@@ -332,8 +329,7 @@ class PersonsService {
               p.is_verified,
               s.signature as name_signature
             FROM persons p
-            LEFT JOIN persons_signatures ps ON p.id = ps.person_id
-            LEFT JOIN signatures s ON ps.signature_id = s.id
+            LEFT JOIN signatures s ON p.signature_id = s.id
             ${whereClause}
             ORDER BY p.id DESC
             LIMIT :limit OFFSET :offset
@@ -345,7 +341,6 @@ class PersonsService {
           sequelize.query(`
             SELECT COUNT(*) as total
             FROM persons p
-            ${whereClause.includes('s.') ? 'LEFT JOIN persons_signatures ps ON p.id = ps.person_id LEFT JOIN signatures s ON ps.signature_id = s.id' : ''}
             ${whereClause}
           `, {
             replacements: Object.fromEntries(
@@ -575,11 +570,11 @@ class PersonsService {
             s.id,
             s.signature,
             s.created_at,
-            COUNT(DISTINCT ps2.person_id) as persons_count
-          FROM persons_signatures ps
-          INNER JOIN signatures s ON ps.signature_id = s.id
-          LEFT JOIN persons_signatures ps2 ON s.id = ps2.signature_id
-          WHERE ps.person_id = :personId
+            COUNT(DISTINCT p2.id) as persons_count
+          FROM persons p
+          INNER JOIN signatures s ON p.signature_id = s.id
+          LEFT JOIN persons p2 ON s.id = p2.signature_id
+          WHERE p.id = :personId
           GROUP BY s.id, s.signature, s.created_at
           ORDER BY s.signature ASC
           LIMIT :limit OFFSET :offset
@@ -590,8 +585,9 @@ class PersonsService {
         
         sequelize.query(`
           SELECT COUNT(*) as total
-          FROM persons_signatures ps
-          WHERE ps.person_id = :personId
+          FROM persons p
+          WHERE p.id = :personId
+            AND p.signature_id IS NOT NULL
         `, {
           replacements: { personId },
           type: sequelize.QueryTypes.SELECT

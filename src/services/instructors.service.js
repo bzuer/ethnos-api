@@ -494,13 +494,12 @@ class InstructorsService {
     const authorshipStatsQuery = `
       SELECT 
         COUNT(DISTINCT vws.work_id) as works_authored,
-        COUNT(DISTINCT ps.signature_id) as unique_signatures,
+        COUNT(DISTINCT p.signature_id) as unique_signatures,
         COUNT(DISTINCT a.work_id) as confirmed_authorships,
         MIN(pub.year) as first_publication_year,
         MAX(pub.year) as latest_publication_year
       FROM persons p
       LEFT JOIN v_works_by_signature vws ON p.id = vws.person_id
-      LEFT JOIN persons_signatures ps ON p.id = ps.person_id
       LEFT JOIN authorships a ON p.id = a.person_id
       LEFT JOIN works w ON vws.work_id = w.id
       LEFT JOIN publications pub ON w.id = pub.work_id
@@ -516,8 +515,7 @@ class InstructorsService {
         s.signature,
         COUNT(DISTINCT vws.work_id) as works_with_signature
       FROM persons p
-      JOIN persons_signatures ps ON p.id = ps.person_id
-      JOIN signatures s ON ps.signature_id = s.id
+      JOIN signatures s ON p.signature_id = s.id
       LEFT JOIN v_works_by_signature vws ON p.id = vws.person_id AND s.signature = vws.signature_text
       WHERE p.id = ?
       GROUP BY s.id, s.signature

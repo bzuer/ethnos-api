@@ -665,14 +665,13 @@ class WorksService {
         f.file_size as size,
         f.pages,
         f.language,
-        pf.file_role as role,
-        pf.quality,
-        pf.access_count,
-        pf.last_accessed
-      FROM publication_files pf
-      JOIN files f ON pf.file_id = f.id
-      WHERE pf.publication_id = ?
-      ORDER BY pf.file_role, pf.quality DESC
+        f.file_role as role,
+        NULL as quality,
+        f.download_count as access_count,
+        f.last_accessed
+      FROM files f
+      WHERE f.publication_id = ?
+      ORDER BY f.file_role, f.download_count DESC
     `, {
       replacements: [workData.publication_id || 0],
       type: sequelize.QueryTypes.SELECT

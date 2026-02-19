@@ -109,7 +109,7 @@ class SignaturesService {
         s.id,
         s.signature,
         s.created_at,
-        (SELECT COUNT(*) FROM persons_signatures ps WHERE ps.signature_id = s.id) as persons_count
+        (SELECT COUNT(*) FROM persons p WHERE p.signature_id = s.id) as persons_count
       FROM signatures s
       WHERE s.signature LIKE ?
       ORDER BY ${sortField} ${order}
@@ -176,7 +176,7 @@ class SignaturesService {
         s.id,
         s.signature,
         s.created_at,
-        (SELECT COUNT(*) FROM persons_signatures ps WHERE ps.signature_id = s.id) as persons_count
+        (SELECT COUNT(*) FROM persons p WHERE p.signature_id = s.id) as persons_count
       FROM signatures s
       ${whereClause}
       ORDER BY ${sortField} ${order}
@@ -242,9 +242,9 @@ class SignaturesService {
           s.id,
           s.signature,
           s.created_at,
-          COUNT(ps.person_id) as persons_count
+          COUNT(p.id) as persons_count
         FROM signatures s
-        LEFT JOIN persons_signatures ps ON s.id = ps.signature_id
+        LEFT JOIN persons p ON s.id = p.signature_id
         WHERE s.id = ?
         GROUP BY s.id, s.signature, s.created_at
       `;
@@ -289,10 +289,8 @@ class SignaturesService {
           p.family_name,
           p.orcid,
           p.is_verified
-        FROM signatures s
-        JOIN persons_signatures ps ON s.id = ps.signature_id
-        JOIN persons p ON ps.person_id = p.id
-        WHERE s.id = ?
+        FROM persons p
+        WHERE p.signature_id = ?
         ORDER BY p.preferred_name ASC
         LIMIT ? OFFSET ?
       `;
@@ -304,9 +302,8 @@ class SignaturesService {
 
       const countQuery = `
         SELECT COUNT(*) as total
-        FROM signatures s
-        JOIN persons_signatures ps ON s.id = ps.signature_id
-        WHERE s.id = ?
+        FROM persons p
+        WHERE p.signature_id = ?
       `;
 
       const [countResult] = await sequelize.query(countQuery, {
@@ -374,7 +371,8 @@ class SignaturesService {
         sequelize.query(`
           SELECT 
             COUNT(DISTINCT signature_id) as linked_signatures
-          FROM persons_signatures
+          FROM persons
+          WHERE signature_id IS NOT NULL
         `, {
           type: sequelize.QueryTypes.SELECT
         })
@@ -548,9 +546,9 @@ class SignaturesService {
           s.id,
           s.signature,
           s.created_at,
-          COUNT(ps.person_id) as persons_count
+          COUNT(p.id) as persons_count
         FROM signatures s
-        LEFT JOIN persons_signatures ps ON s.id = ps.signature_id
+        LEFT JOIN persons p ON s.id = p.signature_id
         WHERE s.signature ${searchOperator} ?
         GROUP BY s.id, s.signature, s.created_at
         ORDER BY 
