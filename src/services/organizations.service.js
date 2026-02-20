@@ -114,6 +114,7 @@ class OrganizationsService {
           pub.open_access,
           v.id AS venue_id,
           v.name AS venue_name,
+          svs.abbreviated_name AS venue_abbreviated_name,
           v.type AS venue_type,
           was.author_string,
           CASE 
@@ -126,6 +127,7 @@ class OrganizationsService {
         INNER JOIN authorships a ON w.id = a.work_id
         LEFT JOIN publications pub ON w.id = pub.work_id
         LEFT JOIN venues v ON pub.venue_id = v.id
+        LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
         LEFT JOIN work_author_summary was ON w.id = was.work_id
         LEFT JOIN persons p_first ON was.first_author_id = p_first.id
         WHERE a.affiliation_id = :id
@@ -650,6 +652,7 @@ class OrganizationsService {
             pub.pages,
             v.id AS venue_id,
             v.name AS venue_name,
+            svs.abbreviated_name AS venue_abbreviated_name,
             v.type AS venue_type,
             was.author_string,
             CASE 
@@ -662,6 +665,7 @@ class OrganizationsService {
           INNER JOIN authorships a ON w.id = a.work_id
           LEFT JOIN publications pub ON w.id = pub.work_id
           LEFT JOIN venues v ON pub.venue_id = v.id
+          LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
           LEFT JOIN work_author_summary was ON w.id = was.work_id
           LEFT JOIN persons p_first ON was.first_author_id = p_first.id
           ${whereClause}
@@ -711,6 +715,7 @@ class OrganizationsService {
           venue: work.venue_name ? {
             id: work.venue_id,
             name: work.venue_name,
+            abbreviated_name: work.venue_abbreviated_name || null,
             type: work.venue_type
           } : null,
           authors: {

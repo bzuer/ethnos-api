@@ -16,6 +16,8 @@ function formatCitationWork(row = {}) {
     title: row.title || null,
     type: row.type || null,
     year: toOptionalInteger(row.year),
+    venue_name: row.venue_name || null,
+    venue_abbreviated_name: row.venue_abbreviated_name || row.venue_abbrev || null,
     doi: row.doi || null,
     authors_count: toOptionalInteger(row.authors_count) || 0,
     citation: row.citation || null

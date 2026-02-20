@@ -218,6 +218,8 @@ class WorksService {
           open_access: work.open_access,
           peer_reviewed: work.peer_reviewed,
           venue_name: work.venue_name || work.venue_abbrev || null,
+          venue_abbreviated_name: work.venue_abbrev || null,
+          venue_abbrev: work.venue_abbrev || null,
           author_string: work.author_string,
           author_count: work.author_count,
           first_author: work.author_string ? work.author_string.split(';')[0]?.trim() : null,
@@ -229,6 +231,7 @@ class WorksService {
           author_string: typeof work.author_string === 'string' ? work.author_string : null,
           subjects_string: typeof work.subjects_string === 'string' ? work.subjects_string : null,
           venue_name: typeof (work.venue_name || work.venue_abbrev) === 'string' ? (work.venue_name || work.venue_abbrev) : null,
+          venue_abbreviated_name: typeof work.venue_abbrev === 'string' ? work.venue_abbrev : null,
           work_type: work.work_type || null,
           year: work.year !== undefined && work.year !== null ? work.year : null,
           created_ts: work.created_ts !== undefined && work.created_ts !== null ? work.created_ts : null,
@@ -360,7 +363,12 @@ class WorksService {
         doi: work.doi,
         peer_reviewed: work.peer_reviewed === 1,
         open_access: work.open_access === 1,
-        venue: (work.venue_name || work.venue_abbrev) ? { name: work.venue_name || work.venue_abbrev } : null,
+        venue: (work.venue_name || work.venue_abbrev)
+          ? {
+              name: work.venue_name || work.venue_abbrev,
+              abbreviated_name: work.venue_abbrev || null
+            }
+          : null,
         author_count: authors.length,
         first_author: authors.length > 0 ? authors[0] : null,
         authors_preview: authors.slice(0, 3),
@@ -386,6 +394,7 @@ class WorksService {
                p1.doi,
                v.id AS venue_id,
                v.name AS venue_name,
+               svs.abbreviated_name AS venue_abbreviated_name,
                v.type AS venue_type,
                v.issn,
                v.eissn,
@@ -401,6 +410,7 @@ class WorksService {
           GROUP BY work_id
         ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
         LEFT JOIN venues v ON p1.venue_id = v.id
+        LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
         WHERE p1.work_id IN (${placeholders})
       `;
       const pubsStart = process.hrtime.bigint();
@@ -423,6 +433,7 @@ class WorksService {
             item.venue = {
               id: pub.venue_id || null,
               name: pub.venue_name,
+              abbreviated_name: pub.venue_abbreviated_name || null,
               type: pub.venue_type || null,
               issn: pub.issn || null,
               eissn: pub.eissn || null,
@@ -537,6 +548,7 @@ class WorksService {
         -- Venue data
         v.id as venue_id,
         v.name as venue_name,
+        svs.abbreviated_name as venue_abbreviated_name,
         v.type as venue_type,
         v.issn,
         v.eissn,
@@ -568,6 +580,7 @@ class WorksService {
         SELECT MIN(p3.id) FROM publications p3 WHERE p3.work_id = w.id
       )
       LEFT JOIN venues v ON pub_latest.venue_id = v.id
+      LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
       LEFT JOIN organizations publisher ON v.publisher_id = publisher.id
       WHERE w.id = ?
     `, {
@@ -839,6 +852,7 @@ class WorksService {
           authors: sw.author_string || null,
           publication_year: sw.year || null,
           venue_name: sw.venue_name || sw.venue_abbrev || null,
+          venue_abbreviated_name: sw.venue_abbrev || null,
           open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
           citation_status: row.citation_status || null,
@@ -854,6 +868,7 @@ class WorksService {
           authors: sw.author_string || null,
           publication_year: sw.year || null,
           venue_name: sw.venue_name || sw.venue_abbrev || null,
+          venue_abbreviated_name: sw.venue_abbrev || null,
           doi: sw.doi || row.cited_doi || null,
           open_access: sw.open_access,
           citation_type: row.citation_type || 'NEUTRAL',
@@ -908,6 +923,7 @@ class WorksService {
       venue: workData.venue_name ? {
         id: workData.venue_id,
         name: workData.venue_name,
+        abbreviated_name: workData.venue_abbreviated_name || null,
         type: workData.venue_type,
         issn: workData.issn,
         eissn: workData.eissn,
@@ -1039,6 +1055,7 @@ class WorksService {
                  p1.doi,
                  v.id AS venue_id,
                  v.name AS venue_name,
+                 svs.abbreviated_name AS venue_abbreviated_name,
                  v.type AS venue_type,
                  v.issn,
                  v.eissn,
@@ -1054,6 +1071,7 @@ class WorksService {
             GROUP BY work_id
           ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
           LEFT JOIN venues v ON p1.venue_id = v.id
+          LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
         `,
         timeout: dbTimeoutMs
       }, workIds);
@@ -1080,6 +1098,7 @@ class WorksService {
         venue: pub?.venue_name ? {
           id: pub.venue_id || null,
           name: pub.venue_name,
+          abbreviated_name: pub.venue_abbreviated_name || null,
           type: pub.venue_type,
           issn: pub.issn || null,
           eissn: pub.eissn || null,
@@ -1163,6 +1182,7 @@ class WorksService {
                  p1.doi,
                  v.id AS venue_id,
                  v.name AS venue_name,
+                 svs.abbreviated_name AS venue_abbreviated_name,
                  v.type AS venue_type,
                  v.issn,
                  v.eissn,
@@ -1178,6 +1198,7 @@ class WorksService {
             GROUP BY work_id
           ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
           LEFT JOIN venues v ON p1.venue_id = v.id
+          LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
         `,
         timeout: parseInt(process.env.DB_QUERY_TIMEOUT_MS || '6000')
       }, ids);
@@ -1202,6 +1223,7 @@ class WorksService {
           venue: pub?.venue_name ? {
             id: pub.venue_id || null,
             name: pub.venue_name,
+            abbreviated_name: pub.venue_abbreviated_name || null,
             type: pub.venue_type,
             issn: pub.issn || null,
             eissn: pub.eissn || null,

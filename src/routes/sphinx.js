@@ -111,6 +111,8 @@ router.use(requireInternalAccessKey);
  *                             type: string
  *                           venue_name:
  *                             type: string
+ *                           venue_abbreviated_name:
+ *                             type: string
  *                           doi:
  *                             type: string
  *                           year:

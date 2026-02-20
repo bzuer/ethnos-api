@@ -614,6 +614,7 @@ class SphinxService {
                             abstract: row.abstract,
                             author_string: row.author_string,
                             venue_name: row.venue_name,
+                            venue_abbreviated_name: row.venue_abbrev || null,
                             doi: row.doi,
                             year: row.year,
                             work_type: row.work_type,
@@ -701,6 +702,7 @@ class SphinxService {
                         abstract: row.abstract,
                         author_string: row.author_string,
                         venue_name: row.venue_name,
+                        venue_abbreviated_name: row.venue_abbrev || null,
                         doi: row.doi,
                         year: row.year,
                         work_type: row.work_type,
@@ -799,10 +801,10 @@ class SphinxService {
 
             const venuesPromise = new Promise((resolve, reject) => {
                 this.connection.query(`
-                    SELECT venue_name, COUNT(*) as count 
+                    SELECT venue_name, venue_abbrev, COUNT(*) as count 
                     FROM works_poc 
                     WHERE ${matchExpression} AND venue_name != ''
-                    GROUP BY venue_name 
+                    GROUP BY venue_name, venue_abbrev 
                     ORDER BY count DESC 
                     LIMIT 15
                 `, (error, results) => {
@@ -811,7 +813,12 @@ class SphinxService {
                         reject(error);
                         return;
                     }
-                    resolve(results.map(f => ({ value: f.venue_name, count: f.count })));
+                    resolve(results.map(f => ({
+                        value: f.venue_name,
+                        name: f.venue_name,
+                        abbreviated_name: f.venue_abbrev || null,
+                        count: f.count
+                    })));
                 });
             });
 

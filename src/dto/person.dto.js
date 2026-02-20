@@ -174,6 +174,11 @@ function formatRecentWorks(items = []) {
       ? {
           id: toOptionalInteger(work.venue.id),
           name: work.venue.name || null,
+          abbreviated_name:
+            work.venue.abbreviated_name ||
+            work.venue.venue_abbreviated_name ||
+            work.venue.venue_abbrev ||
+            null,
           type: work.venue.type || null
         }
       : null

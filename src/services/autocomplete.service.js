@@ -161,11 +161,11 @@ class AutocompleteService {
         await sphinxService.ensureConnection();
         
         const sql = `
-            SELECT venue_name, COUNT(*) as work_count
+            SELECT venue_name, venue_abbrev, COUNT(*) as work_count
             FROM works_poc 
             WHERE MATCH('${query.replace(/'/g, "\\'")}')
             AND venue_name != ''
-            GROUP BY venue_name
+            GROUP BY venue_name, venue_abbrev
             ORDER BY work_count DESC
             LIMIT ${parseInt(limit)}
         `;
@@ -179,9 +179,11 @@ class AutocompleteService {
 
                 const suggestions = results.map(row => ({
                     text: row.venue_name,
+                    name: row.venue_name,
+                    abbreviated_name: row.venue_abbrev || null,
                     type: 'venue',
                     work_count: row.work_count,
-                    preview: `${row.venue_name} (${row.work_count} works)`
+                    preview: `${row.venue_name}${row.venue_abbrev ? ` [${row.venue_abbrev}]` : ''} (${row.work_count} works)`
                 }));
 
                 resolve(suggestions);

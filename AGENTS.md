@@ -107,6 +107,7 @@ Operational directive: at the end of each session or significant change, create 
 ## Route Standards (Current)
 - Use plural collections: `/bibliographies`, `/institutions`.
 - Venue payloads (`/venues`, `/venues/{id}`, `/venues/search`) must expose `abbreviated_name` when available.
+- Any endpoint payload that exposes venue naming (works/search/references/facets/autocomplete/metrics) must include both `name` and `abbreviated_name` (or `venue_name` and `venue_abbreviated_name`) together.
 - Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
 - Works listing: `/works/showcase`.
 - Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.

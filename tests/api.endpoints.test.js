@@ -342,6 +342,8 @@ describe('DTOs structure', () => {
     const work = {
       id: 3,
       title: 'Test Work',
+      venue_name: 'Journal of Tests',
+      venue_abbrev: 'J. Tests',
       pmid: '123456',
       pmcid: 'PMC999',
       arxiv: 'arXiv:2101.00001',
@@ -367,6 +369,8 @@ describe('DTOs structure', () => {
     const listItem = formatWorkListItem(work);
     expect(listItem).toHaveProperty('pmid', '123456');
     expect(listItem).toHaveProperty('openalex_id', 'W-1');
+    expect(listItem.venue).toHaveProperty('name', 'Journal of Tests');
+    expect(listItem.venue).toHaveProperty('abbreviated_name', 'J. Tests');
   });
 
   test('Work DTO exposes openaccess identifier while keeping legacy openacess alias', () => {

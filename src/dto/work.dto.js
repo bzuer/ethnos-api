@@ -50,9 +50,16 @@ function normalizeVenue(raw = {}) {
     return null;
   }
 
+  const abbreviatedName =
+    raw.abbreviated_name ||
+    raw.venue_abbreviated_name ||
+    raw.venue_abbrev ||
+    null;
+
   return {
     id: raw.id || null,
     name,
+    abbreviated_name: abbreviatedName,
     type: normalizeType(raw.type || raw.venue_type),
     issn: raw.issn || null,
     eissn: raw.eissn || null,
@@ -89,7 +96,11 @@ function formatWorkListItem(row = {}) {
         : authorsPreview.length;
 
   const publicationYear = toOptionalInteger(row.publication_year);
-  const venue = normalizeVenue(row.venue || { name: row.venue_name, type: row.venue_type });
+  const venue = normalizeVenue(row.venue || {
+    name: row.venue_name,
+    abbreviated_name: row.venue_abbreviated_name || row.venue_abbrev || null,
+    type: row.venue_type
+  });
 
   return {
     id: toOptionalInteger(row.id),
@@ -207,6 +218,7 @@ function formatWorkDetails(work = {}) {
           authors: citation.authors || null,
           publication_year: toOptionalInteger(citation.publication_year),
           venue_name: citation.venue_name || null,
+          venue_abbreviated_name: citation.venue_abbreviated_name || citation.venue_abbrev || null,
           open_access: toOptionalBoolean(citation.open_access),
           citation_type: citation.citation_type || 'NEUTRAL',
           citation_status: citation.citation_status || null,
@@ -220,6 +232,7 @@ function formatWorkDetails(work = {}) {
           authors: ref.authors || null,
           publication_year: toOptionalInteger(ref.publication_year),
           venue_name: ref.venue_name || null,
+          venue_abbreviated_name: ref.venue_abbreviated_name || ref.venue_abbrev || null,
           doi: ref.doi || null,
           open_access: toOptionalBoolean(ref.open_access),
           citation_type: ref.citation_type || 'NEUTRAL',

@@ -109,11 +109,13 @@ class PersonsService {
           a.position,
           v.id as venue_id,
           v.name as venue_name,
+          svs.abbreviated_name as venue_abbreviated_name,
           v.type as venue_type
         FROM authorships a
         INNER JOIN works w ON a.work_id = w.id
         LEFT JOIN publications pub ON w.id = pub.work_id
         LEFT JOIN venues v ON pub.venue_id = v.id
+        LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
         WHERE a.person_id = :id
         ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
         LIMIT 10
@@ -214,6 +216,7 @@ class PersonsService {
             ? {
                 id: work.venue_id,
                 name: work.venue_name,
+                abbreviated_name: work.venue_abbreviated_name || null,
                 type: work.venue_type
               }
             : null

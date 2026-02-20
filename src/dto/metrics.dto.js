@@ -32,6 +32,7 @@ const formatVenueRanking = (venue, rank = null) => {
     venue_id: parseInt(venue.venue_id),
     ranking: rank || parseInt(venue.ranking) || null,
     name: venue.venue_name || null,
+    abbreviated_name: venue.venue_abbreviated_name || venue.abbreviated_name || null,
     type: venue.venue_type || null,
     metrics: {
       total_works: parseInt(venue.total_works) || 0,

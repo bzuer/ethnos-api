@@ -26,6 +26,8 @@ describe('Citations Endpoints', () => {
         expect(citation).toHaveProperty('title');
         expect(citation).toHaveProperty('type');
         expect(citation).toHaveProperty('authors_count');
+        expect(citation).toHaveProperty('venue_name');
+        expect(citation).toHaveProperty('venue_abbreviated_name');
         expect(citation).toHaveProperty('citation');
         expect(citation.citation).toHaveProperty('type');
       }
@@ -91,6 +93,8 @@ describe('Citations Endpoints', () => {
         expect(reference).toHaveProperty('title');
         expect(reference).toHaveProperty('type');
         expect(reference).toHaveProperty('authors_count');
+        expect(reference).toHaveProperty('venue_name');
+        expect(reference).toHaveProperty('venue_abbreviated_name');
         expect(reference).toHaveProperty('citation');
       }
     });

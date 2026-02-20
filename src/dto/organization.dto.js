@@ -168,6 +168,7 @@ function formatRecentWorks(items = []) {
         ? {
             id: toOptionalInteger(work.venue_id),
             name: normalizeString(work.venue_name),
+            abbreviated_name: normalizeString(work.venue_abbreviated_name || work.venue_abbrev),
             type: normalizeType(work.venue_type)
           }
         : null,

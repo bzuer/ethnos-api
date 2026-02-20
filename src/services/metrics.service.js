@@ -113,17 +113,19 @@ class MetricsService {
       const [venues, countRows] = await Promise.all([
         sequelize.query(`
         SELECT 
-          venue_id,
-          venue_name,
-          venue_type,
-          total_works,
-          unique_authors,
-          first_publication_year,
-          latest_publication_year,
-          open_access_percentage,
-          open_access_works
-        FROM v_venue_ranking
-        ORDER BY total_works DESC
+          vr.venue_id,
+          vr.venue_name,
+          svs.abbreviated_name AS venue_abbreviated_name,
+          vr.venue_type,
+          vr.total_works,
+          vr.unique_authors,
+          vr.first_publication_year,
+          vr.latest_publication_year,
+          vr.open_access_percentage,
+          vr.open_access_works
+        FROM v_venue_ranking vr
+        LEFT JOIN sphinx_venues_summary svs ON svs.id = vr.venue_id
+        ORDER BY vr.total_works DESC
         LIMIT :limit OFFSET :offset
       `, {
         replacements: { limit: parseInt(limit), offset: parseInt(offset) },

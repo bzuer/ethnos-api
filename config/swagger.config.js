@@ -139,6 +139,12 @@ const options = {
               example: 'Nature Machine Intelligence',
               description: 'Raw venue name from summary index'
             },
+            venue_abbreviated_name: {
+              type: 'string',
+              nullable: true,
+              example: 'Nat. Mach. Intell.',
+              description: 'Raw venue abbreviated name from summary index'
+            },
             created_ts: {
               type: 'integer',
               nullable: true,
@@ -257,6 +263,12 @@ const options = {
                   example: 'Nature Machine Intelligence',
                   description: 'Venue name'
                 },
+                abbreviated_name: {
+                  type: 'string',
+                  nullable: true,
+                  example: 'Nat. Mach. Intell.',
+                  description: 'Venue abbreviated name'
+                },
                 type: {
                   type: 'string',
                   enum: ['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES'],
@@ -349,6 +361,7 @@ const options = {
                       authors: { type: 'string', nullable: true },
                       publication_year: { type: 'integer', nullable: true },
                       venue_name: { type: 'string', nullable: true },
+                      venue_abbreviated_name: { type: 'string', nullable: true },
                       open_access: { type: 'boolean', nullable: true },
                       citation_type: { type: 'string', nullable: true },
                       citation_status: {
@@ -370,6 +383,7 @@ const options = {
                       authors: { type: 'string', nullable: true },
                       publication_year: { type: 'integer', nullable: true },
                       venue_name: { type: 'string', nullable: true },
+                      venue_abbreviated_name: { type: 'string', nullable: true },
                       doi: { type: 'string', nullable: true },
                       open_access: { type: 'boolean', nullable: true },
                       citation_type: { type: 'string', nullable: true },

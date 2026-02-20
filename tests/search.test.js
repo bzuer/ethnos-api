@@ -24,6 +24,9 @@ describe('Search API', () => {
         expect(res.body.data[0]).toHaveProperty('publication_year');
         expect(res.body.data[0]).toHaveProperty('authors_preview');
         expect(res.body.data[0]).toHaveProperty('relevance');
+        if (res.body.data[0].venue) {
+          expect(res.body.data[0].venue).toHaveProperty('abbreviated_name');
+        }
       }
     });
 

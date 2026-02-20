@@ -79,6 +79,12 @@ describe('Organizations API', () => {
       expect(res.body.data.metrics).toHaveProperty('works_count');
       expect(Array.isArray(res.body.data.top_authors)).toBe(true);
       expect(Array.isArray(res.body.data.recent_works)).toBe(true);
+      res.body.data.recent_works.forEach((work) => {
+        if (work.venue) {
+          expect(work.venue).toHaveProperty('name');
+          expect(work.venue).toHaveProperty('abbreviated_name');
+        }
+      });
     });
 
     it('should return 400 for invalid ID format', async () => {

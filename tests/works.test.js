@@ -34,6 +34,7 @@ describe('Works API Contracts', () => {
           }),
           data_source: expect.any(String)
         });
+        expect(work.venue).toHaveProperty('abbreviated_name');
         expect(work).toHaveProperty('publication_year');
         if (work.publication_year !== null) {
           expect(typeof work.publication_year).toBe('number');
@@ -131,11 +132,13 @@ describe('Works API Contracts', () => {
       detail.citations.cited_by.forEach((citation) => {
         expect(citation).toHaveProperty('open_access');
         expect([true, false, null]).toContain(citation.open_access);
+        expect(citation).toHaveProperty('venue_abbreviated_name');
       });
 
       detail.citations.references.forEach((reference) => {
         expect(reference).toHaveProperty('open_access');
         expect([true, false, null]).toContain(reference.open_access);
+        expect(reference).toHaveProperty('venue_abbreviated_name');
       });
     });
 

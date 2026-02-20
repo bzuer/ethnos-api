@@ -100,7 +100,7 @@ class CitationsService {
       if (ids.length) {
         const placeholders = ids.map(() => '?').join(',');
         const sphinxRows = await sequelize.query(
-          `SELECT id, title, year, work_type, doi, author_string FROM sphinx_works_summary WHERE id IN (${placeholders})`,
+          `SELECT id, title, year, work_type, venue_name, venue_abbrev, doi, author_string FROM sphinx_works_summary WHERE id IN (${placeholders})`,
           { replacements: ids, type: sequelize.QueryTypes.SELECT }
         );
         sphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
@@ -113,6 +113,8 @@ class CitationsService {
           title: sw.title || null,
           type: sw.work_type || null,
           year: sw.year || null,
+          venue_name: sw.venue_name || sw.venue_abbrev || null,
+          venue_abbreviated_name: sw.venue_abbrev || null,
           doi: sw.doi || null,
           authors_count: authorsCount,
           citation: { type: row.citation_type || null, status: row.citation_status || null, context: null }
@@ -189,7 +191,7 @@ class CitationsService {
       if (refIds.length) {
         const placeholders = refIds.map(() => '?').join(',');
         const sphinxRows = await sequelize.query(
-          `SELECT id, title, year, work_type, doi, author_string FROM sphinx_works_summary WHERE id IN (${placeholders})`,
+          `SELECT id, title, year, work_type, venue_name, venue_abbrev, doi, author_string FROM sphinx_works_summary WHERE id IN (${placeholders})`,
           { replacements: refIds, type: sequelize.QueryTypes.SELECT }
         );
         refSphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
@@ -202,6 +204,8 @@ class CitationsService {
           title: sw.title || null,
           type: sw.work_type || null,
           year: sw.year || null,
+          venue_name: sw.venue_name || sw.venue_abbrev || null,
+          venue_abbreviated_name: sw.venue_abbrev || null,
           doi: sw.doi || row.cited_doi || null,
           authors_count: authorsCount,
           citation: { type: row.citation_type || null, context: null }
