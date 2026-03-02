@@ -379,12 +379,17 @@ start_server() {
         return 1
     fi
     log "Checking database connection..."
-    # Create temporary MySQL config file
+    local db_check_host="${DB_HOST:-localhost}"
+    if [ "$db_check_host" = "localhost" ]; then
+        db_check_host="127.0.0.1"
+    fi
+
     MYSQL_CONFIG=$(mktemp)
     cat > "$MYSQL_CONFIG" <<EOF
 [client]
-host=${DB_HOST:-localhost}
+host=${db_check_host}
 port=${DB_PORT:-3306}
+protocol=tcp
 user=${DB_USER}
 password=${DB_PASSWORD}
 database=${DB_NAME:-data_db}
