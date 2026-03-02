@@ -116,7 +116,13 @@ load_env() {
 }
 
 load_env
-API_PORT="${PORT:-3000}"
+if [ -n "${PORT:-}" ]; then
+    API_PORT="${PORT}"
+elif [ "${NODE_ENV:-}" = "test" ]; then
+    API_PORT="3000"
+else
+    API_PORT="1211"
+fi
 
 is_running() {
     if pm2_is_online; then

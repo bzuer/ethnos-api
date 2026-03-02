@@ -79,10 +79,15 @@ app.use(helmet({
 const corsOptions = {
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    
-    const allowedOrigins = process.env.CORS_ORIGINS ? 
-      process.env.CORS_ORIGINS.split(',').map(o => o.trim()) : 
-      ['http://localhost:3000', 'http://localhost:3001', 'https://ethnos.app'];
+
+    const defaultAllowedOrigins = ['http://localhost:1211', 'http://localhost:3001', 'https://ethnos.app'];
+    if ((process.env.NODE_ENV || '').toLowerCase() === 'test') {
+      defaultAllowedOrigins.unshift('http://localhost:3000');
+    }
+
+    const allowedOrigins = process.env.CORS_ORIGINS ?
+      process.env.CORS_ORIGINS.split(',').map(o => o.trim()) :
+      defaultAllowedOrigins;
     
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
@@ -341,7 +346,7 @@ app.use('*', notFoundHandler);
 app.use(errorMonitoring);
 app.use(globalErrorHandler);
 
-const PORT = process.env.PORT || ((process.env.NODE_ENV || 'development') === 'development' ? 1210 : 3000);
+const PORT = process.env.PORT || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1211);
 
 let server = null;
 

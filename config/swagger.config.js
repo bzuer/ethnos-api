@@ -36,7 +36,7 @@ const options = {
         description: 'Production API Server - Enterprise-ready academic research infrastructure'
       },
       {
-        url: 'http://localhost:1210',
+        url: 'http://localhost:1211',
         description: 'Development Server - Local testing and development environment'
       }
     ],

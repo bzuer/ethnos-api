@@ -64,6 +64,7 @@ Operational directive: at the end of each session or significant change, create 
 - Development: `npm run dev`.
 - Build: `npm run build`.
 - Production: `./server.sh start`.
+- API runtime port standard: `1211`. Use `3000` only for test context (`NODE_ENV=test`) or explicit test overrides.
 
 ## Important Scripts
 - `scripts/manage.sh` — deploy, tests, Sphinx, Swagger.

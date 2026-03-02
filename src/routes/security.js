@@ -96,7 +96,12 @@ router.get('/headers', requireAccessKey, (req, res) => {
 
   const allowedOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
-    : ['http://localhost:1210', 'http://localhost:3000', 'http://localhost:3001', 'https://ethnos.app'];
+    : [
+      ...(((process.env.NODE_ENV || '').toLowerCase() === 'test') ? ['http://localhost:3000'] : []),
+      'http://localhost:1211',
+      'http://localhost:3001',
+      'https://ethnos.app'
+    ];
 
   const cors = {
     allowed_origins: allowedOrigins,

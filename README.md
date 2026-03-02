@@ -114,10 +114,11 @@ Deploy sequence:
 
 ## API Documentation
 
-- Base URL: `http://localhost:3000`
-- Swagger UI: `http://localhost:3000/docs`
-- OpenAPI JSON: `http://localhost:3000/docs.json`
-- OpenAPI YAML: `http://localhost:3000/docs.yaml`
+- Base URL: `http://localhost:1211`
+- Swagger UI: `http://localhost:1211/docs`
+- OpenAPI JSON: `http://localhost:1211/docs.json`
+- OpenAPI YAML: `http://localhost:1211/docs.yaml`
+- Test-only fallback port: `3000` (`NODE_ENV=test` without explicit `PORT`)
 - Regenerate docs: `npm run docs:generate` (JSON + YAML) or `npm run docs:generate:yaml` (YAML only)
 
 ## Security Headers
@@ -188,8 +189,8 @@ npm run test:coverage
 ## Quick Checks
 
 ```bash
-curl -s http://localhost:3000/health/liveness
-curl -s http://localhost:3000/docs
+curl -s http://localhost:1211/health/liveness
+curl -s http://localhost:1211/docs
 scripts/manage.sh sphinx status
 ```
 
