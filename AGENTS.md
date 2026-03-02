@@ -41,8 +41,9 @@ Operational directive: at the end of each session or significant change, create 
 - Raw SQL via `sequelize.query`.
 - Schema comparison inputs: `database/database_old.schema.sql` and `database/database_new.schema.sql`.
 - Schema source of truth: `database/schema.sql` (must mirror `database/database_new.schema.sql`).
-- Canonical development snapshot: `data_dev.schema.sql` (keep synchronized with `database/schema.sql`).
+- Canonical development snapshot for local regeneration: `database/data_dev.schema.sql` (keep synchronized with `database/schema.sql`; not versioned).
 - For citation/reference logic, use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`) and never rely on legacy `citations` or `unresolved_citations`.
+- `work_references` status semantics: `RESOLVED` when the cited work already exists in the database; `PENDING` when it does not exist yet. `PENDING` is an expected state and not an error by itself.
 - Person-signature relation is direct via `persons.signature_id`; do not use legacy `persons_signatures`.
 - Publication-file relation is direct in `files` (`publication_id`, `work_id`, `file_role`); do not use legacy `publication_files`.
 - Sphinx summaries must stay aligned with DB routines: `sphinx_works_summary.venue_abbrev` and `sphinx_venues_summary.abbreviated_name` are part of current query contracts.
