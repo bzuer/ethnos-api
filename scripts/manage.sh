@@ -547,7 +547,6 @@ cmd_test_data() {
   fi
 
   set -a
-  # shellcheck disable=SC1091
   source /etc/node-backend.env
   set +a
 
