@@ -242,6 +242,14 @@ get_not_serving_indexes() {
 }
 
 mark_sphinx_log() {
+  local log_dir
+  log_dir="$(dirname "$SPHINX_LOG_FILE")"
+  if [ ! -d "$log_dir" ]; then
+    return 0
+  fi
+  if [ ! -f "$SPHINX_LOG_FILE" ]; then
+    touch "$SPHINX_LOG_FILE" 2>/dev/null || return 0
+  fi
   if [ ! -w "$SPHINX_LOG_FILE" ]; then
     return 0
   fi
@@ -253,10 +261,20 @@ get_not_serving_since_marker() {
     return 1
   fi
   awk '
-    /ETHNOS_MARKER/ {flag=1; next}
+    /ETHNOS_MARKER/ {
+      flag=1
+      delete not_serving
+      next
+    }
     flag && /NOT SERVING/ {
-      if (match($0, /index '\''([^'\'']+)'\''/, m)) {
-        print m[1]
+      split($0, parts, "'\''")
+      if (length(parts) >= 3 && parts[2] != "") {
+        not_serving[parts[2]]=1
+      }
+    }
+    END {
+      for (idx in not_serving) {
+        print idx
       }
     }
   ' "$SPHINX_LOG_FILE" | sort -u
@@ -276,10 +294,24 @@ repair_not_serving_indexes() {
     return 0
   fi
 
-  warn "Detected NOT SERVING indexes: $indexes"
+  local -a index_list=()
+  local index_name
+  while IFS= read -r index_name; do
+    [ -n "$index_name" ] || continue
+    index_list+=("$index_name")
+  done <<< "$indexes"
+
+  if [ "${#index_list[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  warn "Detected NOT SERVING indexes: ${index_list[*]}"
   cmd_sphinx_stop || true
-  clean_sphinx_indexes $indexes
-  cmd_index
+  clean_sphinx_indexes "${index_list[@]}"
+  if ! cmd_index "${index_list[@]}"; then
+    warn "Targeted index rebuild failed; retrying full rebuild"
+    cmd_index
+  fi
   cmd_sphinx_start || true
 }
 
@@ -377,14 +409,31 @@ cmd_index() {
 
   ensure_sphinx_runtime_dirs
   ensure_sphinx_log_dir
-  log "Running Sphinx indexer"
+  local -a targets=("$@")
+  if [ "${#targets[@]}" -gt 0 ]; then
+    log "Running Sphinx indexer for: ${targets[*]}"
+  else
+    log "Running Sphinx indexer"
+  fi
   if [ -f "$SPHINX_PID_FILE" ] && ps -p "$(cat "$SPHINX_PID_FILE" 2>/dev/null)" >/dev/null 2>&1; then
-    indexer --config "$SPHINX_CONFIG_RENDERED" --rotate --all
+    if [ "${#targets[@]}" -gt 0 ]; then
+      indexer --config "$SPHINX_CONFIG_RENDERED" --rotate "${targets[@]}"
+    else
+      indexer --config "$SPHINX_CONFIG_RENDERED" --rotate --all
+    fi
   else
     warn "searchd not running; running indexer without rotation"
-    indexer --config "$SPHINX_CONFIG_RENDERED" --all
+    if [ "${#targets[@]}" -gt 0 ]; then
+      indexer --config "$SPHINX_CONFIG_RENDERED" "${targets[@]}"
+    else
+      indexer --config "$SPHINX_CONFIG_RENDERED" --all
+    fi
   fi
-  log "Sphinx indexes rebuilt"
+  if [ "${#targets[@]}" -gt 0 ]; then
+    log "Sphinx indexes rebuilt: ${targets[*]}"
+  else
+    log "Sphinx indexes rebuilt"
+  fi
 }
 
 cmd_index_fast() {
@@ -633,7 +682,7 @@ Commands:
   restart                Stop, deep clean, reinstall deps, regen docs, test, and restart (no Sphinx)
   index                  Rebuild Sphinx indexes (requires indexer)
   index:fast             Rebuild only works/persons indexes
-  sphinx start|stop|status  Manage searchd lifecycle (use `sphinx start --force` to kill port holders)
+  sphinx start|stop|status  Manage searchd lifecycle (use 'sphinx start --force' to kill port holders)
   test --endpoints       Run endpoint suite
   test --data            Validate required tables, views, and indexes in the database
 
