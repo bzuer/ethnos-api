@@ -69,6 +69,7 @@ Operational directive: at the end of each session or significant change, create 
   - Deploy: stop API and Sphinx, clear caches, install deps (including dev), generate docs, index Sphinx, start Sphinx, repair broken indexes, run tests, restart API.
   - Indexing: `scripts/manage.sh index` and `scripts/manage.sh index:fast`.
   - Sphinx: `scripts/manage.sh sphinx start|stop|status`.
+  - Agent rule: due to indexing size/time, never execute heavy indexing commands automatically (`scripts/manage.sh deploy`, `scripts/manage.sh index`, `scripts/manage.sh index:fast`); always ask the user to run them manually and wait for completion logs.
 - `scripts/process.sh` — standard build/dev/deploy flow (clears caches/runtime/logs, refreshes deps, warms docs cache, and runs tests or delegates deploy).
 - `scripts/generate-swagger.js` — generates `docs/swagger.json` and `docs/swagger.yaml`.
 - `rsync.sh` — syncs repo to `server@192.168.18.50:/home/server/api` and sends Sphinx indexes from `/var/lib/ethnos-api/sphinx`.
