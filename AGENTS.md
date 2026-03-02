@@ -66,7 +66,7 @@ Operational directive: at the end of each session or significant change, create 
 
 ## Important Scripts
 - `scripts/manage.sh` — deploy, tests, Sphinx, Swagger.
-  - Deploy: stop API and Sphinx, clear caches, install deps (including dev), generate docs, start Sphinx, index, repair broken indexes, run tests, restart API.
+  - Deploy: stop API and Sphinx, clear caches, install deps (including dev), generate docs, index Sphinx, start Sphinx, repair broken indexes, run tests, restart API.
   - Indexing: `scripts/manage.sh index` and `scripts/manage.sh index:fast`.
   - Sphinx: `scripts/manage.sh sphinx start|stop|status`.
 - `scripts/process.sh` — standard build/dev/deploy flow (clears caches/runtime/logs, refreshes deps, warms docs cache, and runs tests or delegates deploy).

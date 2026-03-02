@@ -17,7 +17,7 @@ Source of truth: `database/schema.sql`.
 - Node.js >= 18.0.0
 - MariaDB >= 10.5
 - Redis >= 6.0
-- Sphinx 3.x
+- Sphinx 2.2.x (tested with 2.2.11 from `sphinxsearch`)
 
 ### System packages (Ubuntu/Debian)
 
@@ -106,7 +106,8 @@ Deploy sequence:
 - Clear caches
 - Install dependencies (including dev)
 - Generate Swagger artifacts
-- Start Sphinx, rebuild indexes
+- Rebuild Sphinx indexes
+- Start Sphinx
 - Repair broken indexes automatically if detected
 - Run tests
 - Restart API
@@ -117,6 +118,7 @@ Deploy sequence:
 - Swagger UI: `http://localhost:3000/docs`
 - OpenAPI JSON: `http://localhost:3000/docs.json`
 - OpenAPI YAML: `http://localhost:3000/docs.yaml`
+- Regenerate docs: `npm run docs:generate` (JSON + YAML) or `npm run docs:generate:yaml` (YAML only)
 
 ## Security Headers
 

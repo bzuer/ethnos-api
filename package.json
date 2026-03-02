@@ -14,7 +14,7 @@
     "test:coverage": "cross-env NODE_ENV=test TEST_FAST=1 node --test --experimental-test-coverage --test-concurrency=1 -r ./tests/bootstrap.js ./tests/api.endpoints.test.js",
     "test:load": "echo 'Load testing with artillery removed due to security vulnerabilities. Consider using autocannon or wrk for load testing.'",
     "docs:generate": "node scripts/generate-swagger.js",
-    "docs:generate:yaml": "node -e \"try{const fs=require('fs');const yaml=require('yaml');const specs=require('./config/swagger.config');fs.mkdirSync('docs',{recursive:true});fs.writeFileSync('docs/swagger.yaml',yaml.stringify(specs));console.log('Swagger YAML generated at docs/swagger.yaml')}catch(e){console.error('YAML generation failed:',e.message);process.exit(1)}\""
+    "docs:generate:yaml": "node scripts/generate-swagger.js --yaml-only"
   },
   "dependencies": {
     "compression": "^1.7.4",

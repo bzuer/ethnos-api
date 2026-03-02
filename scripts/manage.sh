@@ -4,7 +4,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_SCRIPT="$ROOT_DIR/server.sh"
-DATA_CHECK_SCRIPT="$ROOT_DIR/scripts/check-data-integrity.js"
 SERVICE_NAME="${SERVICE_NAME:-ethnos-api.service}"
 # Canonical Sphinx configuration (consolidated)
 SPHINX_CONFIG_TEMPLATE="${SPHINX_CONFIG_TEMPLATE:-$ROOT_DIR/config/sphinx-unified.conf}"
@@ -164,7 +163,6 @@ render_sphinx_config() {
   fi
 
   set -a
-  # shellcheck disable=SC1091
   source /etc/node-backend.env
   set +a
 
@@ -326,16 +324,16 @@ cmd_deploy() {
 
   run_core_maintenance_steps
 
-  log "Starting Sphinx searchd"
-  mark_sphinx_log
-  cmd_sphinx_start || true
-
   if command -v indexer &>/dev/null; then
     log "Rebuilding Sphinx indexes"
     cmd_index
   else
     warn "Sphinx indexer not found; skipping index rebuild"
   fi
+
+  log "Starting Sphinx searchd"
+  mark_sphinx_log
+  cmd_sphinx_start || true
 
   repair_not_serving_indexes
 
@@ -537,14 +535,90 @@ cmd_test_endpoints() {
 }
 
 cmd_test_data() {
-  require_command node
-  if [ ! -f "$DATA_CHECK_SCRIPT" ]; then
-    err "Data integrity script missing at $DATA_CHECK_SCRIPT"
+  local precheck_sql="$ROOT_DIR/scripts/maintenance/00_precheck_structural_data.sql"
+  if [ ! -f "$precheck_sql" ]; then
+    err "Data precheck SQL missing at $precheck_sql"
+    exit 1
+  fi
+
+  if [ ! -f "/etc/node-backend.env" ]; then
+    err "Environment file /etc/node-backend.env not found"
+    exit 1
+  fi
+
+  set -a
+  # shellcheck disable=SC1091
+  source /etc/node-backend.env
+  set +a
+
+  local missing=0
+  local key
+  for key in DB_HOST DB_USER DB_PASSWORD DB_NAME DB_PORT; do
+    if [ -z "${!key:-}" ]; then
+      err "Missing $key in /etc/node-backend.env"
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+
+  local db_client
+  db_client=$(command -v mariadb || command -v mysql || true)
+  if [ -z "$db_client" ]; then
+    err "Neither 'mariadb' nor 'mysql' command is available"
     exit 1
   fi
 
   log "Validating database structures"
-  node "$DATA_CHECK_SCRIPT"
+  local query_output
+  if ! query_output=$("$db_client" \
+    --host="$DB_HOST" \
+    --port="$DB_PORT" \
+    --user="$DB_USER" \
+    --password="$DB_PASSWORD" \
+    --database="$DB_NAME" \
+    --batch \
+    --skip-column-names < "$precheck_sql"); then
+    err "Database precheck execution failed"
+    exit 1
+  fi
+
+  local has_errors=0
+  local check_name row_count
+  while IFS=$'\t' read -r check_name row_count; do
+    if [ -z "${check_name:-}" ] || [ -z "${row_count:-}" ]; then
+      continue
+    fi
+    if ! [[ "$row_count" =~ ^[0-9]+$ ]]; then
+      err "Invalid precheck output for $check_name: $row_count"
+      has_errors=1
+      continue
+    fi
+    case "$check_name" in
+      resolved_without_cited_work)
+        if [ "$row_count" -ne 0 ]; then
+          err "Precheck failed: $check_name must be 0 (current: $row_count)"
+          has_errors=1
+        fi
+        ;;
+      *)
+        if [ "$row_count" -lt 1 ]; then
+          err "Precheck failed: $check_name must be >= 1 (current: $row_count)"
+          has_errors=1
+        fi
+        ;;
+    esac
+  done <<< "$query_output"
+
+  printf '%s\n' "$query_output"
+
+  if [ "$has_errors" -ne 0 ]; then
+    err "Database structure validation failed"
+    exit 1
+  fi
+
+  log "Database structure validation completed"
 }
 
 usage() {
@@ -561,7 +635,7 @@ Commands:
   index                  Rebuild Sphinx indexes (requires indexer)
   index:fast             Rebuild only works/persons indexes
   sphinx start|stop|status  Manage searchd lifecycle (use `sphinx start --force` to kill port holders)
-  test --endpoints       Run Jest endpoint suite
+  test --endpoints       Run endpoint suite
   test --data            Validate required tables, views, and indexes in the database
 
 Examples:
