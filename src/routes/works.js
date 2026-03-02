@@ -30,6 +30,16 @@ const validateWorksQuery = [
   
   query('type')
     .optional(),
+
+  query('language')
+    .optional()
+    .isLength({ min: 2, max: 5 })
+    .withMessage('Language must be a valid language code'),
+
+  query('open_access')
+    .optional()
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('open_access must be boolean-like (1/0/true/false)'),
   
   query('year_from')
     .optional()
@@ -104,11 +114,19 @@ const validateWorksQuery = [
  *         description: Filter works published up to this year
  *         example: 2023
  *       - in: query
- *         name: is_open_access
+ *         name: open_access
  *         schema:
  *           type: boolean
  *         description: Filter by open access availability
  *         example: true
+ *       - in: query
+ *         name: language
+ *         schema:
+ *           type: string
+ *           minLength: 2
+ *           maxLength: 5
+ *         description: Filter by language code
+ *         example: en
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'

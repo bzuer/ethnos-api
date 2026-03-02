@@ -18,6 +18,8 @@ class SearchController {
       }
 
       const { q: query } = req.query;
+      const rawPeerReviewed = req.query.peer_reviewed;
+      const rawOpenAccess = req.query.open_access;
       const filters = {
         page: req.query.page,
         limit: req.query.limit,
@@ -26,6 +28,9 @@ class SearchController {
         language: req.query.language,
         year_from: req.query.year_from,
         year_to: req.query.year_to,
+        peer_reviewed: rawPeerReviewed === undefined ? undefined : ['1', 'true'].includes(String(rawPeerReviewed).toLowerCase()),
+        open_access: rawOpenAccess === undefined ? undefined : ['1', 'true'].includes(String(rawOpenAccess).toLowerCase()),
+        venue_name: (req.query.venue_name || req.query.venue || '').trim() || undefined,
         include_facets: ['1','true',true].includes((req.query.include_facets || '').toString().toLowerCase())
       };
 

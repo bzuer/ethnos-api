@@ -62,7 +62,7 @@ router.use(requireInternalAccessKey);
  *         name: work_type
  *         schema:
  *           type: string
- *           enum: [ARTICLE, BOOK, CHAPTER, CONFERENCE, REPORT, THESIS, OTHER]
+ *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
  *         description: Filter by work type
  *       - in: query
  *         name: language
@@ -70,10 +70,20 @@ router.use(requireInternalAccessKey);
  *           type: string
  *         description: Filter by language code
  *       - in: query
+ *         name: open_access
+ *         schema:
+ *           type: boolean
+ *         description: Filter by open access status
+ *       - in: query
  *         name: peer_reviewed
  *         schema:
  *           type: boolean
  *         description: Filter by peer review status
+ *       - in: query
+ *         name: venue_name
+ *         schema:
+ *           type: string
+ *         description: Filter by venue name (partial)
  *       - in: query
  *         name: facets
  *         schema:
@@ -201,12 +211,20 @@ router.get('/sphinx/search',
             .withMessage('Year must be between 1900 and 2030'),
         query('work_type')
             .optional()
-            .isIn(['ARTICLE', 'BOOK', 'CHAPTER', 'CONFERENCE', 'REPORT', 'THESIS', 'OTHER'])
+            .isIn(['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'])
             .withMessage('Invalid work type'),
+        query('open_access')
+            .optional()
+            .isBoolean()
+            .withMessage('open_access must be boolean'),
         query('peer_reviewed')
             .optional()
             .isBoolean()
             .withMessage('peer_reviewed must be boolean'),
+        query('venue_name')
+            .optional()
+            .isLength({ min: 2, max: 255 })
+            .withMessage('venue_name must have between 2 and 255 characters'),
         query('facets')
             .optional()
             .isBoolean()
@@ -229,7 +247,9 @@ router.get('/sphinx/search',
                 year,
                 work_type,
                 language,
+                open_access,
                 peer_reviewed,
+                venue_name,
                 facets = false
             } = req.query;
 
@@ -240,7 +260,9 @@ router.get('/sphinx/search',
             if (year) filters.year = parseInt(year);
             if (work_type) filters.work_type = work_type;
             if (language) filters.language = language;
+            if (open_access !== undefined) filters.open_access = open_access === 'true';
             if (peer_reviewed !== undefined) filters.peer_reviewed = peer_reviewed === 'true';
+            if (venue_name) filters.venue_name = venue_name;
 
             let searchResults;
             let facetResults = null;
@@ -273,7 +295,10 @@ router.get('/sphinx/search',
                     type: work_type,
                     language,
                     year_from: req.query.year_from,
-                    year_to: req.query.year_to
+                    year_to: req.query.year_to,
+                    peer_reviewed: req.query.peer_reviewed,
+                    open_access: req.query.open_access,
+                    venue_name: req.query.venue_name
                 });
 
                 searchResults = {
@@ -302,7 +327,7 @@ router.get('/sphinx/search',
                         search_engine: searchEngine,
                         query_time_ms: searchResults.query_time,
                         total_time_ms: totalTime,
-                        documents_searched: searchEngine === 'Sphinx' ? '~9000' : 'mariadb_fulltext',
+                        documents_searched: searchEngine === 'Sphinx' ? 'works_poc_full_corpus' : 'mariadb_fulltext',
                         relevance_algorithm: searchEngine === 'Sphinx' ? 'BM25 with field weighting' : 'MariaDB FULLTEXT'
                     },
                     query,

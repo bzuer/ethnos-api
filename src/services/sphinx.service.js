@@ -62,9 +62,16 @@ class SphinxService {
                 params.push(filters.language);
             }
 
-            if (filters.peer_reviewed !== undefined) {
+            const peerReviewedFlag = this._toTinyIntFlag(filters.peer_reviewed);
+            if (peerReviewedFlag !== null) {
                 sql += ' AND peer_reviewed = ?';
-                params.push(filters.peer_reviewed ? 1 : 0);
+                params.push(peerReviewedFlag);
+            }
+
+            const openAccessFlag = this._toTinyIntFlag(filters.open_access);
+            if (openAccessFlag !== null) {
+                sql += ' AND open_access = ?';
+                params.push(openAccessFlag);
             }
 
             if (filters.year_from) {
@@ -80,6 +87,47 @@ class SphinxService {
             if (filters.venue_name) {
                 sql += ' AND venue_name LIKE ?';
                 params.push(`%${filters.venue_name}%`);
+            }
+
+            if (filters.venue_id) {
+                sql += ' AND venue_id = ?';
+                params.push(parseInt(filters.venue_id, 10));
+            }
+
+            if (filters.publisher_id) {
+                sql += ' AND publisher_id = ?';
+                params.push(parseInt(filters.publisher_id, 10));
+            }
+
+            if (filters.first_author_id) {
+                sql += ' AND first_author_id = ?';
+                params.push(parseInt(filters.first_author_id, 10));
+            }
+
+            if (filters.citation_count_min) {
+                sql += ' AND citation_count >= ?';
+                params.push(parseInt(filters.citation_count_min, 10));
+            }
+
+            if (filters.reference_count_min) {
+                sql += ' AND reference_count >= ?';
+                params.push(parseInt(filters.reference_count_min, 10));
+            }
+
+            if (filters.resolved_references_min) {
+                sql += ' AND resolved_references_count >= ?';
+                params.push(parseInt(filters.resolved_references_min, 10));
+            }
+
+            if (filters.pending_references_max !== undefined) {
+                sql += ' AND pending_references_count <= ?';
+                params.push(parseInt(filters.pending_references_max, 10));
+            }
+
+            const hasFilesFlag = this._toTinyIntFlag(filters.has_files);
+            if (hasFilesFlag !== null) {
+                sql += ' AND has_files = ?';
+                params.push(hasFilesFlag);
             }
 
             sql += ` ORDER BY weight DESC, year DESC, id DESC LIMIT ?, ? OPTION max_matches=${maxMatches}`;
@@ -441,6 +489,30 @@ class SphinxService {
         return parsed;
     }
 
+    _toTinyIntFlag(value) {
+        if (value === undefined || value === null || value === '') {
+            return null;
+        }
+        if (typeof value === 'boolean') {
+            return value ? 1 : 0;
+        }
+
+        const normalized = String(value).trim().toLowerCase();
+        if (['1', 'true', 'yes'].includes(normalized)) {
+            return 1;
+        }
+        if (['0', 'false', 'no'].includes(normalized)) {
+            return 0;
+        }
+
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+            return numeric ? 1 : 0;
+        }
+
+        return null;
+    }
+
     _sanitizeOrderClause(requested, allowed, fallbackKey) {
         if (!requested || typeof requested !== 'string') {
             return allowed[fallbackKey];
@@ -546,9 +618,16 @@ class SphinxService {
                 params.push(filters.language);
             }
 
-            if (filters.peer_reviewed !== undefined) {
+            const peerReviewedFlag = this._toTinyIntFlag(filters.peer_reviewed);
+            if (peerReviewedFlag !== null) {
                 sql += ' AND peer_reviewed = ?';
-                params.push(filters.peer_reviewed ? 1 : 0);
+                params.push(peerReviewedFlag);
+            }
+
+            const openAccessFlag = this._toTinyIntFlag(filters.open_access);
+            if (openAccessFlag !== null) {
+                sql += ' AND open_access = ?';
+                params.push(openAccessFlag);
             }
 
             if (filters.year_from) {
@@ -564,6 +643,47 @@ class SphinxService {
             if (filters.venue_name) {
                 sql += ' AND venue_name LIKE ?';
                 params.push(`%${filters.venue_name}%`);
+            }
+
+            if (filters.venue_id) {
+                sql += ' AND venue_id = ?';
+                params.push(parseInt(filters.venue_id, 10));
+            }
+
+            if (filters.publisher_id) {
+                sql += ' AND publisher_id = ?';
+                params.push(parseInt(filters.publisher_id, 10));
+            }
+
+            if (filters.first_author_id) {
+                sql += ' AND first_author_id = ?';
+                params.push(parseInt(filters.first_author_id, 10));
+            }
+
+            if (filters.citation_count_min) {
+                sql += ' AND citation_count >= ?';
+                params.push(parseInt(filters.citation_count_min, 10));
+            }
+
+            if (filters.reference_count_min) {
+                sql += ' AND reference_count >= ?';
+                params.push(parseInt(filters.reference_count_min, 10));
+            }
+
+            if (filters.resolved_references_min) {
+                sql += ' AND resolved_references_count >= ?';
+                params.push(parseInt(filters.resolved_references_min, 10));
+            }
+
+            if (filters.pending_references_max !== undefined) {
+                sql += ' AND pending_references_count <= ?';
+                params.push(parseInt(filters.pending_references_max, 10));
+            }
+
+            const hasFilesFlag = this._toTinyIntFlag(filters.has_files);
+            if (hasFilesFlag !== null) {
+                sql += ' AND has_files = ?';
+                params.push(hasFilesFlag);
             }
 
             const orderClause = this._workOrderClause(options.orderBy);
@@ -615,11 +735,21 @@ class SphinxService {
                             author_string: row.author_string,
                             venue_name: row.venue_name,
                             venue_abbreviated_name: row.venue_abbrev || null,
+                            venue_id: row.venue_id || null,
+                            publisher_id: row.publisher_id || null,
+                            first_author_id: row.first_author_id || null,
                             doi: row.doi,
                             year: row.year,
                             work_type: row.work_type,
                             language: row.language,
+                            open_access: Boolean(row.open_access),
                             peer_reviewed: Boolean(row.peer_reviewed),
+                            citation_count: row.citation_count || 0,
+                            reference_count: row.reference_count || 0,
+                            resolved_references_count: row.resolved_references_count || 0,
+                            pending_references_count: row.pending_references_count || 0,
+                            cited_by_count: row.cited_by_count || 0,
+                            has_files: Boolean(row.has_files),
                             relevance_score: row.relevance || row.weight,
                             created_ts: row.created_ts
                         }));
@@ -703,11 +833,21 @@ class SphinxService {
                         author_string: row.author_string,
                         venue_name: row.venue_name,
                         venue_abbreviated_name: row.venue_abbrev || null,
+                        venue_id: row.venue_id || null,
+                        publisher_id: row.publisher_id || null,
+                        first_author_id: row.first_author_id || null,
                         doi: row.doi,
                         year: row.year,
                         work_type: row.work_type,
                         language: row.language,
+                        open_access: Boolean(row.open_access),
                         peer_reviewed: Boolean(row.peer_reviewed),
+                        citation_count: row.citation_count || 0,
+                        reference_count: row.reference_count || 0,
+                        resolved_references_count: row.resolved_references_count || 0,
+                        pending_references_count: row.pending_references_count || 0,
+                        cited_by_count: row.cited_by_count || 0,
+                        has_files: Boolean(row.has_files),
                         relevance_score: 1,
                         created_ts: row.created_ts
                     }));
@@ -868,9 +1008,13 @@ class SphinxService {
         try {
             const sql = `
                 INSERT INTO works_rt 
-                (id, title, subtitle, abstract, author_string, venue_name, doi,
+                (id, title, subtitle, abstract, author_string, first_author_name, venue_name, venue_abbrev, publisher_name, doi,
+                 publication_id, venue_id, publisher_id, first_author_id,
+                 author_count, institutions_count, citation_count, reference_count,
+                 resolved_references_count, pending_references_count, cited_by_count,
+                 has_pending_references, has_files,
                  year, created_ts, work_type, language, open_access, peer_reviewed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
             
             const params = [
@@ -879,13 +1023,29 @@ class SphinxService {
                 workData.subtitle || '',
                 workData.abstract || '',
                 workData.author_string || '',
+                workData.first_author_name || '',
                 workData.venue_name || '',
+                workData.venue_abbrev || '',
+                workData.publisher_name || '',
                 workData.doi || '',
+                workData.publication_id || 0,
+                workData.venue_id || 0,
+                workData.publisher_id || 0,
+                workData.first_author_id || 0,
+                workData.author_count || 0,
+                workData.institutions_count || 0,
+                workData.citation_count || 0,
+                workData.reference_count || 0,
+                workData.resolved_references_count || 0,
+                workData.pending_references_count || 0,
+                workData.cited_by_count || 0,
+                workData.has_pending_references ? 1 : 0,
+                workData.has_files ? 1 : 0,
                 workData.year || 0,
                 Math.floor(Date.now() / 1000),
                 workData.work_type || 'ARTICLE',
                 workData.language || 'unknown',
-                0,
+                workData.open_access ? 1 : 0,
                 workData.peer_reviewed ? 1 : 0
             ];
             

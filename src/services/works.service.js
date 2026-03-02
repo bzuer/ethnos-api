@@ -991,7 +991,7 @@ class WorksService {
 
   
   async _getWorksSearchFallback(search, filters, limit, offset, page) {
-    const { type, language, year_from, year_to } = filters || {};
+    const { type, language, year_from, year_to, open_access, peer_reviewed, venue_name } = filters || {};
     const trimmed = (search || '').trim();
     if (!trimmed) {
       return { data: [], pagination: createPagination(page, limit, 0) };
@@ -1004,6 +1004,41 @@ class WorksService {
     const params = [`%${trimmed}%`];
     if (type) { where.push('w.work_type = ?'); params.push(type); }
     if (language) { where.push('w.language = ?'); params.push(language); }
+
+    const publicationFilters = [];
+    const publicationParams = [];
+    if (year_from) {
+      publicationFilters.push('p.year >= ?');
+      publicationParams.push(parseInt(year_from, 10));
+    }
+    if (year_to) {
+      publicationFilters.push('p.year <= ?');
+      publicationParams.push(parseInt(year_to, 10));
+    }
+    if (open_access !== undefined) {
+      publicationFilters.push('p.open_access = ?');
+      publicationParams.push(open_access === true || open_access === 'true' || open_access === 1 || open_access === '1' ? 1 : 0);
+    }
+    if (peer_reviewed !== undefined) {
+      publicationFilters.push('p.peer_reviewed = ?');
+      publicationParams.push(peer_reviewed === true || peer_reviewed === 'true' || peer_reviewed === 1 || peer_reviewed === '1' ? 1 : 0);
+    }
+    if (venue_name) {
+      publicationFilters.push('(v.name LIKE ? OR v.abbreviated_name LIKE ?)');
+      publicationParams.push(`%${venue_name}%`, `%${venue_name}%`);
+    }
+    if (publicationFilters.length > 0) {
+      where.push(`
+        EXISTS (
+          SELECT 1
+          FROM publications p
+          LEFT JOIN venues v ON v.id = p.venue_id
+          WHERE p.work_id = w.id
+            AND ${publicationFilters.join(' AND ')}
+        )
+      `);
+      params.push(...publicationParams);
+    }
 
     const idSql = `
       SELECT w.id
@@ -1136,7 +1171,18 @@ class WorksService {
         work_type: filters?.type,
         language: filters?.language,
         year_from: filters?.year_from,
-        year_to: filters?.year_to
+        year_to: filters?.year_to,
+        peer_reviewed: filters?.peer_reviewed,
+        open_access: filters?.open_access,
+        venue_name: filters?.venue_name,
+        venue_id: filters?.venue_id,
+        publisher_id: filters?.publisher_id,
+        first_author_id: filters?.first_author_id,
+        citation_count_min: filters?.citation_count_min,
+        reference_count_min: filters?.reference_count_min,
+        resolved_references_min: filters?.resolved_references_min,
+        pending_references_max: filters?.pending_references_max,
+        has_files: filters?.has_files
       }, { limit, offset });
 
       const ids = Array.isArray(spx?.ids) ? spx.ids : [];

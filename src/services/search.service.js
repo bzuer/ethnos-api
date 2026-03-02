@@ -10,11 +10,11 @@ class SearchService {
   async searchWorks(query, filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { type, language, year_from, year_to } = filters;
+    const { type, language, year_from, year_to, peer_reviewed, open_access, venue_name } = filters;
     const trimmedQuery = (query || '').trim();
     const includeFacets = filters.include_facets === true;
 
-    const cacheKey = `search:works:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${includeFacets}`;
+    const cacheKey = `search:works:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${includeFacets}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -31,7 +31,10 @@ class SearchService {
         type,
         language,
         year_from,
-        year_to
+        year_to,
+        peer_reviewed,
+        open_access,
+        venue_name
       };
 
       const worksResult = await worksService.getWorks(worksFilters);

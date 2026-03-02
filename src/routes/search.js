@@ -21,12 +21,28 @@ const validateWorksSearch = [
   ...commonValidations.pagination,
   query('type')
     .optional()
-    .isIn(['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'PREPRINT', 'CONFERENCE_PAPER', 'REVIEW', 'EDITORIAL'])
+    .isIn(['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'])
     .withMessage('Work type must be valid'),
   query('language')
     .optional()
     .isLength({ min: 2, max: 5 })
     .withMessage('Language must be a valid language code'),
+  query('peer_reviewed')
+    .optional()
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('peer_reviewed must be boolean-like (1/0/true/false)'),
+  query('open_access')
+    .optional()
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('open_access must be boolean-like (1/0/true/false)'),
+  query('venue_name')
+    .optional()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('venue_name must have between 2 and 255 characters'),
+  query('venue')
+    .optional()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('venue must have between 2 and 255 characters'),
   query('year_from')
     .optional()
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
@@ -49,7 +65,7 @@ const validateWorksSearch = [
  *   get:
  *     summary: Search works using full-text search
  *     tags: [Search]
- *     description: Search academic works by title, subtitle, and abstract using MySQL FULLTEXT indexes
+ *     description: Search academic works using Sphinx (with MariaDB fallback) across title, subtitle, abstract, authors, venue, and related metadata
  *     parameters:
  *       - name: q
  *         in: query
@@ -71,12 +87,42 @@ const validateWorksSearch = [
  *         schema:
  *           type: string
  *           example: "en"
+ *       - name: peer_reviewed
+ *         in: query
+ *         description: Filter by peer review flag
+ *         schema:
+ *           type: boolean
+ *           example: true
+ *       - name: open_access
+ *         in: query
+ *         description: Filter by open access flag
+ *         schema:
+ *           type: boolean
+ *           example: true
+ *       - name: venue_name
+ *         in: query
+ *         description: Filter by venue name (accepts partial match)
+ *         schema:
+ *           type: string
+ *           example: "Nature"
+ *       - name: venue
+ *         in: query
+ *         description: Alias of venue_name
+ *         schema:
+ *           type: string
+ *           example: "Nature"
  *       - name: year_from
  *         in: query
  *         description: Filter by minimum publication year
  *         schema:
  *           type: integer
  *           example: 2020
+ *       - name: year_to
+ *         in: query
+ *         description: Filter by maximum publication year
+ *         schema:
+ *           type: integer
+ *           example: 2024
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
