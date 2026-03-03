@@ -36,7 +36,7 @@ info:
 servers:
   - url: https://api.ethnos.app
     description: Production API Server - Enterprise-ready academic research infrastructure
-  - url: http://localhost:1210
+  - url: http://localhost:1211
     description: Development Server - Local testing and development environment
 externalDocs:
   description: Ethnos.app Platform Documentation
@@ -3610,11 +3610,19 @@ paths:
           description: Filter works published up to this year
           example: 2023
         - in: query
-          name: is_open_access
+          name: open_access
           schema:
             type: boolean
           description: Filter by open access availability
           example: true
+        - in: query
+          name: language
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 5
+          description: Filter by language code
+          example: en
       responses:
         "200":
           $ref: "#/components/responses/Success"
@@ -4305,9 +4313,14 @@ paths:
               - ARTICLE
               - BOOK
               - CHAPTER
-              - CONFERENCE
-              - REPORT
               - THESIS
+              - CONFERENCE
+              - CONFERENCE_PAPER
+              - REPORT
+              - DATASET
+              - PREPRINT
+              - REVIEW
+              - EDITORIAL
               - OTHER
           description: Filter by work type
         - in: query
@@ -4316,10 +4329,20 @@ paths:
             type: string
           description: Filter by language code
         - in: query
+          name: open_access
+          schema:
+            type: boolean
+          description: Filter by open access status
+        - in: query
           name: peer_reviewed
           schema:
             type: boolean
           description: Filter by peer review status
+        - in: query
+          name: venue_name
+          schema:
+            type: string
+          description: Filter by venue name (partial)
         - in: query
           name: facets
           schema:
@@ -4951,8 +4974,8 @@ paths:
       summary: Search works using full-text search
       tags:
         - Search
-      description: Search academic works by title, subtitle, and abstract using MySQL
-        FULLTEXT indexes
+      description: Search academic works using Sphinx (with MariaDB fallback) across
+        title, subtitle, abstract, authors, venue, and related metadata
       parameters:
         - name: q
           in: query
@@ -4974,12 +4997,42 @@ paths:
           schema:
             type: string
             example: en
+        - name: peer_reviewed
+          in: query
+          description: Filter by peer review flag
+          schema:
+            type: boolean
+            example: true
+        - name: open_access
+          in: query
+          description: Filter by open access flag
+          schema:
+            type: boolean
+            example: true
+        - name: venue_name
+          in: query
+          description: Filter by venue name (accepts partial match)
+          schema:
+            type: string
+            example: Nature
+        - name: venue
+          in: query
+          description: Alias of venue_name
+          schema:
+            type: string
+            example: Nature
         - name: year_from
           in: query
           description: Filter by minimum publication year
           schema:
             type: integer
             example: 2020
+        - name: year_to
+          in: query
+          description: Filter by maximum publication year
+          schema:
+            type: integer
+            example: 2024
         - $ref: "#/components/parameters/pageParam"
         - $ref: "#/components/parameters/limitParam"
         - $ref: "#/components/parameters/offsetParam"
