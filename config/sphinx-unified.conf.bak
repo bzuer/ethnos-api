@@ -1,0 +1,233 @@
+source db_defaults
+{
+    type = mysql
+    sql_host = __DB_HOST__
+    sql_user = __DB_USER__
+    sql_pass = __DB_PASSWORD__
+    sql_db = __DB_NAME__
+    sql_port = __DB_PORT__
+}
+
+source works_src : db_defaults
+{
+    type = mysql
+
+    sql_query_pre = SET NAMES 'utf8mb4'
+    sql_query_pre = SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
+
+    sql_query = \
+        SELECT \
+            id, \
+            title, \
+            subtitle, \
+            abstract, \
+            author_string, \
+            venue_name, \
+            venue_abbrev, \
+            doi, \
+            created_ts, \
+            year, \
+            work_type, \
+            language, \
+            open_access, \
+            peer_reviewed, \
+            subjects_string \
+        FROM sphinx_works_summary
+
+    sql_field_string = title
+    sql_field_string = subtitle
+    sql_field_string = abstract
+    sql_field_string = author_string
+    sql_field_string = venue_name
+    sql_field_string = venue_abbrev
+    sql_field_string = doi
+    sql_field_string = subjects_string
+
+    sql_attr_uint = created_ts
+    sql_attr_uint = year
+    sql_attr_uint = open_access
+    sql_attr_uint = peer_reviewed
+    sql_attr_string = work_type
+    sql_attr_string = language
+}
+
+source persons_src : db_defaults
+{
+    type = mysql
+
+    sql_query_pre = SET NAMES 'utf8mb4'
+    sql_query_pre = SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
+
+    sql_query = \
+        SELECT \
+            id, \
+            search_content, \
+            preferred_name, \
+            is_verified, \
+            total_works, \
+            latest_publication_year \
+        FROM sphinx_persons_summary
+
+    sql_field_string = search_content
+    sql_field_string = preferred_name
+
+    sql_attr_uint = is_verified
+    sql_attr_uint = total_works
+    sql_attr_uint = latest_publication_year
+}
+
+source venues_src : db_defaults
+{
+    type = mysql
+
+    sql_query_pre = SET NAMES 'utf8mb4'
+    sql_query_pre = SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
+
+    sql_query = \
+        SELECT \
+            id, \
+            name, \
+            abbreviated_name, \
+            type, \
+            publisher_name, \
+            country_code, \
+            issn, \
+            eissn, \
+            subjects_string, \
+            top_works_string, \
+            works_count, \
+            cited_by_count, \
+            impact_factor, \
+            h_index, \
+            open_access_percentage \
+        FROM sphinx_venues_summary
+
+    sql_field_string = name
+    sql_field_string = abbreviated_name
+    sql_field_string = publisher_name
+    sql_field_string = issn
+    sql_field_string = eissn
+    sql_field_string = subjects_string
+    sql_field_string = top_works_string
+
+    sql_attr_string = type
+    sql_attr_string = country_code
+    sql_attr_uint = works_count
+    sql_attr_uint = cited_by_count
+    sql_attr_float = impact_factor
+    sql_attr_uint = h_index
+    sql_attr_float = open_access_percentage
+}
+
+index works_poc
+{
+    source = works_src
+    path = /var/lib/ethnos-api/sphinx/works_poc
+
+    morphology = stem_en
+    charset_table = 0..9, A..Z->a..z, _, a..z, U+00C0..U+00D6->U+00E0..U+00F6, U+00D8..U+00DE->U+00F8..U+00FE, U+00DF, U+00E0..U+00F6, U+00F8..U+00FF, U+0100..U+017F, U+0180..U+024F, U+1E00..U+1EFF
+    index_exact_words = 1
+    min_prefix_len = 3
+    expand_keywords = 1
+    min_word_len = 2
+    html_strip = 1
+    html_remove_elements = style, script
+}
+
+index persons_poc
+{
+    source = persons_src
+    path = /var/lib/ethnos-api/sphinx/persons_poc
+
+    morphology = stem_en
+    charset_table = 0..9, A..Z->a..z, _, a..z, U+00C0..U+00D6->U+00E0..U+00F6, U+00D8..U+00DE->U+00F8..U+00FE, U+00DF, U+00E0..U+00F6, U+00F8..U+00FF, U+0100..U+017F, U+0180..U+024F, U+1E00..U+1EFF
+    index_exact_words = 1
+    min_prefix_len = 2
+    expand_keywords = 1
+    min_word_len = 2
+    html_strip = 1
+    html_remove_elements = style, script
+}
+
+index venues_poc
+{
+    source = venues_src
+    path = /var/lib/ethnos-api/sphinx/venues_poc
+
+    morphology = stem_en
+    charset_table = 0..9, A..Z->a..z, _, a..z, U+00C0..U+00D6->U+00E0..U+00F6, U+00D8..U+00DE->U+00F8..U+00FE, U+00DF, U+00E0..U+00F6, U+00F8..U+00FF, U+0100..U+017F, U+0180..U+024F, U+1E00..U+1EFF
+    index_exact_words = 1
+    min_prefix_len = 3
+    expand_keywords = 1
+    min_word_len = 2
+    html_strip = 1
+    html_remove_elements = style, script
+}
+
+index works_rt
+{
+    type = rt
+    path = /var/lib/ethnos-api/sphinx/works_rt
+
+    rt_field = title
+    rt_field = subtitle
+    rt_field = abstract
+    rt_field = author_string
+    rt_field = venue_name
+    rt_field = venue_abbrev
+    rt_field = doi
+    rt_field = subjects_string
+
+    rt_attr_uint = created_ts
+    rt_attr_uint = year
+    rt_attr_uint = open_access
+    rt_attr_uint = peer_reviewed
+    rt_attr_string = work_type
+    rt_attr_string = language
+
+    morphology = stem_en
+    charset_table = 0..9, A..Z->a..z, _, a..z, U+00C0..U+00D6->U+00E0..U+00F6, U+00D8..U+00DE->U+00F8..U+00FE, U+00DF, U+00E0..U+00F6, U+00F8..U+00FF, U+0100..U+017F, U+0180..U+024F, U+1E00..U+1EFF
+    index_exact_words = 1
+    min_prefix_len = 3
+    expand_keywords = 1
+    min_word_len = 2
+    html_strip = 1
+    html_remove_elements = style, script
+}
+
+indexer
+{
+    mem_limit = 1024M
+    max_iops = 100
+    max_iosize = 1048576
+    max_xmlpipe2_field = 16M
+    write_buffer = 16M
+    max_file_field_buffer = 32M
+}
+
+searchd
+{
+    listen = 127.0.0.1:9312
+    listen = 127.0.0.1:9306:mysql41
+
+    log = /var/log/ethnos-api/sphinx-daemon.log
+    query_log = /var/log/ethnos-api/sphinx-query.log
+    pid_file = /var/run/ethnos-api/sphinx.pid
+
+    seamless_rotate = 1
+    preopen_indexes = 1
+    unlink_old = 1
+
+    max_children = 30
+    max_packet_size = 32M
+
+    read_timeout = 5
+    client_timeout = 300
+    max_filters = 256
+    max_filter_values = 65536
+    query_log_min_msec = 50
+    binlog_path = /var/lib/ethnos-api/sphinx/binlog
+    binlog_max_log_size = 128M
+
+    workers = threads
+}
