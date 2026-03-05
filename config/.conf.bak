@@ -24,7 +24,22 @@ source works_src : db_defaults
             author_string, \
             venue_name, \
             venue_abbrev, \
+            first_author_name, \
+            publisher_name, \
             doi, \
+            publication_id, \
+            venue_id, \
+            publisher_id, \
+            first_author_id, \
+            author_count, \
+            institutions_count, \
+            citation_count, \
+            reference_count, \
+            resolved_references_count, \
+            pending_references_count, \
+            cited_by_count, \
+            has_pending_references, \
+            has_files, \
             created_ts, \
             year, \
             work_type, \
@@ -40,11 +55,26 @@ source works_src : db_defaults
     sql_field_string = author_string
     sql_field_string = venue_name
     sql_field_string = venue_abbrev
+    sql_field_string = first_author_name
+    sql_field_string = publisher_name
     sql_field_string = doi
     sql_field_string = subjects_string
 
-    sql_attr_uint = created_ts
+    sql_attr_uint = publication_id
+    sql_attr_uint = venue_id
+    sql_attr_uint = publisher_id
+    sql_attr_uint = first_author_id
+    sql_attr_uint = author_count
+    sql_attr_uint = institutions_count
+    sql_attr_uint = citation_count
+    sql_attr_uint = reference_count
+    sql_attr_uint = resolved_references_count
+    sql_attr_uint = pending_references_count
+    sql_attr_uint = cited_by_count
+    sql_attr_uint = has_pending_references
+    sql_attr_uint = has_files
     sql_attr_uint = year
+    sql_attr_uint = created_ts
     sql_attr_uint = open_access
     sql_attr_uint = peer_reviewed
     sql_attr_string = work_type
@@ -76,49 +106,6 @@ source persons_src : db_defaults
     sql_attr_uint = latest_publication_year
 }
 
-source venues_src : db_defaults
-{
-    type = mysql
-
-    sql_query_pre = SET NAMES 'utf8mb4'
-    sql_query_pre = SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
-
-    sql_query = \
-        SELECT \
-            id, \
-            name, \
-            abbreviated_name, \
-            type, \
-            publisher_name, \
-            country_code, \
-            issn, \
-            eissn, \
-            subjects_string, \
-            top_works_string, \
-            works_count, \
-            cited_by_count, \
-            impact_factor, \
-            h_index, \
-            open_access_percentage \
-        FROM sphinx_venues_summary
-
-    sql_field_string = name
-    sql_field_string = abbreviated_name
-    sql_field_string = publisher_name
-    sql_field_string = issn
-    sql_field_string = eissn
-    sql_field_string = subjects_string
-    sql_field_string = top_works_string
-
-    sql_attr_string = type
-    sql_attr_string = country_code
-    sql_attr_uint = works_count
-    sql_attr_uint = cited_by_count
-    sql_attr_float = impact_factor
-    sql_attr_uint = h_index
-    sql_attr_float = open_access_percentage
-}
-
 index works_poc
 {
     source = works_src
@@ -132,6 +119,7 @@ index works_poc
     min_word_len = 2
     html_strip = 1
     html_remove_elements = style, script
+
 }
 
 index persons_poc
@@ -147,21 +135,7 @@ index persons_poc
     min_word_len = 2
     html_strip = 1
     html_remove_elements = style, script
-}
 
-index venues_poc
-{
-    source = venues_src
-    path = /var/lib/ethnos-api/sphinx/venues_poc
-
-    morphology = stem_en
-    charset_table = 0..9, A..Z->a..z, _, a..z, U+00C0..U+00D6->U+00E0..U+00F6, U+00D8..U+00DE->U+00F8..U+00FE, U+00DF, U+00E0..U+00F6, U+00F8..U+00FF, U+0100..U+017F, U+0180..U+024F, U+1E00..U+1EFF
-    index_exact_words = 1
-    min_prefix_len = 3
-    expand_keywords = 1
-    min_word_len = 2
-    html_strip = 1
-    html_remove_elements = style, script
 }
 
 index works_rt
@@ -175,11 +149,26 @@ index works_rt
     rt_field = author_string
     rt_field = venue_name
     rt_field = venue_abbrev
+    rt_field = first_author_name
+    rt_field = publisher_name
     rt_field = doi
     rt_field = subjects_string
 
-    rt_attr_uint = created_ts
+    rt_attr_uint = publication_id
+    rt_attr_uint = venue_id
+    rt_attr_uint = publisher_id
+    rt_attr_uint = first_author_id
+    rt_attr_uint = author_count
+    rt_attr_uint = institutions_count
+    rt_attr_uint = citation_count
+    rt_attr_uint = reference_count
+    rt_attr_uint = resolved_references_count
+    rt_attr_uint = pending_references_count
+    rt_attr_uint = cited_by_count
+    rt_attr_uint = has_pending_references
+    rt_attr_uint = has_files
     rt_attr_uint = year
+    rt_attr_uint = created_ts
     rt_attr_uint = open_access
     rt_attr_uint = peer_reviewed
     rt_attr_string = work_type
