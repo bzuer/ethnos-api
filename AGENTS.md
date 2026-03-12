@@ -17,7 +17,6 @@ This document guides automated agents and collaborators on how to analyze, imple
   - Generated documentation: `docs/`
 
 Operational directive: keep absolute cleanliness, technical clarity, hierarchy, and standardization. Do not version generated artifacts, logs, backups, or dumps. Remove out-of-scope content.
-Operational directive: at the end of each session or significant change, create a commit summarizing the work.
 
 ## Response Conventions
 - Respond via `responseFormatter` (global in `src/app.js`).
@@ -39,9 +38,8 @@ Operational directive: at the end of each session or significant change, create 
 - DTOs per domain (e.g., `work.dto.js`, `person.dto.js`, `organization.dto.js`, `venue.dto.js`).
 - Errors: `res.fail(...)` and `res.error(err, ...)` with `ERROR_CODES`.
 - Raw SQL via `sequelize.query`.
-- Schema comparison inputs: `database/database_old.schema.sql` and `database/database_new.schema.sql`.
-- Schema source of truth: `database/schema.sql` (must mirror `database/database_new.schema.sql`).
-- Canonical development snapshot for local regeneration: `database/data_dev.schema.sql` (keep synchronized with `database/schema.sql`; not versioned).
+- Production schema: `database/data.schema.sql`. Reference schema: `database/schema.sql`.
+- Dev snapshot: `data_dev.schema.sql` (root level; not versioned).
 - For citation/reference logic, use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`) and never rely on legacy `citations` or `unresolved_citations`.
 - `work_references` status semantics: `RESOLVED` when the cited work already exists in the database; `PENDING` when it does not exist yet. `PENDING` is an expected state and not an error by itself.
 - Person-signature relation is direct via `persons.signature_id`; do not use legacy `persons_signatures`.
@@ -60,7 +58,6 @@ Operational directive: at the end of each session or significant change, create 
 
 ## Execution and Environments
 - Runtime env: `/etc/node-backend.env` as single source of truth.
-- Tests: `.env.test`.
 - Development: `npm run dev`.
 - Build: `npm run build`.
 - Production: `./server.sh start`.
@@ -84,8 +81,8 @@ Operational directive: at the end of each session or significant change, create 
 - Runtime: `/var/lib/ethnos-api/sphinx`, logs: `/var/log/ethnos-api`, PID: `/var/run/ethnos-api/sphinx.pid`.
 
 ## Repository Hygiene
-- Ignore/clean: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql` (except `database/schema.sql`, `database/database_old.schema.sql`, `database/database_new.schema.sql`), `node_modules/`.
-- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `models/`, `ssl/`, `database/`.
+- Ignore/clean: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql` (except `database/schema.sql` and `database/data.schema.sql`), `node_modules/`.
+- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `ssl/`, `database/`.
 - Remove stale or out-of-scope content.
 - Repo logs must be cleared at the start of `deploy` and `restart`.
 - `runtime/` must not contain Sphinx indexes (use only `/var/lib/ethnos-api/sphinx`).
