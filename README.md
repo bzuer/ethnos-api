@@ -41,7 +41,7 @@ sudo ldconfig
 
 ```bash
 git clone https://github.com/bzuer/ethnos_api
-cd api
+mv ethnos_api api && cd api
 npm install --include=dev
 ```
 
