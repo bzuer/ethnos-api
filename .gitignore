@@ -25,6 +25,7 @@ database/*.sql
 !database/schema.sql
 !database/data.schema.sql
 !database/README.md
+rsync.sh
 
 # Node-related
 node_modules/
@@ -37,6 +38,6 @@ Thumbs.db
 *.swo
 
 # Agents config
-.agents/
+.claude/
 .text/
 
