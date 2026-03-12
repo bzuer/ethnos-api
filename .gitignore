@@ -35,3 +35,8 @@ node_modules/
 Thumbs.db
 *.swp
 *.swo
+
+# Agents config
+.agents/
+.text/
+
