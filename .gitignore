@@ -25,6 +25,15 @@ database/*.sql
 !database/schema.sql
 !database/data.schema.sql
 !database/README.md
+
+# SSL certificates and artifacts
+ssl/*.pem
+ssl/*.key
+ssl/*.srl
+ssl/*.cnf
+ssl/*.crt
+
+# Deploy scripts
 rsync.sh
 
 # Node-related
@@ -40,4 +49,3 @@ Thumbs.db
 # Agents config
 .claude/
 .text/
-
