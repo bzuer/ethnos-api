@@ -10,11 +10,11 @@ class SearchService {
   async searchWorks(query, filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { type, language, year_from, year_to, peer_reviewed, open_access, venue_name } = filters;
+    const { type, language, year_from, year_to, peer_reviewed, open_access, venue_name, author, subject } = filters;
     const trimmedQuery = (query || '').trim();
     const includeFacets = filters.include_facets === true;
 
-    const cacheKey = `search:works:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${includeFacets}`;
+    const cacheKey = `search:works:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${includeFacets}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -34,20 +34,16 @@ class SearchService {
         year_to,
         peer_reviewed,
         open_access,
-        venue_name
+        venue_name,
+        author,
+        subject
       };
 
       const worksResult = await worksService.getWorks(worksFilters);
 
       let facets;
       const sphinxEnabled = String(process.env.SPHINX_ENABLED || 'true').toLowerCase() !== 'false';
-      if (
-        includeFacets &&
-        sphinxEnabled &&
-        trimmedQuery.length >= 2 &&
-        worksResult?.performance?.engine &&
-        worksResult.performance.engine.toUpperCase().includes('SPHINX')
-      ) {
+      if (includeFacets && sphinxEnabled && trimmedQuery.length >= 2) {
         try {
           facets = await sphinxService.getFacets(trimmedQuery);
         } catch (error) {

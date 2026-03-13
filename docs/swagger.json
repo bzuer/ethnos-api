@@ -6897,6 +6897,24 @@
             }
           },
           {
+            "name": "author",
+            "in": "query",
+            "description": "Filter by author name (full-text match against author_string)",
+            "schema": {
+              "type": "string",
+              "example": "Geertz"
+            }
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "description": "Filter by subject (full-text match against subjects)",
+            "schema": {
+              "type": "string",
+              "example": "anthropology"
+            }
+          },
+          {
             "$ref": "#/components/parameters/pageParam"
           },
           {
@@ -7190,6 +7208,46 @@
             "description": "Alias of venue_name",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "description": "Filter by author name (full-text match)",
+            "schema": {
+              "type": "string",
+              "example": "Geertz"
+            }
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "description": "Filter by subject (full-text match)",
+            "schema": {
+              "type": "string",
+              "example": "anthropology"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Alias of work_type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ARTICLE",
+                "BOOK",
+                "CHAPTER",
+                "THESIS",
+                "CONFERENCE",
+                "CONFERENCE_PAPER",
+                "REPORT",
+                "DATASET",
+                "PREPRINT",
+                "REVIEW",
+                "EDITORIAL",
+                "OTHER"
+              ]
             }
           },
           {

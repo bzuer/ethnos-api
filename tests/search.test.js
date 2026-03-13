@@ -39,6 +39,36 @@ describe('Search API', () => {
       expect(res.body.meta.query).toBe('test');
     });
 
+    it('should accept author filter', async () => {
+      const res = await request()
+        .get('/search/works?q=culture&author=geertz')
+        .expect(200);
+
+      expectSuccessEnvelope(res.body, { paginated: true, meta: ['query', 'search_type', 'performance'] });
+      expect(res.body.meta.query).toBe('culture');
+    });
+
+    it('should accept subject filter', async () => {
+      const res = await request()
+        .get('/search/works?q=learning&subject=computer')
+        .expect(200);
+
+      expectSuccessEnvelope(res.body, { paginated: true, meta: ['query', 'search_type', 'performance'] });
+      expect(res.body.meta.query).toBe('learning');
+    });
+
+    it('should return facets when include_facets=true', async () => {
+      const res = await request()
+        .get('/search/works?q=machine%20learning&include_facets=true')
+        .expect(200);
+
+      expectSuccessEnvelope(res.body, { paginated: true, meta: ['query', 'search_type', 'performance'] });
+      if (res.body.meta.facets) {
+        expect(res.body.meta.facets).toHaveProperty('years');
+        expect(res.body.meta.facets).toHaveProperty('work_types');
+      }
+    });
+
     it('should return 400 for missing query', async () => {
       const res = await request()
         .get('/search/works')
@@ -80,6 +110,28 @@ describe('Search API', () => {
 
       expectSuccessEnvelope(res.body, { paginated: true, meta: ['query', 'search_type', 'performance'] });
       expect(res.body.meta.query).toBe('silva');
+    });
+  });
+
+  describe('GET /search/advanced', () => {
+    it('should accept author and subject filters', async () => {
+      const res = await request()
+        .get('/search/advanced?q=culture&author=geertz')
+        .expect(200);
+
+      expect(res.body.status).toBe('success');
+      expect(res.body.data).toHaveProperty('results');
+      expect(res.body.data).toHaveProperty('facets');
+      expect(res.body.meta).toHaveProperty('filters_applied');
+    });
+
+    it('should accept type alias for work_type', async () => {
+      const res = await request()
+        .get('/search/advanced?q=test&type=ARTICLE')
+        .expect(200);
+
+      expect(res.body.status).toBe('success');
+      expect(res.body.meta).toHaveProperty('filters_applied');
     });
   });
 

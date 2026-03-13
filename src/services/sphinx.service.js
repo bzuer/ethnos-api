@@ -44,6 +44,12 @@ class SphinxService {
             if (filters.venue_name) {
                 matchParts.push(`@venue_name ${this._escapeMatchTerm(filters.venue_name)}`);
             }
+            if (filters.author) {
+                matchParts.push(`@author_string ${this._escapeMatchTerm(filters.author)}`);
+            }
+            if (filters.subject) {
+                matchParts.push(`@subjects_string ${this._escapeMatchTerm(filters.subject)}`);
+            }
 
             let sql;
             if (matchParts.length > 0) {
@@ -496,6 +502,12 @@ class SphinxService {
             }
             if (filters.venue_name) {
                 matchParts.push(`@venue_name ${this._escapeMatchTerm(filters.venue_name)}`);
+            }
+            if (filters.author) {
+                matchParts.push(`@author_string ${this._escapeMatchTerm(filters.author)}`);
+            }
+            if (filters.subject) {
+                matchParts.push(`@subjects_string ${this._escapeMatchTerm(filters.subject)}`);
             }
 
             let sql;
@@ -1084,11 +1096,14 @@ class SphinxService {
 
     
     async searchWithFacets(query, filters = {}, options = {}) {
-        const [searchResults, facets] = await Promise.all([
-            this.searchWorks(query, filters, options),
-            this.getFacets(query)
-        ]);
-        
+        const searchResults = await this.searchWorks(query, filters, options);
+        let facets = {};
+        try {
+            facets = await this.getFacets(query);
+        } catch (error) {
+            logger.warn('Facets fetch failed in searchWithFacets', { error: error.message });
+        }
+
         return {
             ...searchResults,
             facets,

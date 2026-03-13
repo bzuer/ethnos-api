@@ -991,7 +991,7 @@ class WorksService {
 
   
   async _getWorksSearchFallback(search, filters, limit, offset, page) {
-    const { type, language, year_from, year_to, open_access, peer_reviewed, venue_name } = filters || {};
+    const { type, language, year_from, year_to, open_access, peer_reviewed, venue_name, author, subject } = filters || {};
     const trimmed = (search || '').trim();
     if (!trimmed) {
       return { data: [], pagination: createPagination(page, limit, 0) };
@@ -1004,6 +1004,14 @@ class WorksService {
     const params = [`%${trimmed}%`];
     if (type) { where.push('w.work_type = ?'); params.push(type); }
     if (language) { where.push('w.language = ?'); params.push(language); }
+    if (author) {
+      where.push('EXISTS (SELECT 1 FROM work_author_summary was2 WHERE was2.work_id = w.id AND was2.author_string LIKE ?)');
+      params.push(`%${author}%`);
+    }
+    if (subject) {
+      where.push('EXISTS (SELECT 1 FROM sphinx_works_summary sws WHERE sws.id = w.id AND sws.subjects_string LIKE ?)');
+      params.push(`%${subject}%`);
+    }
 
     const publicationFilters = [];
     const publicationParams = [];
@@ -1175,6 +1183,8 @@ class WorksService {
         peer_reviewed: filters?.peer_reviewed,
         open_access: filters?.open_access,
         venue_name: filters?.venue_name,
+        author: filters?.author,
+        subject: filters?.subject,
         venue_id: filters?.venue_id,
         publisher_id: filters?.publisher_id,
         first_author_id: filters?.first_author_id,

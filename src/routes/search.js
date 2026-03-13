@@ -53,6 +53,14 @@ const validateWorksSearch = [
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year to must be valid')
     .toInt(),
+  query('author')
+    .optional()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('author must have between 2 and 255 characters'),
+  query('subject')
+    .optional()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('subject must have between 2 and 255 characters'),
   query('include_facets')
     .optional()
     .isIn(['1', '0', 'true', 'false'])
@@ -123,6 +131,18 @@ const validateWorksSearch = [
  *         schema:
  *           type: integer
  *           example: 2024
+ *       - name: author
+ *         in: query
+ *         description: Filter by author name (full-text match against author_string)
+ *         schema:
+ *           type: string
+ *           example: "Geertz"
+ *       - name: subject
+ *         in: query
+ *         description: Filter by subject (full-text match against subjects)
+ *         schema:
+ *           type: string
+ *           example: "anthropology"
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -313,6 +333,24 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  *         description: Alias of venue_name
  *         schema:
  *           type: string
+ *       - name: author
+ *         in: query
+ *         description: Filter by author name (full-text match)
+ *         schema:
+ *           type: string
+ *           example: "Geertz"
+ *       - name: subject
+ *         in: query
+ *         description: Filter by subject (full-text match)
+ *         schema:
+ *           type: string
+ *           example: "anthropology"
+ *       - name: type
+ *         in: query
+ *         description: Alias of work_type
+ *         schema:
+ *           type: string
+ *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -378,7 +416,7 @@ const advancedSearch = async (req, res, next) => {
     }
 
     const filters = {
-      work_type: req.query.work_type,
+      work_type: req.query.work_type || req.query.type,
       language: req.query.language,
       year_from: req.query.year_from,
       year_to: req.query.year_to,
@@ -386,7 +424,9 @@ const advancedSearch = async (req, res, next) => {
         req.query.peer_reviewed === 'false' ? false : undefined,
       venue_name: (req.query.venue_name || req.query.venue || '').trim() || undefined,
       open_access: req.query.open_access === 'true' ? true :
-        req.query.open_access === 'false' ? false : undefined
+        req.query.open_access === 'false' ? false : undefined,
+      author: (req.query.author || '').trim() || undefined,
+      subject: (req.query.subject || '').trim() || undefined
     };
 
     Object.keys(filters).forEach((key) => {

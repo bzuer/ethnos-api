@@ -31,6 +31,8 @@ class SearchController {
         peer_reviewed: rawPeerReviewed === undefined ? undefined : ['1', 'true'].includes(String(rawPeerReviewed).toLowerCase()),
         open_access: rawOpenAccess === undefined ? undefined : ['1', 'true'].includes(String(rawOpenAccess).toLowerCase()),
         venue_name: (req.query.venue_name || req.query.venue || '').trim() || undefined,
+        author: (req.query.author || '').trim() || undefined,
+        subject: (req.query.subject || '').trim() || undefined,
         include_facets: ['1','true',true].includes((req.query.include_facets || '').toString().toLowerCase())
       };
 
