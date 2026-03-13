@@ -116,6 +116,9 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Works listing: `/works/showcase`.
 - Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
 - Sphinx endpoints: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
+- Search endpoints (`/search/works`, `/search/advanced`): `q` is optional; filter-only queries (e.g. `venue=mana`) are supported.
+- All optional query params must use `optional({ values: 'falsy' })` so empty strings (`param=`) are treated as absent.
+- Controller must normalize empty-string params to `undefined` before passing to services (avoid treating `""` as `false` for booleans).
 
 ## Tests
 - Framework: Node test runner (`node --test`) + Supertest.

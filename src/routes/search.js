@@ -17,52 +17,68 @@ const { createPagination, normalizePagination } = require('../utils/pagination')
 const { ERROR_CODES } = require('../utils/responseBuilder');
 
 const validateWorksSearch = [
-  ...commonValidations.searchQuery,
+  query('q')
+    .optional({ values: 'falsy' })
+    .isLength({ min: 2, max: 200 })
+    .withMessage('Search query must be between 2 and 200 characters')
+    .custom(value => {
+      const suspiciousPatterns = [
+        /[<>]/,
+        /javascript:/i,
+        /(\b(select|insert|update|delete|drop|create|alter|exec|execute|union|declare)\b)/i,
+      ];
+      for (const pattern of suspiciousPatterns) {
+        if (pattern.test(value)) {
+          throw new Error('Search query contains invalid characters');
+        }
+      }
+      return true;
+    }),
   ...commonValidations.pagination,
   query('type')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'])
     .withMessage('Work type must be valid'),
   query('language')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 5 })
     .withMessage('Language must be a valid language code'),
   query('peer_reviewed')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['1', '0', 'true', 'false'])
     .withMessage('peer_reviewed must be boolean-like (1/0/true/false)'),
   query('open_access')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['1', '0', 'true', 'false'])
     .withMessage('open_access must be boolean-like (1/0/true/false)'),
   query('venue_name')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 255 })
     .withMessage('venue_name must have between 2 and 255 characters'),
   query('venue')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 255 })
     .withMessage('venue must have between 2 and 255 characters'),
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year from must be valid')
     .toInt(),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year to must be valid')
     .toInt(),
   query('author')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 255 })
     .withMessage('author must have between 2 and 255 characters'),
   query('subject')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 255 })
     .withMessage('subject must have between 2 and 255 characters'),
   query('include_facets')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['1', '0', 'true', 'false'])
     .withMessage('include_facets must be boolean-like (1/0/true/false)')
 ];
@@ -77,8 +93,8 @@ const validateWorksSearch = [
  *     parameters:
  *       - name: q
  *         in: query
- *         required: true
- *         description: Search query (minimum 2 characters)
+ *         required: false
+ *         description: Search query (minimum 2 characters). Optional when filters are provided.
  *         schema:
  *           type: string
  *           minLength: 2
@@ -281,8 +297,8 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  *     parameters:
  *       - name: q
  *         in: query
- *         required: true
- *         description: Search query
+ *         required: false
+ *         description: Search query (minimum 2 characters). Optional when filters are provided.
  *         schema:
  *           type: string
  *           minLength: 2
@@ -475,7 +491,27 @@ const advancedSearch = async (req, res, next) => {
   }
 };
 
-router.get('/advanced', commonValidations.searchQuery, enhancedValidationHandler, advancedSearch);
+const validateAdvancedSearch = [
+  query('q')
+    .optional({ values: 'falsy' })
+    .isLength({ min: 2, max: 200 })
+    .withMessage('Search query must be between 2 and 200 characters')
+    .custom(value => {
+      const suspiciousPatterns = [
+        /[<>]/,
+        /javascript:/i,
+        /(\b(select|insert|update|delete|drop|create|alter|exec|execute|union|declare)\b)/i,
+      ];
+      for (const pattern of suspiciousPatterns) {
+        if (pattern.test(value)) {
+          throw new Error('Search query contains invalid characters');
+        }
+      }
+      return true;
+    })
+];
+
+router.get('/advanced', validateAdvancedSearch, enhancedValidationHandler, advancedSearch);
 
 /**
  * @swagger

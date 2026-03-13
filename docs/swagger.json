@@ -6816,8 +6816,8 @@
           {
             "name": "q",
             "in": "query",
-            "required": true,
-            "description": "Search query (minimum 2 characters)",
+            "required": false,
+            "description": "Search query (minimum 2 characters). Optional when filters are provided.",
             "schema": {
               "type": "string",
               "minLength": 2,
@@ -7113,8 +7113,8 @@
           {
             "name": "q",
             "in": "query",
-            "required": true,
-            "description": "Search query",
+            "required": false,
+            "description": "Search query (minimum 2 characters). Optional when filters are provided.",
             "schema": {
               "type": "string",
               "minLength": 2,

@@ -51,9 +51,9 @@ class WorksService {
     const t0 = Date.now();
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { search, type, year_from, year_to, open_access, language } = filters;
+    const { search, type, year_from, year_to, open_access, language, peer_reviewed, venue_name, author, subject } = filters;
     const effectiveLimit = Math.min(limit, 20);
-    const cacheKey = `works:showcase:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}`;
+    const cacheKey = `works:showcase:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -264,8 +264,8 @@ class WorksService {
 
   
   async _getWorksVitrine(filters, limit, offset, page) {
-    const { type, year_from, year_to, search, open_access, language } = filters;
-    
+    const { type, year_from, year_to, search, open_access, language, peer_reviewed, venue_name, author, subject } = filters;
+
     let whereConditions = ['author_string IS NOT NULL'];
     const filterParams = [];
 
@@ -297,6 +297,26 @@ class WorksService {
     if (open_access !== undefined) {
       whereConditions.push('open_access = ?');
       filterParams.push(open_access === 'true' || open_access === true ? 1 : 0);
+    }
+
+    if (peer_reviewed !== undefined) {
+      whereConditions.push('peer_reviewed = ?');
+      filterParams.push(peer_reviewed === 'true' || peer_reviewed === true ? 1 : 0);
+    }
+
+    if (venue_name) {
+      whereConditions.push('(venue_name LIKE ? OR venue_abbrev LIKE ?)');
+      filterParams.push(`%${venue_name}%`, `%${venue_name}%`);
+    }
+
+    if (author) {
+      whereConditions.push('author_string LIKE ?');
+      filterParams.push(`%${author}%`);
+    }
+
+    if (subject) {
+      whereConditions.push('subjects_string LIKE ?');
+      filterParams.push(`%${subject}%`);
     }
 
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000');
