@@ -37,13 +37,24 @@ class SphinxService {
         );
 
         try {
-            let sql = hasSearchTerm
-                ? `SELECT id, WEIGHT() as weight, year
+            const matchParts = [];
+            if (hasSearchTerm) {
+                matchParts.push(this._escapeMatchTerm(trimmedQuery));
+            }
+            if (filters.venue_name) {
+                matchParts.push(`@venue_name ${this._escapeMatchTerm(filters.venue_name)}`);
+            }
+
+            let sql;
+            if (matchParts.length > 0) {
+                sql = `SELECT id, WEIGHT() as weight, year
                    FROM works_poc
-                   WHERE MATCH(${this._formatMatchExpression(trimmedQuery)})`
-                : `SELECT id, 1 as weight, year
+                   WHERE MATCH(${this.connection.escape(matchParts.join(' '))})`;
+            } else {
+                sql = `SELECT id, 1 as weight, year
                    FROM works_poc
                    WHERE id > 0`;
+            }
 
             const params = [];
 
@@ -82,11 +93,6 @@ class SphinxService {
             if (filters.year_to) {
                 sql += ' AND year <= ?';
                 params.push(parseInt(filters.year_to, 10));
-            }
-
-            if (filters.venue_name) {
-                sql += ' AND venue_name LIKE ?';
-                params.push(`%${filters.venue_name}%`);
             }
 
             if (filters.venue_id) {
@@ -184,61 +190,7 @@ class SphinxService {
         }
     }
 
-    
-    async searchOrganizationIds(searchTerm, options = {}) {
-        await this.ensureConnection();
 
-        const { limit = 20, offset = 0, country_code, type } = options;
-        const sanitizedLimit = this._sanitizeLimit(limit, 20, 100);
-        const sanitizedOffset = this._sanitizeOffset(offset);
-        const matchExpression = this.formatMatchQuery(searchTerm || '');
-
-        const filters = [];
-        if (country_code) filters.push(`country_code = ${this.connection.escape(country_code)}`);
-        if (type) filters.push(`type = ${this.connection.escape(type)}`);
-
-        const whereClause = [`MATCH(${matchExpression})`, ...filters].join(' AND ');
-
-        const sql = `
-            SELECT id, WEIGHT() as weight
-            FROM organizations_poc
-            WHERE ${whereClause}
-            ORDER BY weight DESC, id ASC
-            LIMIT ?, ?
-        `;
-
-        const startTime = Date.now();
-        return new Promise((resolve, reject) => {
-            this.connection.query({ sql, timeout: this.queryTimeoutMs }, [sanitizedOffset, sanitizedLimit], (error, rows = []) => {
-                const queryTime = Date.now() - startTime;
-                if (error) {
-                    this._handleQueryError(error);
-                    reject(error);
-                    return;
-                }
-                this.connection.query('SHOW META', (metaError, metaRows = []) => {
-                    if (metaError) {
-                        this._handleQueryError(metaError);
-                        resolve({ ids: rows.map(r => r.id), total: rows.length, query_time: queryTime, meta: {} });
-                        return;
-                    }
-                    const meta = {};
-                    metaRows.forEach(row => {
-                        const key = row.Variable_name || row.Var_name;
-                        meta[key] = row.Value;
-                    });
-                    resolve({
-                        ids: rows.map(r => r.id),
-                        total: parseInt(meta.total_found || meta.total || rows.length, 10),
-                        query_time: queryTime,
-                        meta
-                    });
-                });
-            });
-        });
-    }
-
-    
     async searchPersonIds(searchTerm, options = {}) {
         await this.ensureConnection();
 
@@ -282,53 +234,6 @@ class SphinxService {
         });
     }
 
-    
-    async searchSignatureIds(searchTerm, options = {}) {
-        await this.ensureConnection();
-
-        const { limit = 20, offset = 0 } = options;
-        const sanitizedLimit = this._sanitizeLimit(limit, 20, 100);
-        const sanitizedOffset = this._sanitizeOffset(offset);
-        const matchExpression = this.formatMatchQuery(searchTerm || '');
-
-        const sql = `
-            SELECT id, WEIGHT() as weight, is_verified
-            FROM signatures_poc
-            WHERE MATCH(${matchExpression})
-            ORDER BY is_verified DESC, weight DESC, id ASC
-            LIMIT ?, ?
-        `;
-
-        const startTime = Date.now();
-        return new Promise((resolve, reject) => {
-            this.connection.query({ sql, timeout: this.queryTimeoutMs }, [sanitizedOffset, sanitizedLimit], (error, rows = []) => {
-                const queryTime = Date.now() - startTime;
-                if (error) {
-                    this._handleQueryError(error);
-                    reject(error);
-                    return;
-                }
-                this.connection.query('SHOW META', (metaError, metaRows = []) => {
-                    if (metaError) {
-                        this._handleQueryError(metaError);
-                        resolve({ ids: rows.map(r => r.id), total: rows.length, query_time: queryTime, meta: {} });
-                        return;
-                    }
-                    const meta = {};
-                    metaRows.forEach(row => {
-                        const key = row.Variable_name || row.Var_name;
-                        meta[key] = row.Value;
-                    });
-                    resolve({
-                        ids: rows.map(r => r.id),
-                        total: parseInt(meta.total_found || meta.total || rows.length, 10),
-                        query_time: queryTime,
-                        meta
-                    });
-                });
-            });
-        });
-    }
 
     _ensureEnabled() {
         if (!this.enabled) {
@@ -585,21 +490,32 @@ class SphinxService {
         );
 
         try {
-            let sql = hasSearchTerm
-                ? `SELECT *, WEIGHT() as relevance,
+            const matchParts = [];
+            if (hasSearchTerm) {
+                matchParts.push(this._escapeMatchTerm(trimmedQuery));
+            }
+            if (filters.venue_name) {
+                matchParts.push(`@venue_name ${this._escapeMatchTerm(filters.venue_name)}`);
+            }
+
+            let sql;
+            if (matchParts.length > 0) {
+                sql = `SELECT *, WEIGHT() as relevance,
                            year,
                            work_type,
                            language,
                            peer_reviewed
-                   FROM works_poc 
-                   WHERE MATCH(${this._formatMatchExpression(trimmedQuery)})`
-                : `SELECT *, 1 as relevance,
+                   FROM works_poc
+                   WHERE MATCH(${this.connection.escape(matchParts.join(' '))})`;
+            } else {
+                sql = `SELECT *, 1 as relevance,
                            year,
                            work_type,
                            language,
                            peer_reviewed
-                   FROM works_poc 
+                   FROM works_poc
                    WHERE id > 0`;
+            }
 
             const params = [];
 
@@ -638,11 +554,6 @@ class SphinxService {
             if (filters.year_to) {
                 sql += ' AND year <= ?';
                 params.push(parseInt(filters.year_to, 10));
-            }
-
-            if (filters.venue_name) {
-                sql += ' AND venue_name LIKE ?';
-                params.push(`%${filters.venue_name}%`);
             }
 
             if (filters.venue_id) {
@@ -925,7 +836,7 @@ class SphinxService {
                 this.connection.query(`
                     SELECT language, COUNT(*) as count 
                     FROM works_poc 
-                    WHERE ${matchExpression} AND language != 'unknown'
+                    WHERE ${matchExpression} AND language != 'unknown' AND language != ''
                     GROUP BY language 
                     ORDER BY count DESC 
                     LIMIT 10
@@ -1007,46 +918,28 @@ class SphinxService {
         
         try {
             const sql = `
-                INSERT INTO works_rt 
-                (id, title, subtitle, abstract, author_string, first_author_name, venue_name, venue_abbrev, publisher_name, doi,
-                 publication_id, venue_id, publisher_id, first_author_id,
-                 author_count, institutions_count, citation_count, reference_count,
-                 resolved_references_count, pending_references_count, cited_by_count,
-                 has_pending_references, has_files,
-                 year, created_ts, work_type, language, open_access, peer_reviewed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO works_rt
+                (id, title, subtitle, abstract, author_string, venue_name, venue_abbrev, doi, subjects_string,
+                 created_ts, year, open_access, peer_reviewed, work_type, language)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
-            
+
             const params = [
                 workData.id,
                 workData.title || '',
                 workData.subtitle || '',
                 workData.abstract || '',
                 workData.author_string || '',
-                workData.first_author_name || '',
                 workData.venue_name || '',
                 workData.venue_abbrev || '',
-                workData.publisher_name || '',
                 workData.doi || '',
-                workData.publication_id || 0,
-                workData.venue_id || 0,
-                workData.publisher_id || 0,
-                workData.first_author_id || 0,
-                workData.author_count || 0,
-                workData.institutions_count || 0,
-                workData.citation_count || 0,
-                workData.reference_count || 0,
-                workData.resolved_references_count || 0,
-                workData.pending_references_count || 0,
-                workData.cited_by_count || 0,
-                workData.has_pending_references ? 1 : 0,
-                workData.has_files ? 1 : 0,
-                workData.year || 0,
+                workData.subjects_string || '',
                 Math.floor(Date.now() / 1000),
-                workData.work_type || 'ARTICLE',
-                workData.language || 'unknown',
+                workData.year || 0,
                 workData.open_access ? 1 : 0,
-                workData.peer_reviewed ? 1 : 0
+                workData.peer_reviewed ? 1 : 0,
+                workData.work_type || 'ARTICLE',
+                workData.language || 'unknown'
             ];
             
             const result = await new Promise((resolve, reject) => {

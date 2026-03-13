@@ -1,6 +1,7 @@
 const { logger } = require('../middleware/errorHandler');
 const sphinxService = require('./sphinx.service');
 const redis = require('../config/redis');
+const { sequelize } = require('../models');
 
 class AutocompleteService {
     constructor() {
@@ -8,23 +9,32 @@ class AutocompleteService {
         this.cacheTTL = 3600;
         this.minQueryLength = 2;
         this.maxSuggestions = 10;
-        
+
         this.suggestionTypes = {
             titles: 'title_suggestions',
-            authors: 'author_suggestions', 
-            venues: 'venue_suggestions',
-            keywords: 'keyword_suggestions'
+            authors: 'author_suggestions',
+            venues: 'venue_suggestions'
         };
+
+        this.stopWords = new Set([
+            'from', 'with', 'that', 'this', 'than', 'them', 'then', 'they',
+            'their', 'there', 'these', 'those', 'have', 'been', 'were', 'being',
+            'will', 'would', 'could', 'should', 'about', 'after', 'before',
+            'between', 'under', 'over', 'into', 'through', 'during', 'each',
+            'which', 'what', 'when', 'where', 'some', 'other', 'also', 'more',
+            'most', 'only', 'very', 'just', 'such', 'like', 'para', 'como',
+            'does', 'based', 'using', 'case', 'upon', 'among'
+        ]);
     }
 
-    
+
     async getSuggestions(query, type = 'all', limit = 10) {
         if (!query || query.length < this.minQueryLength) {
             return { suggestions: [], type: 'none' };
         }
 
         const cacheKey = `${this.cachePrefix}${type}:${query.toLowerCase()}`;
-        
+
         if (redis.connected) {
             try {
                 const cached = await redis.get(cacheKey);
@@ -37,7 +47,7 @@ class AutocompleteService {
         }
 
         let suggestions = [];
-        
+
         try {
             switch (type) {
                 case 'titles':
@@ -77,19 +87,20 @@ class AutocompleteService {
         }
     }
 
-    
+
     async getTitleSuggestions(query, limit) {
         await sphinxService.ensureConnection();
-        
-        const sql = `
-            SELECT title, COUNT(*) as relevance
-            FROM works_poc 
-            WHERE MATCH('${query.replace(/'/g, "\\'")}')
+
+        const matchExpr = sphinxService.formatMatchQuery(query);
+        const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
+
+        const sql = `SELECT title, COUNT(*) as relevance
+            FROM works_poc
+            WHERE MATCH(${matchExpr})
             AND title != ''
             GROUP BY title
-            ORDER BY relevance DESC, title
-            LIMIT ${parseInt(limit)}
-        `;
+            ORDER BY relevance DESC, title ASC
+            LIMIT ${sanitizedLimit}`;
 
         return new Promise((resolve, reject) => {
             sphinxService.connection.query(sql, (error, results) => {
@@ -98,7 +109,7 @@ class AutocompleteService {
                     return;
                 }
 
-                const suggestions = results.map(row => ({
+                const suggestions = (results || []).map(row => ({
                     text: row.title,
                     type: 'title',
                     relevance: row.relevance,
@@ -110,19 +121,20 @@ class AutocompleteService {
         });
     }
 
-    
+
     async getAuthorSuggestions(query, limit) {
         await sphinxService.ensureConnection();
-        
-        const sql = `
-            SELECT author_string, COUNT(*) as work_count
-            FROM works_poc 
-            WHERE MATCH('${query.replace(/'/g, "\\'")}')
+
+        const matchExpr = sphinxService.formatMatchQuery(query);
+        const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
+
+        const sql = `SELECT author_string, COUNT(*) as work_count
+            FROM works_poc
+            WHERE MATCH(${matchExpr})
             AND author_string != ''
             GROUP BY author_string
             ORDER BY work_count DESC
-            LIMIT ${parseInt(limit)}
-        `;
+            LIMIT ${sanitizedLimit}`;
 
         return new Promise((resolve, reject) => {
             sphinxService.connection.query(sql, (error, results) => {
@@ -131,11 +143,12 @@ class AutocompleteService {
                     return;
                 }
 
+                const queryLower = query.toLowerCase();
                 const suggestions = [];
-                results.forEach(row => {
+                (results || []).forEach(row => {
                     const authors = row.author_string.split(';').map(a => a.trim());
-                    const matchingAuthors = authors.filter(author => 
-                        author.toLowerCase().includes(query.toLowerCase())
+                    const matchingAuthors = authors.filter(author =>
+                        author.toLowerCase().includes(queryLower)
                     );
 
                     matchingAuthors.forEach(author => {
@@ -156,19 +169,20 @@ class AutocompleteService {
         });
     }
 
-    
+
     async getVenueSuggestions(query, limit) {
         await sphinxService.ensureConnection();
-        
-        const sql = `
-            SELECT venue_name, venue_abbrev, COUNT(*) as work_count
-            FROM works_poc 
-            WHERE MATCH('${query.replace(/'/g, "\\'")}')
+
+        const matchExpr = sphinxService.formatMatchQuery(query);
+        const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
+
+        const sql = `SELECT venue_name, venue_abbrev, COUNT(*) as work_count
+            FROM works_poc
+            WHERE MATCH(${matchExpr})
             AND venue_name != ''
             GROUP BY venue_name, venue_abbrev
             ORDER BY work_count DESC
-            LIMIT ${parseInt(limit)}
-        `;
+            LIMIT ${sanitizedLimit}`;
 
         return new Promise((resolve, reject) => {
             sphinxService.connection.query(sql, (error, results) => {
@@ -177,7 +191,7 @@ class AutocompleteService {
                     return;
                 }
 
-                const suggestions = results.map(row => ({
+                const suggestions = (results || []).map(row => ({
                     text: row.venue_name,
                     name: row.venue_name,
                     abbreviated_name: row.venue_abbrev || null,
@@ -191,12 +205,13 @@ class AutocompleteService {
         });
     }
 
-    
+
     async getAllSuggestions(query, limit) {
+        const perType = Math.ceil(limit / 3);
         const [titles, authors, venues] = await Promise.all([
-            this.getTitleSuggestions(query, Math.ceil(limit / 3)),
-            this.getAuthorSuggestions(query, Math.ceil(limit / 3)), 
-            this.getVenueSuggestions(query, Math.ceil(limit / 3))
+            this.getTitleSuggestions(query, perType),
+            this.getAuthorSuggestions(query, perType),
+            this.getVenueSuggestions(query, perType)
         ]);
 
         const mixed = [
@@ -211,10 +226,10 @@ class AutocompleteService {
         return mixed.slice(0, limit);
     }
 
-    
+
     async getPopularTerms(limit = 20) {
         const cacheKey = `${this.cachePrefix}popular:terms`;
-        
+
         if (redis.connected) {
             try {
                 const cached = await redis.get(cacheKey);
@@ -227,55 +242,52 @@ class AutocompleteService {
         }
 
         try {
-            await sphinxService.ensureConnection();
-            
-            const sql = `
-                SELECT 
-                    SUBSTRING_INDEX(SUBSTRING_INDEX(title, ' ', numbers.n), ' ', -1) as term,
-                    COUNT(*) as frequency
-                FROM works_poc
+            const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 20, 50));
+            const fetchLimit = sanitizedLimit * 3;
+
+            const rows = await sequelize.query(`
+                SELECT LOWER(SUBSTRING_INDEX(SUBSTRING_INDEX(sws.title, ' ', numbers.n), ' ', -1)) AS term,
+                       COUNT(*) AS frequency
+                FROM sphinx_works_summary sws
                 JOIN (
-                    SELECT 1 n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL 
+                    SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL
                     SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL
                     SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10
                 ) numbers
-                ON CHAR_LENGTH(title) - CHAR_LENGTH(REPLACE(title, ' ', '')) >= numbers.n - 1
-                WHERE CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(title, ' ', numbers.n), ' ', -1)) > 3
-                AND year >= 2020
+                ON CHAR_LENGTH(sws.title) - CHAR_LENGTH(REPLACE(sws.title, ' ', '')) >= numbers.n - 1
+                WHERE sws.year >= 2020
+                AND CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(sws.title, ' ', numbers.n), ' ', -1)) > 3
                 GROUP BY term
                 HAVING frequency > 10
                 ORDER BY frequency DESC
-                LIMIT ${parseInt(limit)}
-            `;
-
-            return new Promise((resolve, reject) => {
-                sphinxService.connection.query(sql, (error, results) => {
-                    if (error) {
-                        reject(error);
-                        return;
-                    }
-
-                    const terms = results.map(row => ({
-                        term: row.term.toLowerCase(),
-                        frequency: row.frequency,
-                        type: 'popular'
-                    }));
-
-                    if (redis.connected && terms.length > 0) {
-                        redis.setex(cacheKey, 21600, JSON.stringify(terms));
-                    }
-
-                    resolve(terms);
-                });
+                LIMIT :fetchLimit
+            `, {
+                replacements: { fetchLimit },
+                type: sequelize.QueryTypes.SELECT
             });
 
+            const terms = (rows || [])
+                .filter(row => !this.stopWords.has(row.term))
+                .slice(0, sanitizedLimit)
+                .map(row => ({
+                    term: row.term,
+                    frequency: parseInt(row.frequency, 10),
+                    type: 'popular'
+                }));
+
+            if (redis.connected && terms.length > 0) {
+                redis.setex(cacheKey, 21600, JSON.stringify(terms));
+            }
+
+            return terms;
+
         } catch (error) {
-            logger.error('Popular terms generation failed', error);
+            logger.error('Popular terms generation failed', { error: error.message });
             return [];
         }
     }
 
-    
+
     async recordSearchQuery(query, resultCount = 0) {
         if (!query || query.length < 2) return;
 
@@ -297,7 +309,7 @@ class AutocompleteService {
         }
     }
 
-    
+
     async getSearchAnalytics(days = 7) {
         if (!redis.connected) {
             return { analytics: [], message: 'Redis not available' };
@@ -319,7 +331,7 @@ class AutocompleteService {
                 analytics[dateKey] = {
                     total_searches: dayData.length,
                     unique_queries: new Set(dayData.map(d => d.query)).size,
-                    avg_results: dayData.length > 0 ? 
+                    avg_results: dayData.length > 0 ?
                         dayData.reduce((sum, d) => sum + d.result_count, 0) / dayData.length : 0,
                     top_queries: this.getTopQueries(dayData, 10)
                 };
@@ -345,7 +357,7 @@ class AutocompleteService {
             .map(([query, count]) => ({ query, count }));
     }
 
-    
+
     async clearCache() {
         if (!redis.connected) {
             return { cleared: false, message: 'Redis not available' };

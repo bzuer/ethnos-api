@@ -267,14 +267,55 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  *           type: string
  *           minLength: 2
  *           example: "machine learning"
- *       - name: limit
+ *       - name: work_type
  *         in: query
- *         description: Number of results to return
+ *         description: Filter by work type
+ *         schema:
+ *           type: string
+ *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
+ *       - name: language
+ *         in: query
+ *         description: Filter by language code
+ *         schema:
+ *           type: string
+ *           example: "en"
+ *       - name: year_from
+ *         in: query
+ *         description: Filter by minimum publication year
  *         schema:
  *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
+ *           example: 2020
+ *       - name: year_to
+ *         in: query
+ *         description: Filter by maximum publication year
+ *         schema:
+ *           type: integer
+ *           example: 2024
+ *       - name: peer_reviewed
+ *         in: query
+ *         description: Filter by peer review status
+ *         schema:
+ *           type: string
+ *           enum: ["true", "false"]
+ *       - name: open_access
+ *         in: query
+ *         description: Filter by open access status
+ *         schema:
+ *           type: string
+ *           enum: ["true", "false"]
+ *       - name: venue_name
+ *         in: query
+ *         description: Filter by venue name (partial match)
+ *         schema:
+ *           type: string
+ *       - name: venue
+ *         in: query
+ *         description: Alias of venue_name
+ *         schema:
+ *           type: string
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: Advanced search results with facets
@@ -343,7 +384,9 @@ const advancedSearch = async (req, res, next) => {
       year_to: req.query.year_to,
       peer_reviewed: req.query.peer_reviewed === 'true' ? true :
         req.query.peer_reviewed === 'false' ? false : undefined,
-      venue_name: req.query.venue
+      venue_name: (req.query.venue_name || req.query.venue || '').trim() || undefined,
+      open_access: req.query.open_access === 'true' ? true :
+        req.query.open_access === 'false' ? false : undefined
     };
 
     Object.keys(filters).forEach((key) => {
