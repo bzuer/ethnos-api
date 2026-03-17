@@ -105,7 +105,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Do not expose keys or sensitive data in responses, logs, or error payloads.
 
 ## Endpoints State
-- 78 operations across 78 paths in `docs/swagger.json`.
+- 79 operations across 79 paths in `docs/swagger.json`.
 - Disabled endpoints: `/signatures`, `/subjects` (root). Nested endpoints remain active.
 
 ## Route Standards
@@ -115,6 +115,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
 - Works listing: `/works/showcase`.
 - Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
+- DOI resolution: `/{doi}`, `/doi.org/{doi}`, `/https://doi.org/{doi}` — resolves DOI to work details via `publications.doi` lookup. Regex route in `src/app.js`.
 - Sphinx endpoints: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
 - Search endpoints (`/search/works`, `/search/advanced`): `q` is optional; filter-only queries (e.g. `venue=mana`) are supported.
 - All optional query params must use `optional({ values: 'falsy' })` so empty strings (`param=`) are treated as absent.
