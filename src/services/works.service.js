@@ -82,6 +82,22 @@ class WorksService {
   }
 
   
+  async getWorkByDoi(doi, options = {}) {
+    const normalized = normalizeDoiValue(doi);
+    if (!normalized) return null;
+
+    const candidates = buildDoiCandidates([normalized]);
+    const placeholders = candidates.map(() => '?').join(',');
+
+    const rows = await sequelize.query(
+      `SELECT work_id FROM publications WHERE doi IN (${placeholders}) LIMIT 1`,
+      { replacements: candidates, type: sequelize.QueryTypes.SELECT }
+    );
+
+    if (!rows || !rows.length) return null;
+    return this.getWorkById(rows[0].work_id, options);
+  }
+
   async getWorkById(id, options = {}) {
     const cacheKey = `work:complete:${id}`;
     

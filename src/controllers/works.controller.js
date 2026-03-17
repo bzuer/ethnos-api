@@ -6,6 +6,38 @@ const { logger } = require('../middleware/errorHandler');
 
 class WorksController {
   
+  async getWorkByDoi(req, res, next) {
+    try {
+      const doi = req.params.doi;
+      if (!doi) {
+        return res.fail('DOI is required', {
+          statusCode: 400,
+          code: ERROR_CODES.VALIDATION
+        });
+      }
+
+      const includeCitations = String(req.query.include_citations ?? 'true').toLowerCase() !== 'false';
+      const includeReferences = String(req.query.include_references ?? 'true').toLowerCase() !== 'false';
+      const work = await worksService.getWorkByDoi(doi, { includeCitations, includeReferences });
+
+      if (!work) {
+        return res.fail('Work not found for the given DOI', {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND,
+          meta: { doi }
+        });
+      }
+
+      return res.success(work);
+    } catch (error) {
+      logger.error('Error retrieving work by DOI', {
+        doi: req.params.doi,
+        error: error.message
+      });
+      next(error);
+    }
+  }
+
   async getWork(req, res, next) {
     try {
       const errors = validationResult(req);

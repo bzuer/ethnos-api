@@ -445,6 +445,103 @@ const options = {
               example: 'Maria S. Santos',
               description: 'First author display name (list items)'
             },
+            first_author_id: {
+              type: 'integer',
+              nullable: true,
+              example: 5952,
+              description: 'First author person ID (list items)'
+            },
+            first_author_identifiers: {
+              type: 'object',
+              nullable: true,
+              description: 'External identifiers of the first author (list items)',
+              additionalProperties: { type: 'string', nullable: true }
+            },
+            doi: {
+              type: 'string',
+              nullable: true,
+              example: '10.1038/s42256-023-00123-4',
+              description: 'Top-level DOI (list items and showcase)'
+            },
+            url: {
+              type: 'string',
+              nullable: true,
+              example: 'https://doi.org/10.1038/s42256-023-00123-4',
+              description: 'URL for the work'
+            },
+            subjects: {
+              type: 'array',
+              description: 'Subject classifications (detail only)',
+              items: {
+                type: 'object',
+                properties: {
+                  subject_id: { type: 'integer', example: 346489 },
+                  term: { type: 'string', example: 'Anthropology' },
+                  vocabulary: { type: 'string', nullable: true, example: 'KEYWORD' },
+                  lang: { type: 'string', nullable: true },
+                  relevance_score: { type: 'number', nullable: true, example: 1 },
+                  assigned_by: { type: 'string', nullable: true, example: 'AUTHOR' }
+                }
+              }
+            },
+            metrics: {
+              type: 'object',
+              description: 'Work-level metrics (detail only)',
+              properties: {
+                citation_count: { type: 'integer', example: 15 },
+                reference_count: { type: 'integer', example: 42 },
+                download_count: { type: 'integer', example: 230 },
+                view_count: { type: 'integer', example: 1500 },
+                altmetric_score: { type: 'number', nullable: true },
+                social_media_mentions: { type: 'integer', example: 0 },
+                news_mentions: { type: 'integer', example: 0 }
+              }
+            },
+            files: {
+              type: 'array',
+              description: 'Associated files (detail only)',
+              items: {
+                type: 'object',
+                properties: {
+                  file_id: { type: 'integer' },
+                  md5: { type: 'string', nullable: true },
+                  sha1: { type: 'string', nullable: true },
+                  sha256: { type: 'string', nullable: true },
+                  ipfs_cid: { type: 'string', nullable: true },
+                  file_role: { type: 'string', nullable: true }
+                }
+              }
+            },
+            licenses: {
+              type: 'array',
+              description: 'License information (detail only)',
+              items: {
+                type: 'object',
+                properties: {
+                  publication_id: { type: 'integer' },
+                  license_url: { type: 'string', nullable: true, example: 'http://creativecommons.org/licenses/by-nc/4.0' },
+                  license_version: { type: 'string', nullable: true, example: 'publishedVersion' },
+                  created_at: { type: 'string', format: 'date-time', nullable: true }
+                }
+              }
+            },
+            added_to_database: {
+              type: 'string',
+              format: 'date-time',
+              nullable: true,
+              description: 'When the work was added to the database (list items)'
+            },
+            data_source: {
+              type: 'string',
+              nullable: true,
+              description: 'Data provenance source (list items)'
+            },
+            search_engine: {
+              type: 'string',
+              nullable: true,
+              example: 'sphinx',
+              description: 'Search engine used for the query (list items)'
+            },
             identifiers: {
               type: 'object',
               description: 'External identifiers for this work',
@@ -524,44 +621,110 @@ const options = {
               example: 'Santos',
               description: 'Family name or surname'
             },
+            name_variations: {
+              type: 'array',
+              items: { type: 'string' },
+              nullable: true,
+              description: 'Known name variations'
+            },
+            name_signature: {
+              type: 'string',
+              nullable: true,
+              description: 'Normalized name signature used for matching'
+            },
             orcid: {
               type: 'string',
+              nullable: true,
               example: '0000-0002-1825-0097',
               description: 'ORCID identifier'
             },
             lattes_id: {
               type: 'string',
+              nullable: true,
               example: '1234567890123456',
               description: 'Lattes CV platform ID (Brazil)'
             },
             scopus_id: {
               type: 'string',
+              nullable: true,
               example: '57194582100',
               description: 'Scopus Author ID'
             },
-            wos_id: {
+            wikidata_id: {
               type: 'string',
-              example: 'A-1234-2023',
-              description: 'Web of Science ResearcherID'
+              nullable: true,
+              description: 'Wikidata entity ID'
+            },
+            openalex_id: {
+              type: 'string',
+              nullable: true,
+              description: 'OpenAlex ID'
+            },
+            mag_id: {
+              type: 'string',
+              nullable: true,
+              description: 'Microsoft Academic Graph ID'
+            },
+            url: {
+              type: 'string',
+              nullable: true,
+              description: 'Personal or institutional URL'
+            },
+            identifiers: {
+              type: 'object',
+              nullable: true,
+              description: 'All external identifiers grouped',
+              properties: {
+                orcid: { type: 'string', nullable: true },
+                lattes_id: { type: 'string', nullable: true },
+                scopus_id: { type: 'string', nullable: true },
+                wikidata_id: { type: 'string', nullable: true },
+                openalex_id: { type: 'string', nullable: true },
+                mag_id: { type: 'string', nullable: true },
+                url: { type: 'string', nullable: true }
+              }
+            },
+            is_verified: {
+              type: 'boolean',
+              nullable: true,
+              description: 'Whether the person record has been verified'
+            },
+            metrics: {
+              type: 'object',
+              nullable: true,
+              description: 'Bibliometric indicators',
+              properties: {
+                works_count: { type: 'integer', example: 46 },
+                latest_publication_year: { type: 'integer', nullable: true, example: 2025 }
+              }
             },
             primary_affiliation: {
               $ref: '#/components/schemas/Organization',
+              nullable: true,
               description: 'Primary institutional affiliation'
             },
-            works_count: {
-              type: 'integer',
-              example: 45,
-              description: 'Total number of works authored'
+            authorship_profile: {
+              type: 'object',
+              nullable: true,
+              description: 'Authorship statistics and positioning analysis'
             },
-            h_index: {
-              type: 'integer',
-              example: 12,
-              description: 'H-index bibliometric indicator'
+            subject_expertise: {
+              type: 'array',
+              nullable: true,
+              description: 'Subject areas of expertise',
+              items: { type: 'object', additionalProperties: true }
             },
-            citation_count: {
-              type: 'integer',
-              example: 678,
-              description: 'Total citations received'
+            top_collaborators: {
+              type: 'array',
+              nullable: true,
+              description: 'Most frequent collaborators',
+              items: { type: 'object', additionalProperties: true }
+            },
+            recent_works: {
+              type: 'array',
+              nullable: true,
+              description: 'Most recent publications',
+              items: { type: 'object', additionalProperties: true }
             },
             created_at: {
               type: 'string',
@@ -698,35 +861,57 @@ const options = {
               enum: ['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES'],
               example: 'JOURNAL'
             },
-            impact_factor: {
-              type: 'number',
-              format: 'float',
-              nullable: true,
-              example: 3.214
-            },
-            citescore: {
-              type: 'number',
-              format: 'float',
-              nullable: true,
-              example: 5.6
-            },
-            sjr: {
-              type: 'number',
-              format: 'float',
-              nullable: true,
-              example: 1.12
-            },
-            snip: {
-              type: 'number',
-              format: 'float',
-              nullable: true,
-              example: 0.98
-            },
             open_access: {
               type: 'boolean',
               nullable: true,
               description: 'Indicates whether the venue is fully open access',
               example: false
+            },
+            works_count: {
+              type: 'integer',
+              example: 1487
+            },
+            issn: {
+              type: 'string',
+              nullable: true,
+              example: '0002-7294',
+              description: 'Print ISSN'
+            },
+            eissn: {
+              type: 'string',
+              nullable: true,
+              example: '1548-1433',
+              description: 'Electronic ISSN'
+            },
+            scopus_source_id: {
+              type: 'string',
+              nullable: true,
+              description: 'Scopus source identifier'
+            },
+            scopus_id: {
+              type: 'string',
+              nullable: true,
+              description: 'Scopus venue ID'
+            },
+            wikidata_id: {
+              type: 'string',
+              nullable: true,
+              description: 'Wikidata entity ID'
+            },
+            openalex_id: {
+              type: 'string',
+              nullable: true,
+              description: 'OpenAlex ID'
+            },
+            mag_id: {
+              type: 'string',
+              nullable: true,
+              description: 'Microsoft Academic Graph ID'
+            },
+            homepage_url: {
+              type: 'string',
+              nullable: true,
+              example: 'http://www.jps.auckland.ac.nz'
             },
             aggregation_type: {
               type: 'string',
@@ -743,15 +928,6 @@ const options = {
               nullable: true,
               example: 2025
             },
-            works_count: {
-              type: 'integer',
-              example: 1487
-            },
-            homepage_url: {
-              type: 'string',
-              nullable: true,
-              example: 'http://www.jps.auckland.ac.nz'
-            },
             country_code: {
               type: 'string',
               nullable: true,
@@ -762,49 +938,42 @@ const options = {
               nullable: true,
               example: false
             },
-            publications_count: {
-              type: 'integer',
-              example: 1523
-            },
-            last_validated_at: {
-              type: 'string',
-              format: 'date-time',
+            is_indexed_in_scopus: {
+              type: 'boolean',
               nullable: true,
-              example: '2025-03-12T10:15:00Z'
+              description: 'Whether the venue is indexed in Scopus'
             },
-            validation_status: {
-              type: 'string',
-              enum: ['PENDING', 'VALIDATED', 'NOT_FOUND', 'FAILED'],
-              example: 'VALIDATED'
+            cited_by_count: {
+              type: 'integer',
+              nullable: true,
+              description: 'Total citations received by works in this venue'
             },
-            created_at: {
-              type: 'string',
-              format: 'date-time',
-              example: '1998-01-15T00:00:00Z'
+            h_index: {
+              type: 'integer',
+              nullable: true,
+              description: 'H-index of the venue'
             },
-            updated_at: {
-              type: 'string',
-              format: 'date-time',
-              example: '2025-02-01T08:22:00Z'
+            i10_index: {
+              type: 'integer',
+              nullable: true,
+              description: 'i10-index of the venue'
+            },
+            two_year_mean_citedness: {
+              type: 'number',
+              nullable: true,
+              description: 'Two-year mean citedness score'
+            },
+            open_access_percentage: {
+              type: 'number',
+              nullable: true,
+              description: 'Percentage of open access works'
             },
             identifiers: {
               type: 'object',
               properties: {
-                issn: {
-                  type: 'string',
-                  nullable: true,
-                  example: '0002-7294'
-                },
-                eissn: {
-                  type: 'string',
-                  nullable: true,
-                  example: '1548-1433'
-                },
-                scopus_source_id: {
-                  type: 'string',
-                  nullable: true,
-                  example: '12345'
-                },
+                issn: { type: 'string', nullable: true, example: '0002-7294' },
+                eissn: { type: 'string', nullable: true, example: '1548-1433' },
+                scopus_source_id: { type: 'string', nullable: true },
                 external: {
                   type: 'object',
                   additionalProperties: { type: 'string' },
@@ -815,70 +984,39 @@ const options = {
             publisher: {
               type: 'object',
               properties: {
-                id: {
-                  type: 'integer',
-                  nullable: true,
-                  example: 42
-                },
-                name: {
-                  type: 'string',
-                  nullable: true,
-                  example: 'Wiley-Blackwell'
-                },
-                type: {
-                  type: 'string',
-                  nullable: true,
-                  example: 'PUBLISHER'
-                },
-                country_code: {
-                  type: 'string',
-                  nullable: true,
-                  example: 'US'
-                }
+                id: { type: 'integer', nullable: true, example: 42 },
+                name: { type: 'string', nullable: true, example: 'Wiley-Blackwell' },
+                type: { type: 'string', nullable: true, example: 'PUBLISHER' },
+                country_code: { type: 'string', nullable: true, example: 'US' }
               }
             },
-            metrics: {
-              $ref: '#/components/schemas/VenueMetrics'
+            summary_snapshot: {
+              type: 'object',
+              nullable: true,
+              description: 'Pre-computed summary metrics snapshot',
+              additionalProperties: true
             },
             subjects: {
               type: 'array',
-              description: 'Subjects associated with the venue (list responses limit to top 5 by default)',
+              description: 'Subjects associated with the venue',
               items: {
                 type: 'object',
                 properties: {
-                  subject_id: {
-                    type: 'integer',
-                    nullable: true,
-                    example: 1205
-                  },
-                  term: {
-                    type: 'string',
-                    example: 'Anthropology'
-                  },
-                  score: {
-                    type: 'number',
-                    format: 'float',
-                    nullable: true,
-                    example: 0.92
-                  }
+                  subject_id: { type: 'integer', nullable: true, example: 1205 },
+                  term: { type: 'string', example: 'Anthropology' },
+                  score: { type: 'number', format: 'float', nullable: true, example: 0.92 }
                 }
               }
             },
             terms: {
               type: 'array',
               description: 'Ordered list of subject terms extracted for the venue',
-              items: {
-                type: 'string',
-                example: 'Anthropology'
-              }
+              items: { type: 'string', example: 'Anthropology' }
             },
             keywords: {
               type: 'array',
               description: 'Deduplicated subject terms normalized for keyword usage',
-              items: {
-                type: 'string',
-                example: 'anthropology'
-              }
+              items: { type: 'string', example: 'anthropology' }
             }
           }
         },
@@ -4179,7 +4317,8 @@ const options = {
     ]
   },
   apis: [
-    './src/routes/*.js'
+    './src/routes/*.js',
+    './src/app.js'
   ]
 };
 

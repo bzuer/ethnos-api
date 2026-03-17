@@ -341,6 +341,52 @@ app.use('/courses', coursesRoutes);
 app.use('/instructors', instructorsRoutes);
 app.use('/bibliographies', bibliographyRoutes);
 
+const worksController = require('./controllers/works.controller');
+
+/**
+ * @swagger
+ * /{doi}:
+ *   get:
+ *     summary: Resolve a work by DOI
+ *     description: |
+ *       Look up a work using its DOI. Accepts multiple URL formats:
+ *       - `/{doi}` (e.g. `/10.4324/9781003371694`)
+ *       - `/doi.org/{doi}` (e.g. `/doi.org/10.4324/9781003371694`)
+ *       - `/https://doi.org/{doi}` (e.g. `/https://doi.org/10.4324/9781003371694`)
+ *     tags: [Works]
+ *     parameters:
+ *       - in: path
+ *         name: doi
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: DOI identifier (with or without doi.org prefix)
+ *         example: 10.4324/9781003371694
+ *       - in: query
+ *         name: include_citations
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include cited_by in the work payload
+ *       - in: query
+ *         name: include_references
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include references in the work payload
+ *     responses:
+ *       200:
+ *         $ref: '#/components/responses/WorkDetailsSuccess'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
+ */
+app.get(/^\/((?:https?:\/\/)?doi\.org\/)?(\d{2}\..+)$/, (req, res, next) => {
+  req.params.doi = req.params[1];
+  next();
+}, relationalLimiter, worksController.getWorkByDoi);
+
 app.use('*', notFoundHandler);
 
 app.use(errorMonitoring);
