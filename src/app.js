@@ -392,7 +392,7 @@ app.use('*', notFoundHandler);
 app.use(errorMonitoring);
 app.use(globalErrorHandler);
 
-const PORT = process.env.PORT || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1211);
+const PORT = parseInt(process.env.PORT, 10) || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1211);
 
 let server = null;
 

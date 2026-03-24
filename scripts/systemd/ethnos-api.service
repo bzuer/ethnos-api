@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=bruno
-Group=bruno
-WorkingDirectory=/home/bruno/api
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/api
 EnvironmentFile=/etc/node-backend.env
-ExecStart=/usr/bin/node /home/bruno/api/src/app.js
+ExecStart=/home/ubuntu/.nvm/versions/node/v24.14.0/bin/node /home/ubuntu/api/src/app.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
