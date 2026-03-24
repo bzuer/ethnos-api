@@ -29,7 +29,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Tests: `tests/` with `helpers/` and `disabled/` subdirectories
 - Documentation: `docs/swagger.json`, `docs/swagger.yaml`
 - Database: `database/data.schema.sql` (production schema), `database/schema.sql` (reference schema)
-- Root: `server.sh` (production), `data_dev.schema.sql` (dev snapshot, not versioned)
+- Root: `server.sh` (fallback process manager; systemd is preferred), `data_dev.schema.sql` (dev snapshot, not versioned)
 
 ## Response Conventions
 - All responses via `responseFormatter` (global in `src/app.js`).
@@ -70,7 +70,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Runtime env: `/etc/node-backend.env` as single source of truth.
 - Development: `npm run dev`.
 - Build: `npm run build`.
-- Production: `./server.sh start`.
+- Production: systemd (`ethnos-api.service`) is the primary process manager; `server.sh` is the fallback when the unit is not installed. `manage.sh` auto-detects via `systemd_service_available()` and routes `start/stop/restart` through `systemctl` when possible.
 - API runtime port: `1211`. Use `3000` only for test context (`NODE_ENV=test`).
 
 ## Important Scripts
@@ -82,6 +82,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
   - Sphinx: `scripts/manage.sh sphinx start|stop|status`.
   - **Agent rule:** never execute heavy indexing commands automatically (`deploy`, `index`, `index:fast`); always ask the user to run them manually.
 - `scripts/process.sh` — build/dev/deploy flow (clears caches/runtime/logs, refreshes deps, warms docs cache, runs tests or delegates deploy).
+- `server.sh` — low-level server management (PM2 or nohup fallback). Used by `manage.sh` only when systemd unit is not available.
 - `scripts/generate-swagger.js` — generates `docs/swagger.json` and `docs/swagger.yaml`.
 ## Sphinx
 - Template: `config/sphinx-unified.conf` (no secrets).
