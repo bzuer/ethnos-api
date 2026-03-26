@@ -578,6 +578,69 @@ cmd_sphinx_status() {
   ss -lnt | awk 'NR==1 || /9306|9312/' || true
 }
 
+cmd_systemd_install() {
+  local template="$ROOT_DIR/scripts/systemd/ethnos-api.service"
+  local target="/etc/systemd/system/$SERVICE_NAME"
+
+  if [ ! -f "$template" ]; then
+    err "Service template not found at $template"
+    exit 1
+  fi
+
+  local run_user run_group node_bin workdir
+  run_user="$(id -un)"
+  run_group="$(id -gn)"
+  node_bin="$(command -v node 2>/dev/null || true)"
+  workdir="$ROOT_DIR"
+
+  if [ -z "$node_bin" ]; then
+    err "Node.js not found in PATH"
+    exit 1
+  fi
+
+  log "Generating systemd unit: $SERVICE_NAME"
+  log "  User=$run_user  Group=$run_group"
+  log "  Node=$node_bin"
+  log "  WorkingDirectory=$workdir"
+
+  local rendered
+  rendered=$(sed \
+    -e "s|__USER__|${run_user}|g" \
+    -e "s|__GROUP__|${run_group}|g" \
+    -e "s|__NODE_BIN__|${node_bin}|g" \
+    -e "s|__WORKDIR__|${workdir}|g" \
+    "$template")
+
+  if [ "$(id -u)" -eq 0 ]; then
+    printf '%s\n' "$rendered" > "$target"
+  elif command -v sudo >/dev/null 2>&1; then
+    printf '%s\n' "$rendered" | sudo tee "$target" >/dev/null
+  else
+    err "Root or sudo required to install systemd unit"
+    exit 1
+  fi
+
+  log "Reloading systemd daemon"
+  systemd_run daemon-reload
+
+  log "Enabling $SERVICE_NAME"
+  systemd_run enable "$SERVICE_NAME"
+
+  log "Starting $SERVICE_NAME"
+  systemd_run restart "$SERVICE_NAME"
+
+  sleep 2
+  if systemctl is-active --quiet "$SERVICE_NAME"; then
+    log "$SERVICE_NAME is active"
+    systemctl status "$SERVICE_NAME" --no-pager
+  else
+    err "$SERVICE_NAME failed to start"
+    systemctl status "$SERVICE_NAME" --no-pager || true
+    journalctl -u "$SERVICE_NAME" --no-pager -n 20
+    exit 1
+  fi
+}
+
 cmd_test_endpoints() {
   log "Executing endpoint regression suite"
   npm run test
@@ -683,6 +746,7 @@ Commands:
   index                  Rebuild Sphinx indexes (requires indexer)
   index:fast             Rebuild only works/persons indexes
   sphinx start|stop|status  Manage searchd lifecycle (use 'sphinx start --force' to kill port holders)
+  systemd:install        Generate, install, enable, and start the systemd service (auto-detects user/node)
   test --endpoints       Run endpoint suite
   test --data            Validate required tables, views, and indexes in the database
 
@@ -715,6 +779,9 @@ main() {
       ;;
     index:fast)
       cmd_index_fast
+      ;;
+    systemd:install)
+      cmd_systemd_install
       ;;
     sphinx)
       # Subcommands for Sphinx lifecycle; pass through extra args to handlers

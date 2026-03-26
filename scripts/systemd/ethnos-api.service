@@ -1,18 +1,22 @@
 [Unit]
 Description=Ethnos API
-After=network.target
+After=network.target mariadb.service
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/api
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__WORKDIR__
 EnvironmentFile=/etc/node-backend.env
-ExecStart=/home/ubuntu/.nvm/versions/node/v24.14.0/bin/node /home/ubuntu/api/src/app.js
+ExecStart=__NODE_BIN__ __WORKDIR__/src/app.js
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ethnos-api
 
 [Install]
 WantedBy=multi-user.target

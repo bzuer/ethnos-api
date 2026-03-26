@@ -71,11 +71,13 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Development: `npm run dev`.
 - Build: `npm run build`.
 - Production: systemd (`ethnos-api.service`) is the primary process manager; `server.sh` is the fallback when the unit is not installed. `manage.sh` auto-detects via `systemd_service_available()` and routes `start/stop/restart` through `systemctl` when possible.
+- Systemd setup: `scripts/manage.sh systemd:install` generates, installs, enables, and starts the service from the template `scripts/systemd/ethnos-api.service` (auto-detects user, group, node binary, and working directory).
 - API runtime port: `1211`. Use `3000` only for test context (`NODE_ENV=test`).
 
 ## Important Scripts
 - `scripts/manage.sh` — deploy, tests, Sphinx, Swagger.
   - Deploy: stop API and Sphinx, clear caches, install deps, generate docs, index Sphinx, start Sphinx, repair broken indexes, run tests, restart API.
+  - `systemd:install`: generates the unit from the template (`scripts/systemd/ethnos-api.service`), installs to `/etc/systemd/system/`, enables, and starts the service. Requires sudo.
   - `NOT SERVING` repair must evaluate only log entries after the latest `ETHNOS_MARKER` emitted by the current run; ignore historical daemon warnings.
   - When `NOT SERVING` is detected, attempt targeted rebuild first; full rebuild only as fallback.
   - Indexing: `scripts/manage.sh index` and `scripts/manage.sh index:fast`.
