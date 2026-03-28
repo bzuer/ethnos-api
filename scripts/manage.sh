@@ -606,6 +606,53 @@ cmd_systemd_install() {
   log "Installed $SERVICE_NAME → $target"
 }
 
+cmd_uninstall() {
+  step "Uninstall"
+  load_env
+
+  step "Stopping API"
+  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  kill_rogue_api_processes
+
+  step "Stopping Sphinx"
+  sphinx_stop_daemon 2>/dev/null || true
+
+  step "Removing systemd service"
+  local user_unit_dir="$HOME/.config/systemd/user"
+  local target="$user_unit_dir/$SERVICE_NAME"
+  if [ -f "$target" ]; then
+    systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
+    rm -f "$target"
+    systemctl --user daemon-reload
+    log "Removed $SERVICE_NAME from $user_unit_dir"
+  else
+    warn "Service file not found: $target"
+  fi
+
+  step "Removing dependencies"
+  if [ -d "$ROOT_DIR/node_modules" ]; then
+    rm -rf "$ROOT_DIR/node_modules"
+    log "Removed node_modules"
+  else
+    warn "node_modules not found"
+  fi
+
+  step "Clearing caches and logs"
+  clear_caches
+  clean_repo_logs
+
+  step "Removing generated documentation"
+  rm -f "$ROOT_DIR/docs/swagger.json" "$ROOT_DIR/docs/swagger.yaml" 2>/dev/null || true
+  log "Removed generated docs"
+
+  step "Removing Sphinx runtime config"
+  rm -f "$SPHINX_CONFIG_RENDERED" 2>/dev/null || true
+  log "Removed $SPHINX_CONFIG_RENDERED"
+
+  echo ""
+  log "Uninstall complete — infrastructure services (MariaDB, Redis) were left untouched"
+}
+
 cmd_test_endpoints() {
   log "Running endpoint test suite"
   npm run test
@@ -678,6 +725,7 @@ Sphinx:
 
 Systemd:
   systemd:install     Generate and install user service (no sudo)
+  uninstall           Stop all processes, remove service, deps, caches, and generated files
 
 Test:
   test --endpoints    Run endpoint test suite
@@ -700,6 +748,7 @@ main() {
     index:fast)       load_env; cmd_index_fast ;;
     sphinx)           cmd_sphinx "$@" ;;
     systemd:install)  cmd_systemd_install ;;
+    uninstall)        cmd_uninstall ;;
     test)
       case "${1:-}" in
         --endpoints)  cmd_test_endpoints ;;
