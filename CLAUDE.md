@@ -70,21 +70,26 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Runtime env: `/etc/node-backend.env` as single source of truth.
 - Development: `npm run dev`.
 - Build: `npm run build`.
-- Production: systemd (`ethnos-api.service`) is the primary process manager; `server.sh` is the fallback when the unit is not installed. `manage.sh` auto-detects via `systemd_service_available()` and routes `start/stop/restart` through `systemctl` when possible.
-- Systemd setup: `scripts/manage.sh systemd:install` generates, installs, enables, and starts the service from the template `scripts/systemd/ethnos-api.service` (auto-detects user, group, node binary, and working directory).
+- Production: systemd user service (`ethnos-api.service`) via `systemctl --user`. `server.sh` is the legacy fallback (PM2/nohup).
+- Systemd setup: `scripts/manage.sh systemd:install` installs the user unit to `~/.config/systemd/user/`. No sudo required.
 - API runtime port: `1211`. Use `3000` only for test context (`NODE_ENV=test`).
 
 ## Important Scripts
-- `scripts/manage.sh` — deploy, tests, Sphinx, Swagger.
-  - Deploy: stop API and Sphinx, clear caches, install deps, generate docs, index Sphinx, start Sphinx, repair broken indexes, run tests, restart API.
-  - `systemd:install`: generates the unit from the template (`scripts/systemd/ethnos-api.service`), installs to `/etc/systemd/system/`, enables, and starts the service. Requires sudo.
-  - `NOT SERVING` repair must evaluate only log entries after the latest `ETHNOS_MARKER` emitted by the current run; ignore historical daemon warnings.
-  - When `NOT SERVING` is detected, attempt targeted rebuild first; full rebuild only as fallback.
-  - Indexing: `scripts/manage.sh index` and `scripts/manage.sh index:fast`.
-  - Sphinx: `scripts/manage.sh sphinx start|stop|status`.
+- `scripts/manage.sh` — unified control script with automatic infrastructure verification.
+  - `restart`: stops API → cleans logs/caches → installs deps → generates docs → verifies and fixes MariaDB, Redis, Sphinx, API → validates all.
+  - `deploy`: full deploy with Sphinx reindex + test suite. Stops all → clean → deps → docs → reindex → repair NOT SERVING → tests → start + validate.
+  - `start`: verifies all infrastructure (MariaDB, Redis, Sphinx, API), starts/fixes anything missing, validates.
+  - `stop`: stops API service and kills rogue processes on port 1211.
+  - `status`: validates all infrastructure and reports (non-destructive).
+  - `systemd:install`: installs user unit to `~/.config/systemd/user/` via `systemctl --user`. No sudo.
+  - `sphinx start|stop|status`: Sphinx lifecycle management.
+  - `index [names...]` / `index:fast`: Sphinx indexing.
+  - `test --endpoints` / `test --data`: test suites.
+  - Infrastructure checks: MariaDB connectivity, Redis PING (auto-start if down), Sphinx searchd (auto-start if down), API systemd service (auto-install if missing, auto-start if stopped), rogue process cleanup on port 1211.
+  - `NOT SERVING` repair: evaluates only entries after the latest `ETHNOS_MARKER`; targeted rebuild first, full rebuild as fallback.
   - **Agent rule:** never execute heavy indexing commands automatically (`deploy`, `index`, `index:fast`); always ask the user to run them manually.
-- `scripts/process.sh` — build/dev/deploy flow (clears caches/runtime/logs, refreshes deps, warms docs cache, runs tests or delegates deploy).
-- `server.sh` — low-level server management (PM2 or nohup fallback). Used by `manage.sh` only when systemd unit is not available.
+- `scripts/process.sh` — CI/CD pipeline orchestrator (build/dev/deploy).
+- `server.sh` — legacy server management (PM2 or nohup fallback).
 - `scripts/generate-swagger.js` — generates `docs/swagger.json` and `docs/swagger.yaml`.
 ## Sphinx
 - Template: `config/sphinx-unified.conf` (no secrets).

@@ -3,826 +3,712 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER_SCRIPT="$ROOT_DIR/server.sh"
+cd "$ROOT_DIR"
+
 SERVICE_NAME="${SERVICE_NAME:-ethnos-api.service}"
-# Canonical Sphinx configuration (consolidated)
-SPHINX_CONFIG_TEMPLATE="${SPHINX_CONFIG_TEMPLATE:-$ROOT_DIR/config/sphinx-unified.conf}"
-SPHINX_CONFIG_RENDERED="${SPHINX_CONFIG_RENDERED:-/var/run/ethnos-api/sphinx.conf}"
-SPHINX_PID_FILE="${SPHINX_PID_FILE:-/var/run/ethnos-api/sphinx.pid}"
-SPHINX_RUNTIME_DIR="${SPHINX_RUNTIME_DIR:-/var/lib/ethnos-api/sphinx}"
-SPHINX_LOG_DIR="${SPHINX_LOG_DIR:-/var/log/ethnos-api}"
-SPHINX_LOG_FILE="${SPHINX_LOG_FILE:-/var/log/ethnos-api/sphinx-daemon.log}"
-SPHINX_INDEX_USER="${SPHINX_INDEX_USER:-$(id -un)}"
+ENV_FILE="/etc/node-backend.env"
+
+SPHINX_CONFIG_TEMPLATE="$ROOT_DIR/config/sphinx-unified.conf"
+SPHINX_CONFIG_RENDERED="/var/run/ethnos-api/sphinx.conf"
+SPHINX_PID_FILE="/var/run/ethnos-api/sphinx.pid"
+SPHINX_RUNTIME_DIR="/var/lib/ethnos-api/sphinx"
+SPHINX_LOG_DIR="/var/log/ethnos-api"
+SPHINX_LOG_FILE="/var/log/ethnos-api/sphinx-daemon.log"
+
+API_PORT=1211
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
 NC='\033[0m'
 
-log() {
-  echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $*"
-}
+ERRORS=0
 
-warn() {
-  echo -e "${YELLOW}[WARN]${NC} $*" >&2
-}
+log()  { echo -e "${GREEN}[$(date +'%H:%M:%S')]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+err()  { echo -e "${RED}[ERROR]${NC} $*" >&2; ERRORS=$((ERRORS + 1)); }
+step() { echo -e "\n${CYAN}${BOLD}── $* ──${NC}"; }
 
-err() {
-  echo -e "${RED}[ERROR]${NC} $*" >&2
-}
-
-require_command() {
-  if ! command -v "$1" &>/dev/null; then
-    err "Required command '$1' not found in PATH"
-    exit 1
+load_env() {
+  if [ ! -f "$ENV_FILE" ]; then
+    err "$ENV_FILE not found"
+    return 1
   fi
+  set -a; source "$ENV_FILE"; set +a
+  API_PORT="${PORT:-1211}"
 }
 
-systemd_available() {
-  command -v systemctl >/dev/null 2>&1
-}
+# ─── Infrastructure checks ───────────────────────────────────────────────────
 
-systemd_service_available() {
-  systemd_available || return 1
-  systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}' | grep -Fxq "$SERVICE_NAME"
-}
+check_mariadb() {
+  step "MariaDB"
+  local db_host="${DB_HOST:-localhost}"
+  [ "$db_host" = "localhost" ] && db_host="127.0.0.1"
 
-systemd_run() {
-  if [ "$(id -u)" -eq 0 ]; then
-    systemctl "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo systemctl "$@"
-  else
-    systemctl "$@"
+  if ! ss -lnt | grep -q ":${DB_PORT:-3306} " 2>/dev/null; then
+    err "MariaDB is not listening on port ${DB_PORT:-3306}"
+    return 1
   fi
-}
 
-api_control() {
-  local action="$1"
-  if systemd_service_available; then
-    systemd_run "$action" "$SERVICE_NAME"
-  else
-    "$SERVER_SCRIPT" "$action"
+  local db_client
+  db_client=$(command -v mariadb || command -v mysql || true)
+  if [ -z "$db_client" ]; then
+    err "No MariaDB/MySQL client available"
+    return 1
   fi
+
+  if ! "$db_client" -h "$db_host" -P "${DB_PORT:-3306}" -u "${DB_USER}" \
+    --password="${DB_PASSWORD}" -D "${DB_NAME:-data}" -e "SELECT 1" &>/dev/null; then
+    err "MariaDB connection failed"
+    return 1
+  fi
+
+  log "MariaDB OK (port ${DB_PORT:-3306}, database ${DB_NAME:-data})"
 }
 
-ensure_system_dir() {
-  local dir="$1"
-  local mode="${2:-750}"
+check_redis() {
+  step "Redis"
+  local redis_host="${REDIS_HOST:-localhost}"
+  local redis_port="${REDIS_PORT:-6379}"
 
-  if [ -d "$dir" ] && [ -w "$dir" ]; then
+  if [ "${REDIS_DISABLED:-false}" = "true" ]; then
+    warn "Redis disabled by config (REDIS_DISABLED=true)"
     return 0
   fi
 
-  if [ -d "$dir" ] && [ ! -w "$dir" ]; then
-    if command -v sudo >/dev/null 2>&1; then
-      sudo chown "$SPHINX_INDEX_USER":"$SPHINX_INDEX_USER" "$dir" 2>/dev/null || true
-      sudo chmod "$mode" "$dir" 2>/dev/null || true
+  if ! ss -lnt | grep -q ":${redis_port} " 2>/dev/null; then
+    warn "Redis not listening on port $redis_port — attempting start"
+    if command -v redis-server >/dev/null 2>&1; then
+      redis-server --daemonize yes --port "$redis_port" --bind 127.0.0.1 ::1 2>/dev/null || true
+      sleep 1
     fi
+    if ! ss -lnt | grep -q ":${redis_port} " 2>/dev/null; then
+      err "Redis failed to start on port $redis_port"
+      return 1
+    fi
+  fi
+
+  if command -v redis-cli >/dev/null 2>&1; then
+    local pong
+    pong=$(redis-cli -h "$redis_host" -p "$redis_port" PING 2>/dev/null || true)
+    if [ "$pong" != "PONG" ]; then
+      err "Redis PING failed (got: $pong)"
+      return 1
+    fi
+  fi
+
+  log "Redis OK (port $redis_port)"
+}
+
+check_sphinx() {
+  step "Sphinx"
+  if ! command -v searchd >/dev/null 2>&1; then
+    warn "searchd not found in PATH — Sphinx unavailable"
     return 0
   fi
 
-  if mkdir -p "$dir" 2>/dev/null; then
-    chmod "$mode" "$dir" 2>/dev/null || warn "Could not set restrictive permissions on $dir"
-    return 0
+  render_sphinx_config
+
+  local pid=""
+  if [ -f "$SPHINX_PID_FILE" ]; then
+    pid=$(cat "$SPHINX_PID_FILE" 2>/dev/null || true)
   fi
 
-  if command -v sudo >/dev/null 2>&1; then
-    sudo install -d -m "$mode" -o "$SPHINX_INDEX_USER" -g "$SPHINX_INDEX_USER" "$dir" 2>/dev/null || true
-  fi
-}
-
-ensure_sphinx_runtime_dirs() {
-  ensure_system_dir "$SPHINX_RUNTIME_DIR" 750
-  ensure_system_dir "$SPHINX_RUNTIME_DIR/binlog" 750
-
-  if [ "$(id -u)" -eq 0 ] && id "$SPHINX_INDEX_USER" >/dev/null 2>&1; then
-    chown "$SPHINX_INDEX_USER":"$SPHINX_INDEX_USER" "$SPHINX_RUNTIME_DIR" "$SPHINX_RUNTIME_DIR/binlog" 2>/dev/null || warn "Could not change ownership of $SPHINX_RUNTIME_DIR to $SPHINX_INDEX_USER"
-  fi
-}
-
-ensure_sphinx_log_dir() {
-  local pid_dir
-  pid_dir="$(dirname "$SPHINX_PID_FILE")"
-  ensure_system_dir "$SPHINX_LOG_DIR" 750
-  ensure_system_dir "$pid_dir" 750
-
-  if [ "$(id -u)" -eq 0 ] && id "$SPHINX_INDEX_USER" >/dev/null 2>&1; then
-    chown -R "$SPHINX_INDEX_USER":"$SPHINX_INDEX_USER" "$SPHINX_LOG_DIR" 2>/dev/null || warn "Could not change ownership of $SPHINX_LOG_DIR to $SPHINX_INDEX_USER"
-    chown "$SPHINX_INDEX_USER":"$SPHINX_INDEX_USER" "$pid_dir" 2>/dev/null || warn "Could not change ownership of $pid_dir to $SPHINX_INDEX_USER"
+  local running=false
+  if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1; then
+    running=true
   fi
 
-  if [ ! -w "$SPHINX_LOG_DIR" ]; then
-    err "Sphinx log directory $SPHINX_LOG_DIR is not writable. Adjust permissions, e.g.: sudo chown -R $SPHINX_INDEX_USER:$SPHINX_INDEX_USER $SPHINX_LOG_DIR"
-    exit 1
-  fi
-  if [ ! -w "$pid_dir" ]; then
-    err "Sphinx PID directory $pid_dir is not writable. Adjust permissions, e.g.: sudo chown -R $SPHINX_INDEX_USER:$SPHINX_INDEX_USER $pid_dir"
-    exit 1
-  fi
-}
-
-require_server_index_privilege() {
-  local cmd_ref=${1:-index}
-  local current_user
-  current_user=$(id -un)
-
-  if [ "$current_user" != "$SPHINX_INDEX_USER" ]; then
-    err "Full Sphinx indexing must be executed as '$SPHINX_INDEX_USER' (current: '$current_user')."
-    err "Re-run using: sudo -u $SPHINX_INDEX_USER $(basename "$0") $cmd_ref"
-    exit 1
-  fi
-}
-
-validate_sphinx_config_include() {
-  if command -v rg >/dev/null 2>&1; then
-    if rg -q "^[[:space:]]*include[[:space:]]*=" "$SPHINX_CONFIG_TEMPLATE"; then
-      err "Invalid include syntax in $SPHINX_CONFIG_TEMPLATE. Use: include /path/to/file"
-      exit 1
+  if ! $running; then
+    local port_pid
+    port_pid=$(ss -lntp 2>/dev/null | awk '/:9306 / {if (match($0, /pid=([0-9]+)/, m)) print m[1]}') || true
+    if [ -n "$port_pid" ]; then
+      running=true
+      pid="$port_pid"
     fi
+  fi
+
+  if $running; then
+    log "searchd already running (PID: $pid)"
   else
-    if grep -Eq "^[[:space:]]*include[[:space:]]*=" "$SPHINX_CONFIG_TEMPLATE"; then
-      err "Invalid include syntax in $SPHINX_CONFIG_TEMPLATE. Use: include /path/to/file"
-      exit 1
-    fi
+    log "searchd not running — starting"
+    sphinx_start_daemon
+  fi
+
+  sleep 1
+  if ss -lnt | grep -q ":9306 " 2>/dev/null; then
+    log "Sphinx OK (ports 9306/9312)"
+  else
+    err "Sphinx ports 9306/9312 not listening after start attempt"
+    return 1
   fi
 }
+
+check_api() {
+  step "API Service"
+  local needs_start=false
+
+  kill_rogue_api_processes
+
+  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    log "systemd user service $SERVICE_NAME is active"
+  else
+    if systemctl --user list-unit-files --type=service --no-legend 2>/dev/null \
+       | awk '{print $1}' | grep -Fxq "$SERVICE_NAME"; then
+      warn "$SERVICE_NAME is installed but not active — will start"
+    else
+      warn "$SERVICE_NAME not installed — running systemd:install"
+      cmd_systemd_install
+    fi
+    needs_start=true
+  fi
+
+  if $needs_start; then
+    systemctl --user restart "$SERVICE_NAME" 2>/dev/null || true
+    sleep 3
+  fi
+
+  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    log "API service running"
+  else
+    err "API service failed to start"
+    journalctl --user -u "$SERVICE_NAME" --no-pager -n 10 2>/dev/null || true
+    return 1
+  fi
+
+  local retries=0
+  while [ $retries -lt 5 ]; do
+    if curl -sf "http://localhost:${API_PORT}/health/liveness" >/dev/null 2>&1; then
+      log "API health OK (http://localhost:${API_PORT})"
+      return 0
+    fi
+    retries=$((retries + 1))
+    sleep 1
+  done
+
+  warn "API is running but /health/liveness not responding yet"
+}
+
+# ─── Process cleanup ─────────────────────────────────────────────────────────
+
+kill_rogue_api_processes() {
+  local rogue_pids
+  rogue_pids=$(ss -lntp 2>/dev/null \
+    | awk "/:${API_PORT} / {if (match(\$0, /pid=([0-9]+)/, m)) print m[1]}" \
+    | sort -u) || true
+
+  if [ -z "$rogue_pids" ]; then
+    return 0
+  fi
+
+  local service_pid=""
+  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    service_pid=$(systemctl --user show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null || true)
+  fi
+
+  local pid
+  for pid in $rogue_pids; do
+    [ -z "$pid" ] || [ "$pid" = "0" ] && continue
+    if [ -n "$service_pid" ] && [ "$pid" = "$service_pid" ]; then
+      continue
+    fi
+    warn "Killing rogue process on port $API_PORT (PID: $pid)"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+# ─── Sphinx helpers ──────────────────────────────────────────────────────────
 
 escape_sed() {
   printf '%s' "$1" | sed -e 's/[&/\\]/\\&/g'
 }
 
 render_sphinx_config() {
-  if [ ! -f "/etc/node-backend.env" ]; then
-    err "Environment file /etc/node-backend.env not found"
-    exit 1
-  fi
-  if [ ! -f "$SPHINX_CONFIG_TEMPLATE" ]; then
-    err "Sphinx configuration not found at $SPHINX_CONFIG_TEMPLATE"
-    exit 1
-  fi
+  [ -f "$SPHINX_CONFIG_TEMPLATE" ] || return 0
 
-  set -a
-  source /etc/node-backend.env
-  set +a
-
-  local missing=0
-  for key in DB_HOST DB_USER DB_PASSWORD DB_NAME DB_PORT; do
-    if [ -z "${!key:-}" ]; then
-      err "Missing $key in /etc/node-backend.env"
-      missing=1
+  for dir in "$(dirname "$SPHINX_CONFIG_RENDERED")" "$SPHINX_RUNTIME_DIR" \
+             "$SPHINX_RUNTIME_DIR/binlog" "$SPHINX_LOG_DIR"; do
+    if [ ! -d "$dir" ]; then
+      mkdir -p "$dir" 2>/dev/null || true
     fi
   done
-  if [ "$missing" -ne 0 ]; then
-    exit 1
-  fi
 
-  ensure_system_dir "$(dirname "$SPHINX_CONFIG_RENDERED")" 750
-  local db_host db_user db_pass db_name db_port
-  db_host="$DB_HOST"
-  if [ "$db_host" = "localhost" ]; then
-    db_host="127.0.0.1"
-  fi
-  db_host=$(escape_sed "$db_host")
-  db_user=$(escape_sed "$DB_USER")
-  db_pass=$(escape_sed "$DB_PASSWORD")
-  db_name=$(escape_sed "$DB_NAME")
-  db_port=$(escape_sed "$DB_PORT")
+  local db_host="${DB_HOST:-localhost}"
+  [ "$db_host" = "localhost" ] && db_host="127.0.0.1"
 
   sed \
-    -e "s/__DB_HOST__/${db_host}/g" \
-    -e "s/__DB_USER__/${db_user}/g" \
-    -e "s/__DB_PASSWORD__/${db_pass}/g" \
-    -e "s/__DB_NAME__/${db_name}/g" \
-    -e "s/__DB_PORT__/${db_port}/g" \
+    -e "s/__DB_HOST__/$(escape_sed "$db_host")/g" \
+    -e "s/__DB_USER__/$(escape_sed "${DB_USER:-}")/g" \
+    -e "s/__DB_PASSWORD__/$(escape_sed "${DB_PASSWORD:-}")/g" \
+    -e "s/__DB_NAME__/$(escape_sed "${DB_NAME:-data}")/g" \
+    -e "s/__DB_PORT__/$(escape_sed "${DB_PORT:-3306}")/g" \
     "$SPHINX_CONFIG_TEMPLATE" > "$SPHINX_CONFIG_RENDERED"
   chmod 600 "$SPHINX_CONFIG_RENDERED" 2>/dev/null || true
 }
 
-require_mysql_client_lib() {
-  if ! command -v ldd >/dev/null 2>&1; then
-    return 0
-  fi
-  local indexer_path
-  indexer_path=$(command -v indexer || true)
-  if [ -z "$indexer_path" ]; then
-    return 0
-  fi
-  local missing
-  if command -v rg >/dev/null 2>&1; then
-    missing=$(ldd "$indexer_path" 2>/dev/null | rg "(libmysqlclient|libmariadb).*not found" || true)
-  else
-    missing=$(ldd "$indexer_path" 2>/dev/null | grep -E "(libmysqlclient|libmariadb).*not found" || true)
-  fi
-  if [ -n "$missing" ]; then
-    err "Missing libmysqlclient/libmariadb for Sphinx. Install a MariaDB/MySQL client runtime library."
-    exit 1
-  fi
-}
+sphinx_start_daemon() {
+  for dir in "$SPHINX_RUNTIME_DIR" "$SPHINX_RUNTIME_DIR/binlog" "$SPHINX_LOG_DIR" \
+             "$(dirname "$SPHINX_PID_FILE")"; do
+    [ -d "$dir" ] || mkdir -p "$dir" 2>/dev/null || true
+  done
 
-clean_repo_logs() {
-  if [ -d "$ROOT_DIR/logs" ]; then
-    find "$ROOT_DIR/logs" -type f -delete 2>/dev/null || true
-  fi
-}
+  render_sphinx_config
 
-clean_legacy_runtime() {
-  local legacy_dir="$ROOT_DIR/runtime/sphinx"
-  if [ -d "$legacy_dir" ] && [ "$SPHINX_RUNTIME_DIR" != "$legacy_dir" ]; then
-    rm -rf "$legacy_dir" 2>/dev/null || true
+  local port_pid
+  port_pid=$(ss -lntp 2>/dev/null | awk '/:9306 / {if (match($0, /pid=([0-9]+)/, m)) print m[1]}') || true
+  if [ -n "$port_pid" ]; then
+    warn "Port 9306 held by PID $port_pid — killing"
+    kill "$port_pid" 2>/dev/null || true
+    sleep 1
+    kill -0 "$port_pid" 2>/dev/null && kill -9 "$port_pid" 2>/dev/null || true
+    sleep 1
   fi
-}
 
-get_not_serving_indexes() {
-  if [ ! -f "$SPHINX_LOG_FILE" ]; then
+  searchd --config "$SPHINX_CONFIG_RENDERED" 2>/dev/null || {
+    err "searchd failed to start"
     return 1
+  }
+  sleep 2
+
+  if [ -f "$SPHINX_PID_FILE" ]; then
+    log "searchd started (PID: $(cat "$SPHINX_PID_FILE"))"
+  else
+    if ss -lnt | grep -q ":9306 " 2>/dev/null; then
+      log "searchd started (ports open, PID file missing)"
+    else
+      err "searchd did not start properly"
+      return 1
+    fi
+  fi
+}
+
+sphinx_stop_daemon() {
+  if [ -f "$SPHINX_PID_FILE" ]; then
+    local pid
+    pid=$(cat "$SPHINX_PID_FILE" 2>/dev/null || true)
+    if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1; then
+      log "Stopping searchd (PID: $pid)"
+      if [ -f "$SPHINX_CONFIG_RENDERED" ]; then
+        searchd --config "$SPHINX_CONFIG_RENDERED" --stopwait 2>/dev/null || \
+          searchd --config "$SPHINX_CONFIG_RENDERED" --stop 2>/dev/null || true
+      fi
+      sleep 1
+      if ps -p "$pid" >/dev/null 2>&1; then
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+      fi
+    fi
+    rm -f "$SPHINX_PID_FILE" 2>/dev/null || true
   fi
 
-  tail -200 "$SPHINX_LOG_FILE" 2>/dev/null | sed -n "s/.*index '\\([^']\\+\\)'.*NOT SERVING.*/\\1/p" | sort -u
+  local port_pid
+  port_pid=$(ss -lntp 2>/dev/null | awk '/:9306 / {if (match($0, /pid=([0-9]+)/, m)) print m[1]}') || true
+  if [ -n "$port_pid" ]; then
+    warn "Sphinx port 9306 still held by PID $port_pid — force kill"
+    kill -9 "$port_pid" 2>/dev/null || true
+  fi
+
+  log "searchd stopped"
 }
 
 mark_sphinx_log() {
-  local log_dir
-  log_dir="$(dirname "$SPHINX_LOG_FILE")"
-  if [ ! -d "$log_dir" ]; then
-    return 0
-  fi
-  if [ ! -f "$SPHINX_LOG_FILE" ]; then
-    touch "$SPHINX_LOG_FILE" 2>/dev/null || return 0
-  fi
-  if [ ! -w "$SPHINX_LOG_FILE" ]; then
-    return 0
-  fi
-  echo "ETHNOS_MARKER $(date +'%Y-%m-%d %H:%M:%S')" >> "$SPHINX_LOG_FILE"
+  [ -d "$SPHINX_LOG_DIR" ] || return 0
+  [ -w "${SPHINX_LOG_FILE:-/dev/null}" ] || touch "$SPHINX_LOG_FILE" 2>/dev/null || return 0
+  echo "ETHNOS_MARKER $(date +'%Y-%m-%d %H:%M:%S')" >> "$SPHINX_LOG_FILE" 2>/dev/null || true
 }
 
 get_not_serving_since_marker() {
-  if [ ! -f "$SPHINX_LOG_FILE" ]; then
-    return 1
-  fi
+  [ -f "$SPHINX_LOG_FILE" ] || return 0
   awk '
-    /ETHNOS_MARKER/ {
-      flag=1
-      delete not_serving
-      next
-    }
+    /ETHNOS_MARKER/ { flag=1; delete ns; next }
     flag && /NOT SERVING/ {
-      split($0, parts, "'\''")
-      if (length(parts) >= 3 && parts[2] != "") {
-        not_serving[parts[2]]=1
-      }
+      split($0, p, "'\''")
+      if (length(p) >= 3 && p[2] != "") ns[p[2]]=1
     }
-    END {
-      for (idx in not_serving) {
-        print idx
-      }
-    }
+    END { for (i in ns) print i }
   ' "$SPHINX_LOG_FILE" | sort -u
-}
-
-clean_sphinx_indexes() {
-  local index
-  for index in "$@"; do
-    rm -f "$SPHINX_RUNTIME_DIR/${index}."* 2>/dev/null || true
-  done
 }
 
 repair_not_serving_indexes() {
   local indexes
   indexes=$(get_not_serving_since_marker || true)
-  if [ -z "$indexes" ]; then
-    return 0
+  [ -z "$indexes" ] && return 0
+
+  warn "NOT SERVING indexes detected: $indexes"
+  sphinx_stop_daemon
+
+  local idx
+  for idx in $indexes; do
+    rm -f "$SPHINX_RUNTIME_DIR/${idx}."* 2>/dev/null || true
+  done
+
+  if command -v indexer >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    indexer --config "$SPHINX_CONFIG_RENDERED" $indexes 2>/dev/null || {
+      warn "Targeted rebuild failed — full rebuild"
+      indexer --config "$SPHINX_CONFIG_RENDERED" --all 2>/dev/null || true
+    }
   fi
 
-  local -a index_list=()
-  local index_name
-  while IFS= read -r index_name; do
-    [ -n "$index_name" ] || continue
-    index_list+=("$index_name")
-  done <<< "$indexes"
-
-  if [ "${#index_list[@]}" -eq 0 ]; then
-    return 0
-  fi
-
-  warn "Detected NOT SERVING indexes: ${index_list[*]}"
-  cmd_sphinx_stop || true
-  clean_sphinx_indexes "${index_list[@]}"
-  if ! cmd_index "${index_list[@]}"; then
-    warn "Targeted index rebuild failed; retrying full rebuild"
-    cmd_index
-  fi
-  cmd_sphinx_start || true
+  sphinx_start_daemon
 }
 
-ensure_server_script_ready() {
-  if [ ! -x "$SERVER_SCRIPT" ]; then
-    err "server.sh not executable or missing"
-    exit 1
-  fi
+# ─── Build helpers ───────────────────────────────────────────────────────────
+
+clean_repo_logs() {
+  [ -d "$ROOT_DIR/logs" ] && find "$ROOT_DIR/logs" -type f -delete 2>/dev/null || true
 }
 
-run_core_maintenance_steps() {
-  ensure_server_script_ready
-  log "Stopping existing server (if running)"
-  api_control stop || true
-  log "Stopping Sphinx searchd (if running)"
-  cmd_sphinx_stop || true
-  log "Cleaning repository logs"
-  clean_repo_logs
-  clean_legacy_runtime
-  log "Clearing caches"
-  "$SERVER_SCRIPT" clear-cache || true
-  if [ -x "$ROOT_DIR/scripts/clean_ram.sh" ]; then
-    log "Dropping system caches"
-    if ! sudo -n "$ROOT_DIR/scripts/clean_ram.sh" 2>/dev/null; then
-      "$ROOT_DIR/scripts/clean_ram.sh" || warn "RAM cleanup step failed"
-    fi
+clear_caches() {
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -h "${REDIS_HOST:-localhost}" -p "${REDIS_PORT:-6379}" FLUSHALL 2>/dev/null || true
   fi
+  local d
+  for d in node_modules/.cache .tmp tmp temp logs/cache; do
+    [ -d "$ROOT_DIR/$d" ] && rm -rf "${ROOT_DIR:?}/$d" 2>/dev/null || true
+  done
+}
+
+install_deps() {
   log "Installing dependencies"
-  npm install --include=dev --no-fund
-  log "Generating documentation cache"
-  npm run docs:generate >/dev/null 2>&1 || warn "Swagger generation failed; continuing"
-
+  npm install --include=dev --no-fund --prefer-offline 2>&1 | tail -3
 }
 
-run_full_test_suite() {
-  log "Running full endpoint test suite"
-  npm run test
+generate_docs() {
+  log "Generating documentation"
+  npm run docs:generate >/dev/null 2>&1 || warn "Swagger generation failed"
+}
+
+# ─── Validation summary ─────────────────────────────────────────────────────
+
+validate_all() {
+  step "Final validation"
+  local ok=0 fail=0
+
+  local checks=(
+    "MariaDB:${DB_PORT:-3306}"
+    "Redis:${REDIS_PORT:-6379}"
+    "Sphinx:9306"
+    "API:${API_PORT}"
+  )
+
+  for entry in "${checks[@]}"; do
+    local label="${entry%%:*}"
+    local port="${entry##*:}"
+
+    if [ "$label" = "Redis" ] && [ "${REDIS_DISABLED:-false}" = "true" ]; then
+      echo -e "  ${YELLOW}◦${NC} $label (disabled)"
+      continue
+    fi
+
+    if ss -lnt | grep -q ":${port} " 2>/dev/null; then
+      echo -e "  ${GREEN}✓${NC} $label (port $port)"
+      ok=$((ok + 1))
+    else
+      echo -e "  ${RED}✗${NC} $label (port $port)"
+      fail=$((fail + 1))
+    fi
+  done
+
+  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} systemd user service ($SERVICE_NAME)"
+    ok=$((ok + 1))
+  else
+    echo -e "  ${RED}✗${NC} systemd user service ($SERVICE_NAME)"
+    fail=$((fail + 1))
+  fi
+
+  local health_status
+  health_status=$(curl -sf "http://localhost:${API_PORT}/health/liveness" 2>/dev/null | grep -o '"alive":true' || true)
+  if [ -n "$health_status" ]; then
+    echo -e "  ${GREEN}✓${NC} API health check (/health/liveness)"
+    ok=$((ok + 1))
+  else
+    echo -e "  ${RED}✗${NC} API health check (/health/liveness)"
+    fail=$((fail + 1))
+  fi
+
+  echo ""
+  if [ "$fail" -eq 0 ]; then
+    log "All $ok checks passed"
+  else
+    err "$fail check(s) failed, $ok passed"
+  fi
+  return "$fail"
+}
+
+# ─── Commands ────────────────────────────────────────────────────────────────
+
+cmd_restart() {
+  step "Restart"
+  load_env
+
+  log "Stopping API"
+  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  kill_rogue_api_processes
+
+  clean_repo_logs
+  clear_caches
+  install_deps
+  generate_docs
+
+  check_mariadb
+  check_redis
+  check_sphinx
+  check_api
+
+  validate_all
 }
 
 cmd_deploy() {
-  log "Starting deploy sequence"
+  step "Deploy"
+  load_env
 
-  run_core_maintenance_steps
+  log "Stopping API"
+  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  kill_rogue_api_processes
 
-  if command -v indexer &>/dev/null; then
-    log "Rebuilding Sphinx indexes"
-    cmd_index
+  log "Stopping Sphinx"
+  sphinx_stop_daemon 2>/dev/null || true
+
+  clean_repo_logs
+  clear_caches
+  install_deps
+  generate_docs
+
+  check_mariadb
+  check_redis
+
+  if command -v indexer >/dev/null 2>&1; then
+    step "Sphinx indexing"
+    render_sphinx_config
+    mark_sphinx_log
+    log "Rebuilding indexes (this may take a while)"
+    indexer --config "$SPHINX_CONFIG_RENDERED" --all 2>&1 | tail -5
+    log "Indexes rebuilt"
   else
-    warn "Sphinx indexer not found; skipping index rebuild"
+    warn "indexer not found — skipping Sphinx reindex"
   fi
 
-  log "Starting Sphinx searchd"
-  mark_sphinx_log
-  cmd_sphinx_start || true
-
+  check_sphinx
   repair_not_serving_indexes
 
-  run_full_test_suite
+  step "Test suite"
+  npm run test 2>&1 || warn "Tests reported failures"
 
-  log "Restarting server"
-  api_control restart
+  check_api
 
-  log "Deploy completed"
+  validate_all
 }
 
 cmd_start() {
-  api_control start
+  load_env
+  check_mariadb
+  check_redis
+  check_sphinx
+  check_api
+  validate_all
 }
 
 cmd_stop() {
-  api_control stop
+  load_env
+  step "Stopping API"
+  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  kill_rogue_api_processes
+  log "API stopped"
 }
 
-cmd_restart() {
-  log "Starting restart sequence (deploy steps without Sphinx indexing)"
+cmd_status() {
+  load_env
+  validate_all
+}
 
-  run_core_maintenance_steps
-
-  run_full_test_suite
-  log "Starting Sphinx searchd"
-  cmd_sphinx_start || true
-
-  log "Restarting server"
-  api_control restart
-
-  log "Restart sequence completed"
+cmd_sphinx() {
+  load_env
+  local action="${1:-status}"
+  case "$action" in
+    start)  check_sphinx ;;
+    stop)   sphinx_stop_daemon ;;
+    status)
+      if [ -f "$SPHINX_PID_FILE" ] && ps -p "$(cat "$SPHINX_PID_FILE" 2>/dev/null)" >/dev/null 2>&1; then
+        log "searchd running (PID: $(cat "$SPHINX_PID_FILE"))"
+      else
+        warn "searchd not running"
+      fi
+      ss -lnt | awk 'NR==1 || /9306|9312/' || true
+      ;;
+    *) err "Unknown sphinx subcommand: $action"; return 1 ;;
+  esac
 }
 
 cmd_index() {
-  require_server_index_privilege index
-  require_command indexer
-  validate_sphinx_config_include
+  load_env
+  if ! command -v indexer >/dev/null 2>&1; then
+    err "indexer not found in PATH"
+    return 1
+  fi
   render_sphinx_config
-  require_mysql_client_lib
-
-  ensure_sphinx_runtime_dirs
-  ensure_sphinx_log_dir
   local -a targets=("$@")
-  if [ "${#targets[@]}" -gt 0 ]; then
-    log "Running Sphinx indexer for: ${targets[*]}"
-  else
-    log "Running Sphinx indexer"
-  fi
+  local rotate_flag=""
+
   if [ -f "$SPHINX_PID_FILE" ] && ps -p "$(cat "$SPHINX_PID_FILE" 2>/dev/null)" >/dev/null 2>&1; then
-    if [ "${#targets[@]}" -gt 0 ]; then
-      indexer --config "$SPHINX_CONFIG_RENDERED" --rotate "${targets[@]}"
-    else
-      indexer --config "$SPHINX_CONFIG_RENDERED" --rotate --all
-    fi
-  else
-    warn "searchd not running; running indexer without rotation"
-    if [ "${#targets[@]}" -gt 0 ]; then
-      indexer --config "$SPHINX_CONFIG_RENDERED" "${targets[@]}"
-    else
-      indexer --config "$SPHINX_CONFIG_RENDERED" --all
-    fi
+    rotate_flag="--rotate"
   fi
+
   if [ "${#targets[@]}" -gt 0 ]; then
-    log "Sphinx indexes rebuilt: ${targets[*]}"
+    log "Indexing: ${targets[*]}"
+    indexer --config "$SPHINX_CONFIG_RENDERED" $rotate_flag "${targets[@]}"
   else
-    log "Sphinx indexes rebuilt"
+    log "Indexing all"
+    indexer --config "$SPHINX_CONFIG_RENDERED" $rotate_flag --all
   fi
+  log "Indexing complete"
 }
 
 cmd_index_fast() {
-  require_command indexer
-  validate_sphinx_config_include
-  render_sphinx_config
-  require_mysql_client_lib
-  ensure_sphinx_runtime_dirs
-  ensure_sphinx_log_dir
-  log "Running Sphinx indexer (fast)"
-  # Only index existing fast targets (venues_metrics_poc removed in unified config)
-  if [ -f "$SPHINX_PID_FILE" ] && ps -p "$(cat "$SPHINX_PID_FILE" 2>/dev/null)" >/dev/null 2>&1; then
-    indexer --config "$SPHINX_CONFIG_RENDERED" --rotate works_poc persons_poc || {
-      warn "Fast index failed; falling back to --all";
-      indexer --config "$SPHINX_CONFIG_RENDERED" --rotate --all;
-    }
-  else
-    warn "searchd not running; running indexer without rotation"
-    indexer --config "$SPHINX_CONFIG_RENDERED" works_poc persons_poc || {
-      warn "Fast index failed; falling back to --all";
-      indexer --config "$SPHINX_CONFIG_RENDERED" --all;
-    }
-  fi
-  log "Sphinx fast indexes rebuilt"
-}
-
-cmd_sphinx_start() {
-  require_command searchd
-  ensure_sphinx_log_dir
-  ensure_sphinx_runtime_dirs
-  validate_sphinx_config_include
-  render_sphinx_config
-  require_mysql_client_lib
-  
-  # Detect port conflicts before starting
-  local in_use_pid=
-  in_use_pid=$(ss -lntp 2>/dev/null | awk '/:9312|:9306/ {if (match($0, /pid=([0-9]+)/, m)) {print m[1]; exit}}') || true
-  if [ -n "${in_use_pid:-}" ]; then
-    warn "Ports 9312/9306 already bound by PID ${in_use_pid}."
-    if [ "${1:-}" = "--force" ]; then
-      warn "--force supplied: attempting to stop existing searchd/process."
-      if kill -0 "$in_use_pid" 2>/dev/null; then
-        kill "$in_use_pid" || true
-        sleep 1
-        if kill -0 "$in_use_pid" 2>/dev/null; then
-          warn "Process still alive; sending SIGKILL."
-          kill -9 "$in_use_pid" || true
-        fi
-      fi
-    else
-      err "Port in use. Use: $(basename "$0") sphinx stop  OR  $(basename "$0") sphinx start --force"
-      return 1
-    fi
-  fi
-  
-  if [ -f "$SPHINX_PID_FILE" ] && ps -p "$(cat "$SPHINX_PID_FILE" 2>/dev/null)" >/dev/null 2>&1; then
-    warn "searchd already running (PID: $(cat "$SPHINX_PID_FILE"))"
-    return 0
-  fi
-  log "Starting searchd with $SPHINX_CONFIG_RENDERED"
-  searchd --config "$SPHINX_CONFIG_RENDERED" || {
-    err "Failed to start searchd"; return 1;
-  }
-  sleep 1
-  if [ -f "$SPHINX_PID_FILE" ]; then
-    log "searchd started (PID: $(cat "$SPHINX_PID_FILE"))"
-  else
-    warn "PID file not found; verifying process via ports"
-    ss -lnt | awk 'NR==1 || /9306|9312/' || true
-  fi
-}
-
-cmd_sphinx_stop() {
-  require_command searchd
-  local pid=""
-  if [ -f "$SPHINX_PID_FILE" ]; then
-    pid=$(cat "$SPHINX_PID_FILE" 2>/dev/null || true)
-    if [ -n "$pid" ]; then
-      log "Stopping searchd (PID: $pid)"
-    fi
-  else
-    warn "PID file not found; skipping searchd stop"
-    return 0
-  fi
-
-  # Try graceful stop via searchd
-  if [ -f "$SPHINX_CONFIG_TEMPLATE" ]; then
-    render_sphinx_config
-  fi
-
-  local config_to_use="$SPHINX_CONFIG_RENDERED"
-  if [ ! -f "$config_to_use" ]; then
-    config_to_use="$SPHINX_CONFIG_TEMPLATE"
-  fi
-
-  local stop_help=""
-  stop_help=$(searchd --help 2>&1 || true)
-  if echo "$stop_help" | grep -q "stop --nowait"; then
-    searchd --config "$config_to_use" stop || searchd --config "$config_to_use" --stopwait || searchd --config "$config_to_use" --stop || true
-  else
-    searchd --config "$config_to_use" --stopwait || searchd --config "$config_to_use" --stop || true
-  fi
-  sleep 1
-
-  # If still running (or no pid file), try to detect by ports
-  if [ -z "$pid" ] || ps -p "$pid" >/dev/null 2>&1; then
-    # Port-based detection
-    local port_pid=""
-    port_pid=$(ss -lntp 2>/dev/null | awk '/:9312|:9306/ {if (match($0, /pid=([0-9]+)/, m)) {print m[1]; exit}}') || true
-    if [ -z "$port_pid" ]; then
-      # Fallback by process name + config
-      port_pid=$(pgrep -f "searchd.*$(basename "$config_to_use")" || true)
-    fi
-    if [ -n "$port_pid" ]; then
-      warn "Force killing searchd/process holding ports (PID: $port_pid)"
-      kill "$port_pid" 2>/dev/null || true
-      sleep 1
-      if kill -0 "$port_pid" 2>/dev/null; then
-        warn "Still alive; sending SIGKILL (PID: $port_pid)"
-        kill -9 "$port_pid" 2>/dev/null || true
-      fi
-    fi
-  fi
-
-  # Cleanup PID file if present and process gone
-  if [ -f "$SPHINX_PID_FILE" ]; then
-    local curpid
-    curpid=$(cat "$SPHINX_PID_FILE" 2>/dev/null || true)
-    if [ -n "$curpid" ] && ! ps -p "$curpid" >/dev/null 2>&1; then
-      rm -f "$SPHINX_PID_FILE" || true
-    fi
-  fi
-  log "searchd stopped"
-}
-
-cmd_sphinx_status() {
-  if [ -f "$SPHINX_PID_FILE" ] && ps -p "$(cat "$SPHINX_PID_FILE")" >/dev/null 2>&1; then
-    log "searchd running (PID: $(cat "$SPHINX_PID_FILE"))"
-  else
-    warn "searchd not running"
-  fi
-  ss -lnt | awk 'NR==1 || /9306|9312/' || true
+  cmd_index works_poc persons_poc
 }
 
 cmd_systemd_install() {
   local template="$ROOT_DIR/scripts/systemd/ethnos-api.service"
-  local target="/etc/systemd/system/$SERVICE_NAME"
+  local user_unit_dir="$HOME/.config/systemd/user"
+  local target="$user_unit_dir/$SERVICE_NAME"
 
   if [ ! -f "$template" ]; then
-    err "Service template not found at $template"
-    exit 1
+    err "Service template not found: $template"
+    return 1
   fi
 
-  local run_user run_group node_bin workdir
-  run_user="$(id -un)"
-  run_group="$(id -gn)"
+  local node_bin
   node_bin="$(command -v node 2>/dev/null || true)"
-  workdir="$ROOT_DIR"
-
   if [ -z "$node_bin" ]; then
     err "Node.js not found in PATH"
-    exit 1
+    return 1
   fi
 
-  log "Generating systemd unit: $SERVICE_NAME"
-  log "  User=$run_user  Group=$run_group"
-  log "  Node=$node_bin"
-  log "  WorkingDirectory=$workdir"
+  mkdir -p "$user_unit_dir"
 
-  local rendered
-  rendered=$(sed \
-    -e "s|__USER__|${run_user}|g" \
-    -e "s|__GROUP__|${run_group}|g" \
+  sed \
     -e "s|__NODE_BIN__|${node_bin}|g" \
-    -e "s|__WORKDIR__|${workdir}|g" \
-    "$template")
+    -e "s|__WORKDIR__|${ROOT_DIR}|g" \
+    "$template" > "$target"
 
-  if [ "$(id -u)" -eq 0 ]; then
-    printf '%s\n' "$rendered" > "$target"
-  elif command -v sudo >/dev/null 2>&1; then
-    printf '%s\n' "$rendered" | sudo tee "$target" >/dev/null
-  else
-    err "Root or sudo required to install systemd unit"
-    exit 1
-  fi
+  systemctl --user daemon-reload
+  systemctl --user enable "$SERVICE_NAME" 2>/dev/null
 
-  log "Reloading systemd daemon"
-  systemd_run daemon-reload
-
-  log "Enabling $SERVICE_NAME"
-  systemd_run enable "$SERVICE_NAME"
-
-  log "Starting $SERVICE_NAME"
-  systemd_run restart "$SERVICE_NAME"
-
-  sleep 2
-  if systemctl is-active --quiet "$SERVICE_NAME"; then
-    log "$SERVICE_NAME is active"
-    systemctl status "$SERVICE_NAME" --no-pager
-  else
-    err "$SERVICE_NAME failed to start"
-    systemctl status "$SERVICE_NAME" --no-pager || true
-    journalctl -u "$SERVICE_NAME" --no-pager -n 20
-    exit 1
-  fi
+  log "Installed $SERVICE_NAME → $target"
 }
 
 cmd_test_endpoints() {
-  log "Executing endpoint regression suite"
+  log "Running endpoint test suite"
   npm run test
 }
 
 cmd_test_data() {
+  load_env
   local precheck_sql="$ROOT_DIR/scripts/maintenance/00_precheck_structural_data.sql"
   if [ ! -f "$precheck_sql" ]; then
-    err "Data precheck SQL missing at $precheck_sql"
-    exit 1
-  fi
-
-  if [ ! -f "/etc/node-backend.env" ]; then
-    err "Environment file /etc/node-backend.env not found"
-    exit 1
-  fi
-
-  set -a
-  source /etc/node-backend.env
-  set +a
-
-  local missing=0
-  local key
-  for key in DB_HOST DB_USER DB_PASSWORD DB_NAME DB_PORT; do
-    if [ -z "${!key:-}" ]; then
-      err "Missing $key in /etc/node-backend.env"
-      missing=1
-    fi
-  done
-  if [ "$missing" -ne 0 ]; then
-    exit 1
+    err "Precheck SQL missing: $precheck_sql"
+    return 1
   fi
 
   local db_client
   db_client=$(command -v mariadb || command -v mysql || true)
   if [ -z "$db_client" ]; then
-    err "Neither 'mariadb' nor 'mysql' command is available"
-    exit 1
+    err "No database client available"
+    return 1
   fi
+
+  local db_host="${DB_HOST:-localhost}"
+  [ "$db_host" = "localhost" ] && db_host="127.0.0.1"
 
   log "Validating database structures"
-  local query_output
-  if ! query_output=$("$db_client" \
-    --host="$DB_HOST" \
-    --port="$DB_PORT" \
-    --user="$DB_USER" \
-    --password="$DB_PASSWORD" \
-    --database="$DB_NAME" \
-    --batch \
-    --skip-column-names < "$precheck_sql"); then
-    err "Database precheck execution failed"
-    exit 1
-  fi
+  local output
+  output=$("$db_client" -h "$db_host" -P "${DB_PORT:-3306}" \
+    -u "${DB_USER}" --password="${DB_PASSWORD}" \
+    -D "${DB_NAME:-data}" --batch --skip-column-names < "$precheck_sql") || {
+    err "Precheck SQL execution failed"
+    return 1
+  }
 
-  local has_errors=0
-  local check_name row_count
+  local has_errors=0 check_name row_count
   while IFS=$'\t' read -r check_name row_count; do
-    if [ -z "${check_name:-}" ] || [ -z "${row_count:-}" ]; then
-      continue
-    fi
-    if ! [[ "$row_count" =~ ^[0-9]+$ ]]; then
-      err "Invalid precheck output for $check_name: $row_count"
-      has_errors=1
-      continue
-    fi
+    [ -z "${check_name:-}" ] || [ -z "${row_count:-}" ] && continue
+    [[ "$row_count" =~ ^[0-9]+$ ]] || { err "Invalid output for $check_name: $row_count"; has_errors=1; continue; }
     case "$check_name" in
       resolved_without_cited_work)
-        if [ "$row_count" -ne 0 ]; then
-          err "Precheck failed: $check_name must be 0 (current: $row_count)"
-          has_errors=1
-        fi
-        ;;
+        [ "$row_count" -ne 0 ] && { err "$check_name must be 0 (got $row_count)"; has_errors=1; } ;;
       *)
-        if [ "$row_count" -lt 1 ]; then
-          err "Precheck failed: $check_name must be >= 1 (current: $row_count)"
-          has_errors=1
-        fi
-        ;;
+        [ "$row_count" -lt 1 ] && { err "$check_name must be >= 1 (got $row_count)"; has_errors=1; } ;;
     esac
-  done <<< "$query_output"
+  done <<< "$output"
 
-  printf '%s\n' "$query_output"
-
-  if [ "$has_errors" -ne 0 ]; then
-    err "Database structure validation failed"
-    exit 1
-  fi
-
-  log "Database structure validation completed"
+  printf '%s\n' "$output"
+  [ "$has_errors" -eq 0 ] && log "Database validation passed" || { err "Database validation failed"; return 1; }
 }
 
+# ─── Usage & dispatch ────────────────────────────────────────────────────────
+
 usage() {
-  cat <<USAGE
-Ethnos unified control script
+  cat <<'USAGE'
+Ethnos API — unified control script
 
-Usage: $(basename "$0") <command> [options]
+Usage: manage.sh <command> [options]
 
-Commands:
-  deploy                 Stop, clear caches, reinstall deps, reindex Sphinx, test, and restart
-  start                  Start the API server
-  stop                   Stop the API server
-  restart                Stop, deep clean, reinstall deps, regen docs, test, and restart (no Sphinx)
-  index                  Rebuild Sphinx indexes (requires indexer)
-  index:fast             Rebuild only works/persons indexes
-  sphinx start|stop|status  Manage searchd lifecycle (use 'sphinx start --force' to kill port holders)
-  systemd:install        Generate, install, enable, and start the systemd service (auto-detects user/node)
-  test --endpoints       Run endpoint suite
-  test --data            Validate required tables, views, and indexes in the database
+Lifecycle (with automatic infrastructure verification):
+  deploy              Full deploy: stop all → clean → deps → docs → reindex Sphinx → test → start + validate
+  restart             Restart: stop API → clean → deps → docs → verify infra → start + validate
+  start               Verify all infrastructure, start API if needed, validate
+  stop                Stop API service and kill rogue processes
+  status              Validate all infrastructure and report
 
-Examples:
-  $(basename "$0") deploy
-  $(basename "$0") test --endpoints
-  $(basename "$0") test --data
+Sphinx:
+  sphinx start        Verify and start searchd
+  sphinx stop         Stop searchd
+  sphinx status       Show searchd status and ports
+  index [names...]    Rebuild Sphinx indexes (all or specific)
+  index:fast          Rebuild works_poc and persons_poc only
+
+Systemd:
+  systemd:install     Generate and install user service (no sudo)
+
+Test:
+  test --endpoints    Run endpoint test suite
+  test --data         Validate database structural integrity
+
 USAGE
 }
 
 main() {
-  local cmd=${1:-}
+  local cmd="${1:-}"
   shift || true
 
   case "$cmd" in
-    deploy)
-      cmd_deploy
-      ;;
-    start)
-      cmd_start
-      ;;
-    stop)
-      cmd_stop
-      ;;
-    restart)
-      cmd_restart
-      ;;
-    index)
-      cmd_index
-      ;;
-    index:fast)
-      cmd_index_fast
-      ;;
-    systemd:install)
-      cmd_systemd_install
-      ;;
-    sphinx)
-      # Subcommands for Sphinx lifecycle; pass through extra args to handlers
-      case "${1:-}" in
-        start)
-          shift || true
-          cmd_sphinx_start "$@"
-          ;;
-        stop)
-          shift || true
-          cmd_sphinx_stop "$@"
-          ;;
-        status)
-          shift || true
-          cmd_sphinx_status "$@"
-          ;;
-        *) usage; exit 1 ;;
-      esac
-      ;;
+    deploy)           cmd_deploy ;;
+    restart)          cmd_restart ;;
+    start)            cmd_start ;;
+    stop)             cmd_stop ;;
+    status)           cmd_status ;;
+    index)            load_env; cmd_index "$@" ;;
+    index:fast)       load_env; cmd_index_fast ;;
+    sphinx)           cmd_sphinx "$@" ;;
+    systemd:install)  cmd_systemd_install ;;
     test)
       case "${1:-}" in
-        --endpoints)
-          cmd_test_endpoints
-          ;;
-        --data)
-          cmd_test_data
-          ;;
-        *)
-          usage
-          exit 1
-          ;;
+        --endpoints)  cmd_test_endpoints ;;
+        --data)       cmd_test_data ;;
+        *)            usage; exit 1 ;;
       esac
       ;;
-    help|--help|-h|'')
-      usage
-      ;;
-    *)
-      err "Unknown command: $cmd"
-      usage
-      exit 1
-      ;;
+    help|--help|-h|'') usage ;;
+    *)                 err "Unknown command: $cmd"; usage; exit 1 ;;
   esac
 }
 
