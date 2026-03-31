@@ -241,6 +241,66 @@ class SphinxService {
     }
 
 
+    async searchVenueIds(searchTerm, options = {}) {
+        await this.ensureConnection();
+
+        const { limit = 20, offset = 0, type } = options;
+        const sanitizedLimit = this._sanitizeLimit(limit, 20, 100);
+        const sanitizedOffset = this._sanitizeOffset(offset);
+        const trimmed = (searchTerm || '').trim();
+        const hasTerm = trimmed.length > 0;
+
+        let sql;
+        const params = [];
+
+        if (hasTerm) {
+            const escaped = this._escapeMatchTerm(trimmed);
+            sql = `SELECT id, WEIGHT() as weight FROM venues_poc WHERE MATCH(${this.connection.escape(escaped)})`;
+        } else {
+            sql = `SELECT id, 1 as weight FROM venues_poc WHERE id > 0`;
+        }
+
+        if (type) {
+            sql += ' AND type = ?';
+            params.push(type);
+        }
+
+        const orderClause = this._venueOrderClause(options.sortBy, options.sortOrder);
+        sql += ` ORDER BY weight DESC, ${orderClause} LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}`;
+
+        const startTime = Date.now();
+        return new Promise((resolve, reject) => {
+            this.connection.query({ sql, timeout: this.queryTimeoutMs }, params, (error, rows = []) => {
+                const queryTime = Date.now() - startTime;
+                if (error) {
+                    this._handleQueryError(error);
+                    reject(error);
+                    return;
+                }
+
+                const whereForCount = hasTerm
+                    ? `WHERE MATCH(${this.connection.escape(this._escapeMatchTerm(trimmed))})`
+                    : 'WHERE id > 0';
+                const typeFilter = type ? ` AND type = ${this.connection.escape(type)}` : '';
+                const countSql = `SELECT COUNT(*) as total FROM venues_poc ${whereForCount}${typeFilter}`;
+
+                this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, (countError, countRows = []) => {
+                    if (countError) {
+                        this._handleQueryError(countError);
+                        resolve({ ids: rows.map(r => r.id), total: rows.length, query_time: queryTime, meta: {} });
+                        return;
+                    }
+                    resolve({
+                        ids: rows.map(r => r.id),
+                        total: parseInt(countRows[0]?.total || rows.length, 10),
+                        query_time: queryTime
+                    });
+                });
+            });
+        });
+    }
+
+
     _ensureEnabled() {
         if (!this.enabled) {
             const error = new Error('Sphinx disabled by configuration');

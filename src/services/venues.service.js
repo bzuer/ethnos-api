@@ -4,6 +4,7 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatVenueListItem, formatVenueDetails } = require('../dto/venue.dto');
 const { withTimeout } = require('../utils/db');
+const sphinxService = require('./sphinx.service');
 
 const toInt = (value, fallback = 0) => {
   if (value === null || value === undefined) {
@@ -564,8 +565,8 @@ class VenuesService {
     const currentLimit = Math.min(Math.max(1, parseInt(limit, 10) || 20), 100);
     const currentOffset = Math.max(0, parseInt(offset, 10) || 0);
 
-      const cacheKey = `venues:search:${query}:${JSON.stringify(normalizedOptions)}`;
-    
+    const cacheKey = `venues:search:${query}:${JSON.stringify(normalizedOptions)}`;
+
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) {
@@ -573,185 +574,124 @@ class VenuesService {
         return cached;
       }
 
-      const searchTerm = `%${query}%`;
-      let usedFallbackSearch = false;
-      let usedFallbackCount = false;
-      const summaryListQuery = `
-        SELECT
-          v.id,
-          COALESCE(svs.works_count, v.works_count, 0) AS works_count
-        FROM sphinx_venues_summary svs
-        INNER JOIN venues v ON v.id = svs.id
-        WHERE (
-          svs.name LIKE ?
-          OR svs.abbreviated_name LIKE ?
-          OR svs.issn LIKE ?
-          OR svs.eissn LIKE ?
-        )
-        ${type ? 'AND v.type = ?' : ''}
-        ORDER BY
-          MATCH(svs.name, svs.abbreviated_name, svs.subjects_string, svs.top_works_string) AGAINST(? IN NATURAL LANGUAGE MODE) DESC,
-          COALESCE(svs.works_count, v.works_count, 0) DESC,
-          svs.name ASC
-        LIMIT ? OFFSET ?
-      `;
-
-      const summaryCountQuery = `
-        SELECT COUNT(*) as total
-        FROM sphinx_venues_summary svs
-        INNER JOIN venues v ON v.id = svs.id
-        WHERE (
-          svs.name LIKE ?
-          OR svs.abbreviated_name LIKE ?
-          OR svs.issn LIKE ?
-          OR svs.eissn LIKE ?
-        )
-        ${type ? 'AND v.type = ?' : ''}
-      `;
-
-      const fallbackListQuery = `
-        SELECT
-          v.id,
-          COALESCE(v.works_count, 0) AS works_count
-        FROM venues v
-        WHERE (
-          v.name LIKE ?
-          OR v.abbreviated_name LIKE ?
-          OR v.issn LIKE ?
-          OR v.eissn LIKE ?
-        )
-        ${type ? 'AND v.type = ?' : ''}
-        ORDER BY COALESCE(v.works_count, 0) DESC, v.name ASC
-        LIMIT ? OFFSET ?
-      `;
-
-      const fallbackCountQuery = `
-        SELECT COUNT(*) as total
-        FROM venues v
-        WHERE (
-          v.name LIKE ?
-          OR v.abbreviated_name LIKE ?
-          OR v.issn LIKE ?
-          OR v.eissn LIKE ?
-        )
-        ${type ? 'AND v.type = ?' : ''}
-      `;
-
-      const summaryListParams = type
-        ? [searchTerm, searchTerm, searchTerm, searchTerm, type, query, currentLimit, currentOffset]
-        : [searchTerm, searchTerm, searchTerm, searchTerm, query, currentLimit, currentOffset];
-      const summaryCountParams = type
-        ? [searchTerm, searchTerm, searchTerm, searchTerm, type]
-        : [searchTerm, searchTerm, searchTerm, searchTerm];
-      const fallbackListParams = type
-        ? [searchTerm, searchTerm, searchTerm, searchTerm, type, currentLimit, currentOffset]
-        : [searchTerm, searchTerm, searchTerm, searchTerm, currentLimit, currentOffset];
-      const fallbackCountParams = type
-        ? [searchTerm, searchTerm, searchTerm, searchTerm, type]
-        : [searchTerm, searchTerm, searchTerm, searchTerm];
-
-      const executeSearchQuery = async () => {
-        try {
-          return await sequelize.query(summaryListQuery, {
-            replacements: summaryListParams,
-            type: sequelize.QueryTypes.SELECT
-          });
-        } catch (err) {
-          const code = err?.original?.code || err?.parent?.code || err?.code;
-          const errno = err?.original?.errno || err?.parent?.errno;
-          if (
-            code === 'ER_NO_SUCH_TABLE' ||
-            code === '42S02' ||
-            code === 'ER_BAD_FIELD_ERROR' ||
-            code === '42S22' ||
-            code === 'ER_FT_MATCHING_KEY_NOT_FOUND' ||
-            errno === 1191
-          ) {
-            logger.warn('Venues summary search query unavailable, falling back to base venues', { error: err.message });
-            usedFallbackSearch = true;
-            return await sequelize.query(fallbackListQuery, {
-              replacements: fallbackListParams,
-              type: sequelize.QueryTypes.SELECT
-            });
-          }
-          throw err;
-        }
-      };
-
-      const executeCountQuery = async () => {
-        try {
-          return await sequelize.query(summaryCountQuery, {
-            replacements: summaryCountParams,
-            type: sequelize.QueryTypes.SELECT
-          });
-        } catch (err) {
-          const code = err?.original?.code || err?.parent?.code || err?.code;
-          const errno = err?.original?.errno || err?.parent?.errno;
-          if (
-            code === 'ER_NO_SUCH_TABLE' ||
-            code === '42S02' ||
-            code === 'ER_BAD_FIELD_ERROR' ||
-            code === '42S22' ||
-            code === 'ER_FT_MATCHING_KEY_NOT_FOUND' ||
-            errno === 1191
-          ) {
-            logger.warn('Venues summary count query unavailable, falling back to base venues', { error: err.message });
-            usedFallbackCount = true;
-            return await sequelize.query(fallbackCountQuery, {
-              replacements: fallbackCountParams,
-              type: sequelize.QueryTypes.SELECT
-            });
-          }
-          throw err;
-        }
-      };
-
-      const [rawVenues, countResult] = await Promise.all([
-        executeSearchQuery(),
-        executeCountQuery()
-      ]);
-
-      const enrichedList = await this._enrichVenues(
-        rawVenues.map((row) => ({
-          id: row.id,
-          works_count: toInt(row.works_count, 0)
-        })),
-        { includeSubjects: true }
-      );
-
-      const warnings = Array.isArray(enrichedList.warnings) ? [...enrichedList.warnings] : [];
-      const venues = enrichedList.map((venue) =>
-        formatVenueListItem(venue, { includeLegacyMetrics: normalizedOptions.includeLegacyMetrics })
-      );
-
-      const total = toInt(countResult?.[0]?.total, 0);
-      const paginationData = createPagination(currentPage, currentLimit, total);
-
-      const meta = {
-        source: usedFallbackSearch || usedFallbackCount ? 'mariadb_fallback' : 'sphinx_venues_summary',
-        query: query
-      };
-      if (type) {
-        meta.filters = { type };
+      try {
+        const result = await this._searchVenuesSphinx(query, {
+          page: currentPage,
+          limit: currentLimit,
+          offset: currentOffset,
+          type,
+          includeLegacyMetrics: normalizedOptions.includeLegacyMetrics
+        });
+        await cacheService.set(cacheKey, result, 3600);
+        return result;
+      } catch (sphinxError) {
+        logger.warn(`Sphinx venues search failed for "${query}", falling back to MariaDB`, { error: sphinxError.message });
+        const result = await this._searchVenuesFallback(query, {
+          page: currentPage,
+          limit: currentLimit,
+          offset: currentOffset,
+          type,
+          includeLegacyMetrics: normalizedOptions.includeLegacyMetrics
+        });
+        await cacheService.set(cacheKey, result, 3600);
+        return result;
       }
-      if (warnings.length) {
-        meta.warnings = Array.from(new Set(warnings));
-      }
-
-      const result = {
-        data: venues,
-        pagination: paginationData,
-        meta: Object.keys(meta).length ? meta : undefined
-      };
-
-      await cacheService.set(cacheKey, result, 3600);
-      logger.info(`Found ${venues.length} venues for search "${query}"`);
-      
-      return result;
     } catch (error) {
       logger.error(`Error searching venues for "${query}":`, error);
       throw error;
     }
+  }
+
+  async _searchVenuesSphinx(query, { page, limit, offset, type, includeLegacyMetrics }) {
+    const spx = await sphinxService.searchVenueIds(query, { limit, offset, type });
+    const ids = Array.isArray(spx?.ids) ? spx.ids : [];
+    const total = parseInt(spx?.total || 0, 10) || 0;
+
+    if (ids.length === 0) {
+      return {
+        data: [],
+        pagination: createPagination(page, limit, total),
+        meta: { source: 'sphinx', query, sphinx_query_ms: spx?.query_time || null }
+      };
+    }
+
+    const orderField = `FIELD(v.id, ${ids.map(() => '?').join(',')})`;
+    const rawVenues = await sequelize.query(`
+      SELECT v.id, COALESCE(v.works_count, 0) AS works_count
+      FROM venues v
+      WHERE v.id IN (${ids.map(() => '?').join(',')})
+      ORDER BY ${orderField}
+    `, { replacements: [...ids, ...ids], type: sequelize.QueryTypes.SELECT });
+
+    const enrichedList = await this._enrichVenues(
+      rawVenues.map((row) => ({ id: row.id, works_count: toInt(row.works_count, 0) })),
+      { includeSubjects: true }
+    );
+
+    const warnings = Array.isArray(enrichedList.warnings) ? [...enrichedList.warnings] : [];
+    const venues = enrichedList.map((venue) => formatVenueListItem(venue, { includeLegacyMetrics }));
+
+    const meta = { source: 'sphinx', query, sphinx_query_ms: spx?.query_time || null };
+    if (type) meta.filters = { type };
+    if (warnings.length) meta.warnings = Array.from(new Set(warnings));
+
+    logger.info(`Sphinx venues search "${query}": ${venues.length} results in ${spx?.query_time}ms`);
+
+    return {
+      data: venues,
+      pagination: createPagination(page, limit, total),
+      meta
+    };
+  }
+
+  async _searchVenuesFallback(query, { page, limit, offset, type, includeLegacyMetrics }) {
+    logger.warn('Using MariaDB fallback for venues search');
+
+    const searchTerm = `%${query}%`;
+    const whereConditions = ['(v.name LIKE ? OR v.abbreviated_name LIKE ? OR v.issn LIKE ? OR v.eissn LIKE ?)'];
+    const listParams = [searchTerm, searchTerm, searchTerm, searchTerm];
+    const countParams = [searchTerm, searchTerm, searchTerm, searchTerm];
+
+    if (type) {
+      whereConditions.push('v.type = ?');
+      listParams.push(type);
+      countParams.push(type);
+    }
+
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+    listParams.push(limit, offset);
+
+    const [rawVenues, countResult] = await Promise.all([
+      sequelize.query(`
+        SELECT v.id, COALESCE(v.works_count, 0) AS works_count
+        FROM venues v
+        ${whereClause}
+        ORDER BY COALESCE(v.works_count, 0) DESC, v.name ASC
+        LIMIT ? OFFSET ?
+      `, { replacements: listParams, type: sequelize.QueryTypes.SELECT }),
+      sequelize.query(`
+        SELECT COUNT(*) as total FROM venues v ${whereClause}
+      `, { replacements: countParams, type: sequelize.QueryTypes.SELECT })
+    ]);
+
+    const enrichedList = await this._enrichVenues(
+      rawVenues.map((row) => ({ id: row.id, works_count: toInt(row.works_count, 0) })),
+      { includeSubjects: true }
+    );
+
+    const warnings = Array.isArray(enrichedList.warnings) ? [...enrichedList.warnings] : [];
+    const venues = enrichedList.map((venue) => formatVenueListItem(venue, { includeLegacyMetrics }));
+    const total = toInt(countResult?.[0]?.total, 0);
+
+    const meta = { source: 'mariadb_fallback', query, note: 'Using MariaDB fallback due to Sphinx error' };
+    if (type) meta.filters = { type };
+    if (warnings.length) meta.warnings = Array.from(new Set(warnings));
+
+    return {
+      data: venues,
+      pagination: createPagination(page, limit, total),
+      meta
+    };
   }
 
   async getVenues(options = {}) {
