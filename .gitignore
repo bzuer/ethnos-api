@@ -4,6 +4,7 @@ logs/
 runtime/
 *.log
 *.log.*
+docs/
 
 # Test coverage
 coverage/
