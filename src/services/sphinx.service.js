@@ -203,41 +203,24 @@ class SphinxService {
         const { limit = 20, offset = 0, verified } = options;
         const sanitizedLimit = this._sanitizeLimit(limit, 20, 100);
         const sanitizedOffset = this._sanitizeOffset(offset);
-        const safeTerm = (searchTerm || '').replace(/'/g, "\\'");
+        const matchExpr = this.connection.escape(this._escapeMatchTerm((searchTerm || '').trim()));
 
-        let whereClause = `WHERE MATCH('${safeTerm}')`;
+        let whereClause = `WHERE MATCH(${matchExpr})`;
+        const params = [];
+
         if (verified !== undefined) {
-            whereClause += ` AND is_verified = ${verified === 'true' || verified === true ? 1 : 0}`;
+            whereClause += ' AND is_verified = ?';
+            params.push(verified === 'true' || verified === true ? 1 : 0);
         }
 
-        const sql = `
-            SELECT id, WEIGHT() as weight
-            FROM persons_poc
-            ${whereClause}
-            ORDER BY weight DESC, id ASC
-            LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}
-        `;
-
-        const startTime = Date.now();
-        return new Promise((resolve, reject) => {
-            this.connection.query({ sql, timeout: this.queryTimeoutMs }, (error, rows = []) => {
-                const queryTime = Date.now() - startTime;
-                if (error) {
-                    this._handleQueryError(error);
-                    reject(error);
-                    return;
-                }
-                const countSql = `SELECT COUNT(*) as total FROM persons_poc ${whereClause}`;
-                this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, (countError, countRows = []) => {
-                    if (countError) {
-                        this._handleQueryError(countError);
-                        resolve({ ids: rows.map(r => r.id), total: rows.length, query_time: queryTime, meta: {} });
-                        return;
-                    }
-                    resolve({ ids: rows.map(r => r.id), total: parseInt(countRows[0]?.total || rows.length, 10), query_time: queryTime });
-                });
-            });
-        });
+        return this._searchWithCount(
+            'persons_poc',
+            'id, WEIGHT() as weight',
+            whereClause,
+            'weight DESC, id ASC',
+            `LIMIT ${sanitizedOffset}, ${sanitizedLimit}`,
+            params
+        );
     }
 
 
@@ -253,6 +236,7 @@ class SphinxService {
         let whereClause = hasTerm
             ? `WHERE MATCH(${this.connection.escape(this._escapeMatchTerm(trimmed))})`
             : 'WHERE id > 0';
+        const weightExpr = hasTerm ? 'WEIGHT()' : '1';
         const params = [];
 
         if (type) {
@@ -261,35 +245,47 @@ class SphinxService {
         }
 
         const orderClause = this._venueOrderClause(options.sortBy, options.sortOrder);
-        const sql = `SELECT id, WEIGHT() as weight FROM venues_poc ${whereClause} ORDER BY weight DESC, ${orderClause} LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}`;
-        const countSql = `SELECT COUNT(*) as total FROM venues_poc ${whereClause}`;
 
-        const startTime = Date.now();
+        return this._searchWithCount(
+            'venues_poc',
+            `id, ${weightExpr} as weight`,
+            whereClause,
+            `weight DESC, ${orderClause}`,
+            `LIMIT ${sanitizedOffset}, ${sanitizedLimit}`,
+            params
+        );
+    }
+
+
+    _query(sql, params = []) {
         return new Promise((resolve, reject) => {
             this.connection.query({ sql, timeout: this.queryTimeoutMs }, params, (error, rows = []) => {
-                const queryTime = Date.now() - startTime;
                 if (error) {
                     this._handleQueryError(error);
                     reject(error);
                     return;
                 }
-
-                this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, params, (countError, countRows = []) => {
-                    if (countError) {
-                        this._handleQueryError(countError);
-                        resolve({ ids: rows.map(r => r.id), total: rows.length, query_time: queryTime, meta: {} });
-                        return;
-                    }
-                    resolve({
-                        ids: rows.map(r => r.id),
-                        total: parseInt(countRows[0]?.total || rows.length, 10),
-                        query_time: queryTime
-                    });
-                });
+                resolve(rows);
             });
         });
     }
 
+    async _searchWithCount(index, selectExpr, whereClause, orderClause, limitClause, params) {
+        const dataSql = `SELECT ${selectExpr} FROM ${index} ${whereClause} ORDER BY ${orderClause} ${limitClause}`;
+        const countSql = `SELECT COUNT(*) as total FROM ${index} ${whereClause}`;
+        const startTime = Date.now();
+
+        const [rows, countRows] = await Promise.all([
+            this._query(dataSql, params),
+            this._query(countSql, params).catch(() => [])
+        ]);
+
+        return {
+            ids: rows.map(r => r.id),
+            total: parseInt(countRows[0]?.total || rows.length, 10),
+            query_time: Date.now() - startTime
+        };
+    }
 
     _ensureEnabled() {
         if (!this.enabled) {
@@ -1181,9 +1177,9 @@ class SphinxService {
     
     async getAllVenues(options = {}) {
         await this.ensureConnection();
-        
-        const { 
-            limit = 20, 
+
+        const {
+            limit = 20,
             offset = 0,
             type = null,
             sortBy = 'works_count',
@@ -1201,84 +1197,63 @@ class SphinxService {
         const sortClause = this._venueOrderClause(sortBy, sortOrder);
 
         const params = [];
-        const countParams = [];
+        let whereClause = 'WHERE id > 0';
+
+        if (type) {
+            whereClause += ' AND type = ?';
+            params.push(type);
+        }
+
+        const sql = `
+            SELECT id, name, type, issn, eissn, scopus_source_id,
+                   publisher_id, impact_factor, works_count, unique_authors,
+                   first_publication_year, latest_publication_year, publisher_name
+            FROM venues_metrics_poc
+            ${whereClause}
+            ORDER BY ${sortClause} LIMIT ${sanitizedOffset}, ${sanitizedLimit} OPTION max_matches=${maxMatches}
+        `;
+        const countSql = `SELECT COUNT(*) as total FROM venues_metrics_poc ${whereClause}`;
 
         try {
-            let sql = `
-                SELECT id, name, type, issn, eissn, scopus_source_id, 
-                       publisher_id, impact_factor, works_count, unique_authors,
-                       first_publication_year, latest_publication_year, publisher_name
-                FROM venues_metrics_poc 
-                WHERE id > 0
-            `;
-
-            if (type) {
-                sql += ' AND type = ?';
-                params.push(type);
-                countParams.push(type);
-            }
-
-            sql += ` ORDER BY ${sortClause} LIMIT ${sanitizedOffset}, ${sanitizedLimit} OPTION max_matches=${maxMatches}`;
-
-            const countSql = `
-                SELECT COUNT(*) as total
-                FROM venues_metrics_poc 
-                WHERE id > 0
-                ${type ? ' AND type = ?' : ''}
-            `;
-
             const startTime = Date.now();
 
-            return new Promise((resolve, reject) => {
-                this.connection.query({ sql, timeout: this.queryTimeoutMs }, params, (error, venueResults = []) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
+            const [venueResults, countResults] = await Promise.all([
+                this._query(sql, params),
+                this._query(countSql, params)
+            ]);
 
-                    this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, countParams, (countError, countResults = []) => {
-                        if (countError) {
-                            this._handleQueryError(countError);
-                            reject(countError);
-                            return;
-                        }
-                        
-                        const queryTime = Date.now() - startTime;
-                        const total = countResults[0]?.total || venueResults.length;
-                        
-                        logger.info('Sphinx getAllVenues completed', {
-                            results: venueResults.length,
-                            total: total,
-                            queryTime: `${queryTime}ms`
-                        });
-                        
-                        const formattedVenues = venueResults.map(venue => ({
-                            id: venue.id,
-                            name: venue.name,
-                            type: venue.type,
-                            issn: venue.issn || null,
-                            eissn: venue.eissn || null,
-                            scopus_source_id: venue.scopus_source_id || null,
-                            publisher_id: venue.publisher_id,
-                            impact_factor: venue.impact_factor || null,
-                            works_count: venue.works_count || 0,
-                            publisher_name: venue.publisher_name || null,
-                            metrics: {
-                                unique_authors: venue.unique_authors || 0,
-                                first_publication_year: venue.first_publication_year,
-                                latest_publication_year: venue.latest_publication_year
-                            }
-                        }));
-                        
-                        resolve({
-                            venues: formattedVenues,
-                            total: total,
-                            query_time: queryTime
-                        });
-                    });
-                });
+            const queryTime = Date.now() - startTime;
+            const total = countResults[0]?.total || venueResults.length;
+
+            logger.info('Sphinx getAllVenues completed', {
+                results: venueResults.length,
+                total: total,
+                queryTime: `${queryTime}ms`
             });
+
+            const formattedVenues = venueResults.map(venue => ({
+                id: venue.id,
+                name: venue.name,
+                type: venue.type,
+                issn: venue.issn || null,
+                eissn: venue.eissn || null,
+                scopus_source_id: venue.scopus_source_id || null,
+                publisher_id: venue.publisher_id,
+                impact_factor: venue.impact_factor || null,
+                works_count: venue.works_count || 0,
+                publisher_name: venue.publisher_name || null,
+                metrics: {
+                    unique_authors: venue.unique_authors || 0,
+                    first_publication_year: venue.first_publication_year,
+                    latest_publication_year: venue.latest_publication_year
+                }
+            }));
+
+            return {
+                venues: formattedVenues,
+                total: total,
+                query_time: queryTime
+            };
         } catch (error) {
             if (error.code !== 'SPHINX_UNAVAILABLE') {
                 logger.error('Sphinx getAllVenues error', {
