@@ -250,23 +250,19 @@ class SphinxService {
         const trimmed = (searchTerm || '').trim();
         const hasTerm = trimmed.length > 0;
 
-        let sql;
+        let whereClause = hasTerm
+            ? `WHERE MATCH(${this.connection.escape(this._escapeMatchTerm(trimmed))})`
+            : 'WHERE id > 0';
         const params = [];
 
-        if (hasTerm) {
-            const escaped = this._escapeMatchTerm(trimmed);
-            sql = `SELECT id, WEIGHT() as weight FROM venues_poc WHERE MATCH(${this.connection.escape(escaped)})`;
-        } else {
-            sql = `SELECT id, 1 as weight FROM venues_poc WHERE id > 0`;
-        }
-
         if (type) {
-            sql += ' AND type = ?';
+            whereClause += ' AND type = ?';
             params.push(type);
         }
 
         const orderClause = this._venueOrderClause(options.sortBy, options.sortOrder);
-        sql += ` ORDER BY weight DESC, ${orderClause} LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}`;
+        const sql = `SELECT id, WEIGHT() as weight FROM venues_poc ${whereClause} ORDER BY weight DESC, ${orderClause} LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}`;
+        const countSql = `SELECT COUNT(*) as total FROM venues_poc ${whereClause}`;
 
         const startTime = Date.now();
         return new Promise((resolve, reject) => {
@@ -278,13 +274,7 @@ class SphinxService {
                     return;
                 }
 
-                const whereForCount = hasTerm
-                    ? `WHERE MATCH(${this.connection.escape(this._escapeMatchTerm(trimmed))})`
-                    : 'WHERE id > 0';
-                const typeFilter = type ? ` AND type = ${this.connection.escape(type)}` : '';
-                const countSql = `SELECT COUNT(*) as total FROM venues_poc ${whereForCount}${typeFilter}`;
-
-                this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, (countError, countRows = []) => {
+                this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, params, (countError, countRows = []) => {
                     if (countError) {
                         this._handleQueryError(countError);
                         resolve({ ids: rows.map(r => r.id), total: rows.length, query_time: queryTime, meta: {} });
