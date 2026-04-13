@@ -1,74 +1,9 @@
-function toOptionalBoolean(value) {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  if (typeof value === 'number') {
-    return value === 1;
-  }
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (!normalized) {
-      return null;
-    }
-    return ['1', 'true', 'yes', 'y'].includes(normalized);
-  }
-  return null;
-}
-
-function toOptionalInteger(value) {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  const parsed = Number(value);
-  if (Number.isNaN(parsed)) {
-    return null;
-  }
-  return Math.trunc(parsed);
-}
-
-function normalizeType(value) {
-  if (!value) {
-    return null;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? trimmed.toUpperCase() : null;
-  }
-  return String(value).toUpperCase();
-}
-
-function normalizeVenue(raw = {}) {
-  if (!raw) {
-    return null;
-  }
-
-  const name = raw.name || raw.venue_name;
-  if (!name) {
-    return null;
-  }
-
-  const abbreviatedName =
-    raw.abbreviated_name ||
-    raw.venue_abbreviated_name ||
-    raw.venue_abbrev ||
-    null;
-
-  return {
-    id: raw.id || null,
-    name,
-    abbreviated_name: abbreviatedName,
-    type: normalizeType(raw.type || raw.venue_type),
-    issn: raw.issn || null,
-    eissn: raw.eissn || null,
-    scopus_id: raw.scopus_id || null,
-    wikidata_id: raw.wikidata_id || null,
-    openalex_id: raw.openalex_id || null,
-    mag_id: raw.mag_id || null
-  };
-}
+const {
+  toOptionalBoolean,
+  toOptionalInteger,
+  normalizeType,
+  normalizeVenue
+} = require('./helpers');
 
 function ensureAuthorsPreview(row = {}) {
   if (Array.isArray(row.authors_preview)) {
@@ -388,4 +323,11 @@ function formatWorkDetails(work = {}) {
   };
 }
 
-module.exports = { formatWorkListItem, formatWorkDetails };
+module.exports = {
+  formatWorkListItem,
+  formatWorkDetails,
+  toOptionalBoolean,
+  toOptionalInteger,
+  normalizeType,
+  normalizeVenue
+};
