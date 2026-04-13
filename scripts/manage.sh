@@ -573,7 +573,7 @@ cmd_index() {
 }
 
 cmd_index_fast() {
-  cmd_index works_poc persons_poc
+  cmd_index publications_poc venues_poc persons_poc
 }
 
 cmd_systemd_install() {
@@ -721,7 +721,7 @@ Sphinx:
   sphinx stop         Stop searchd
   sphinx status       Show searchd status and ports
   index [names...]    Rebuild Sphinx indexes (all or specific)
-  index:fast          Rebuild works_poc and persons_poc only
+  index:fast          Rebuild publications_poc, venues_poc and persons_poc
 
 Systemd:
   systemd:install     Generate and install user service (no sudo)
