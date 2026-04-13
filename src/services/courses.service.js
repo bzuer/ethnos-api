@@ -8,6 +8,7 @@ const {
   formatBibliographyEntry,
   formatCourseSubject
 } = require('../dto/course.dto');
+const { authorsFromJson } = require('../dto/helpers');
 
 class CoursesService {
   
@@ -345,13 +346,15 @@ class CoursesService {
         w.language,
         w.work_type as document_type,
         p.open_access,
-        was.author_string,
-        per.preferred_name as first_author_name
+        sp_a.authors_json
       FROM course_bibliography cb
       JOIN works w ON cb.work_id = w.id
       LEFT JOIN publications p ON w.id = p.work_id
-      LEFT JOIN work_author_summary was ON w.id = was.work_id
-      LEFT JOIN persons per ON was.first_author_id = per.id
+      LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+        SELECT MAX(publication_id)
+        FROM summary_publications
+        WHERE work_id = w.id
+      )
       WHERE cb.course_id = ?
     `;
 
@@ -373,14 +376,12 @@ class CoursesService {
     const [bibliography] = await pool.execute(query, params);
 
     for (const item of bibliography) {
-      if (item.author_string) {
-        const authors = item.author_string.split(';').map(name => name.trim());
-        item.authors = authors;
-        item.author_count = authors.length;
-      } else {
-        item.authors = [];
-        item.author_count = 0;
-      }
+      const authors = authorsFromJson(item.authors_json);
+      item.authors = authors;
+      item.author_count = authors.length;
+      item.first_author_name = authors[0] || null;
+      item.author_string = authors.join('; ') || null;
+      delete item.authors_json;
     }
 
     const countQuery = `

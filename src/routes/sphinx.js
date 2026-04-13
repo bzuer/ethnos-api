@@ -327,7 +327,7 @@ router.get('/sphinx/search',
                         search_engine: searchEngine,
                         query_time_ms: searchResults.query_time,
                         total_time_ms: totalTime,
-                        documents_searched: searchEngine === 'Sphinx' ? 'works_poc_full_corpus' : 'mariadb_fulltext',
+                        documents_searched: searchEngine === 'Sphinx' ? 'publications_poc_full_corpus' : 'mariadb_fulltext',
                         relevance_algorithm: searchEngine === 'Sphinx' ? 'BM25 with field weighting' : 'MariaDB FULLTEXT'
                     },
                     query,

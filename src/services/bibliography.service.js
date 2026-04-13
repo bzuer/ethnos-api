@@ -2,6 +2,7 @@ const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
 const { formatBibliographyItem, formatBibliographyCourseUsage } = require('../dto/bibliography.dto');
+const { authorsFromJson } = require('../dto/helpers');
 
 class BibliographyService {
   
@@ -80,7 +81,7 @@ class BibliographyService {
         w.language,
         w.work_type AS document_type,
         COALESCE(bm.author_count, 0) AS author_count,
-        COALESCE(bm.first_author_name, '') AS first_author_name,
+        bm.authors_json,
         COALESCE(bm.instructors, '') AS instructors
       FROM course_bibliography cb
       JOIN courses c ON cb.course_id = c.id
@@ -91,14 +92,8 @@ class BibliographyService {
           cb.work_id,
           latest.publication_year,
           latest.open_access,
-          COALESCE(
-            CASE
-              WHEN was.author_string IS NULL OR was.author_string = '' THEN 0
-              ELSE (LENGTH(was.author_string) - LENGTH(REPLACE(was.author_string, ';', '')) + 1)
-            END,
-            0
-          ) AS author_count,
-          TRIM(SUBSTRING_INDEX(COALESCE(was.author_string, ''), ';', 1)) AS first_author_name,
+          COALESCE(JSON_LENGTH(sp_a.authors_json), 0) AS author_count,
+          sp_a.authors_json,
         GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') AS instructors
         FROM course_bibliography cb
         LEFT JOIN (
@@ -110,10 +105,14 @@ class BibliographyService {
             GROUP BY work_id
           ) latest_pub ON latest_pub.work_id = p.work_id AND latest_pub.max_year = p.year
         ) latest ON cb.work_id = latest.work_id
-        LEFT JOIN work_author_summary was ON cb.work_id = was.work_id
+        LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+          SELECT MAX(publication_id)
+          FROM summary_publications
+          WHERE work_id = cb.work_id
+        )
         LEFT JOIN course_instructors ci ON cb.course_id = ci.course_id
         LEFT JOIN persons p ON ci.canonical_person_id = p.id
-        GROUP BY cb.course_id, cb.work_id, was.author_string, latest.publication_year, latest.open_access
+        GROUP BY cb.course_id, cb.work_id, sp_a.authors_json, latest.publication_year, latest.open_access
       ) bm ON cb.course_id = bm.course_id AND cb.work_id = bm.work_id
       WHERE 1=1
     `;
@@ -174,8 +173,8 @@ class BibliographyService {
       ${baseQuery}
       GROUP BY cb.course_id, cb.work_id, cb.reading_type, cb.week_number, cb.notes,
                c.code, c.name, c.year, c.semester, c.program_id,
-               w.title, bm.publication_year, w.language, w.work_type, 
-               bm.author_count, bm.first_author_name, bm.instructors
+               w.title, bm.publication_year, w.language, w.work_type,
+               bm.author_count, bm.authors_json, bm.instructors
     `;
 
     const paginatedQuery = `${groupedQuery}
@@ -186,15 +185,10 @@ class BibliographyService {
 
     if (bibliography.length > 0) {
       bibliography.forEach(item => {
-        if (item.first_author_name) {
-          const authors = item.first_author_name
-            .split(';')
-            .map(name => name.trim())
-            .filter(Boolean);
-          item.authors = authors;
-        } else {
-          item.authors = [];
-        }
+        const authors = authorsFromJson(item.authors_json);
+        item.authors = authors;
+        item.first_author_name = authors[0] || null;
+        delete item.authors_json;
         if (item.open_access !== undefined) {
           item.open_access = item.open_access === 1 || item.open_access === true;
         }

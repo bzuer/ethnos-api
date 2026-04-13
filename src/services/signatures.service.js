@@ -5,6 +5,7 @@ const { logger } = require('../middleware/errorHandler');
 const sphinxService = require('./sphinx.service');
 const { formatSignatureListItem, formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
 const { formatPersonListItem } = require('../dto/person.dto');
+const { authorsFromJson } = require('../dto/helpers');
 
 class SignaturesService {
   async getAllSignatures(options = {}) {
@@ -429,18 +430,18 @@ class SignaturesService {
             a.role,
             a.position,
             a.is_corresponding,
-            was.author_string,
-            CASE 
-              WHEN was.author_string IS NOT NULL THEN 
-                (LENGTH(was.author_string) - LENGTH(REPLACE(was.author_string, ';', '')) + 1)
-              ELSE 0 
-            END as total_authors
+            sp_a.authors_json,
+            COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as total_authors
           FROM v_works_by_signature vws
           INNER JOIN works w ON vws.work_id = w.id
           LEFT JOIN publications pub ON w.id = pub.work_id
           LEFT JOIN venues v ON pub.venue_id = v.id
           LEFT JOIN authorships a ON vws.work_id = a.work_id AND vws.person_id = a.person_id
-          LEFT JOIN work_author_summary was ON w.id = was.work_id
+          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+            SELECT MAX(publication_id)
+            FROM summary_publications
+            WHERE work_id = w.id
+          )
           WHERE vws.signature_id = ?
           ORDER BY COALESCE(pub.year, 2024) DESC, vws.work_id DESC
           LIMIT ? OFFSET ?
@@ -500,7 +501,7 @@ class SignaturesService {
           },
           authors: {
             total_count: work.total_authors || 0,
-            author_string: work.author_string
+            author_string: authorsFromJson(work.authors_json).join('; ') || null
           },
           created_at: work.created_at
         }));

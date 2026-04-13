@@ -74,25 +74,23 @@ class RealTimeIndexingService {
         if (!this.enabled) {
             return { success: true, skipped: true };
         }
-        
+
         try {
             await sphinxService.ensureConnection();
-            
-            const sql = `DELETE FROM works_rt WHERE id = ?`;
-            await sphinxService.connection.query(sql, [workId]);
-            
-            logger.info('Real-time deletion successful', { work_id: workId });
-            
+            await sphinxService.deletePublication(workId);
+
+            logger.info('Real-time deletion successful', { publication_id: workId });
+
             return { success: true, deleted: true };
-            
+
         } catch (error) {
             logger.error('Real-time deletion failed', {
-                work_id: workId,
+                publication_id: workId,
                 error: error.message
             });
-            
+
             this.addToRetryQueue('DELETE', { id: workId });
-            
+
             return { success: false, queued: true, error: error.message };
         }
     }
@@ -138,14 +136,13 @@ class RealTimeIndexingService {
                     
                     switch (item.operation) {
                         case 'INSERT':
-                            result = await sphinxService.indexWork(item.data);
+                            result = await sphinxService.indexPublication(item.data);
                             break;
                         case 'UPDATE':
-                            result = await sphinxService.updateWork(item.data.id, item.data);
+                            result = await sphinxService.updatePublication(item.data.id, item.data);
                             break;
                         case 'DELETE':
-                            const sql = `DELETE FROM works_rt WHERE id = ?`;
-                            result = await sphinxService.connection.query(sql, [item.data.id]);
+                            result = await sphinxService.deletePublication(item.data.id);
                             break;
                     }
                     

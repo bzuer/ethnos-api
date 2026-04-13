@@ -115,7 +115,7 @@ class MetricsService {
         SELECT 
           vr.venue_id,
           vr.venue_name,
-          svs.abbreviated_name AS venue_abbreviated_name,
+          sv.abbrev_search AS venue_abbreviated_name,
           vr.venue_type,
           vr.total_works,
           vr.unique_authors,
@@ -124,7 +124,7 @@ class MetricsService {
           vr.open_access_percentage,
           vr.open_access_works
         FROM v_venue_ranking vr
-        LEFT JOIN sphinx_venues_summary svs ON svs.id = vr.venue_id
+        LEFT JOIN summary_venues sv ON sv.venue_id = vr.venue_id
         ORDER BY vr.total_works DESC
         LIMIT :limit OFFSET :offset
       `, {

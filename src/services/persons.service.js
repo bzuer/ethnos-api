@@ -5,6 +5,7 @@ const { logger } = require('../middleware/errorHandler');
 const sphinxService = require('./sphinx.service');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
+const { authorsFromJson } = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
 
 class PersonsService {
@@ -109,13 +110,13 @@ class PersonsService {
           a.position,
           v.id as venue_id,
           v.name as venue_name,
-          svs.abbreviated_name as venue_abbreviated_name,
+          sv.abbrev_search as venue_abbreviated_name,
           v.type as venue_type
         FROM authorships a
         INNER JOIN works w ON a.work_id = w.id
         LEFT JOIN publications pub ON w.id = pub.work_id
         LEFT JOIN venues v ON pub.venue_id = v.id
-        LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
+        LEFT JOIN summary_venues sv ON sv.venue_id = v.id
         WHERE a.person_id = :id
         ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
         LIMIT 10
@@ -464,18 +465,22 @@ class PersonsService {
             pub.volume,
             pub.issue,
           pub.pages,
-          was.author_string,
+          sp_a.authors_json,
           pub.open_access,
-          CASE 
-            WHEN was.author_string IS NOT NULL THEN 
-              (LENGTH(was.author_string) - LENGTH(REPLACE(was.author_string, ';', '')) + 1)
-              ELSE 0 
-            END as total_authors
+          (
+            SELECT JSON_LENGTH(sp_a2.authors_json)
+            FROM summary_publications sp_a2
+            WHERE sp_a2.publication_id = sp_a.publication_id
+          ) as total_authors
           FROM authorships a
           INNER JOIN works w ON a.work_id = w.id
           LEFT JOIN publications pub ON w.id = pub.work_id
           LEFT JOIN venues v ON pub.venue_id = v.id
-          LEFT JOIN work_author_summary was ON w.id = was.work_id
+          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+            SELECT MAX(publication_id)
+            FROM summary_publications
+            WHERE work_id = w.id
+          )
           WHERE ${whereClause}
           ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
           LIMIT :limit OFFSET :offset
@@ -537,7 +542,7 @@ class PersonsService {
           },
           authors: {
             total_count: work.total_authors || 0,
-            author_string: work.author_string
+            author_string: authorsFromJson(work.authors_json).join('; ') || null
           },
           created_at: work.created_at
         })),

@@ -4,7 +4,15 @@ const SphinxService = require('./sphinx.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
+const { authorsFromJson, subjectsFromJson: baseSubjectsFromJson } = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
+
+const subjectsFromJson = (value) =>
+  baseSubjectsFromJson(value).map(subject => ({
+    ...subject,
+    relevance_score: 1.0,
+    assigned_by: 'SYSTEM'
+  }));
 
 const normalizeDoiValue = (value) => {
   if (!value) return null;
@@ -139,7 +147,7 @@ class WorksService {
         return cached;
       }
 
-      const whereConditions = ['author_string IS NOT NULL'];
+      const whereConditions = ["authors_search IS NOT NULL AND authors_search != ''"];
       const queryParams = [];
 
       if (type) {
@@ -153,79 +161,88 @@ class WorksService {
       }
 
       if (year_from) {
-        whereConditions.push('year >= ?');
+        whereConditions.push('publication_year >= ?');
         queryParams.push(parseInt(year_from));
       }
 
       if (year_to) {
-        whereConditions.push('year <= ?');
+        whereConditions.push('publication_year <= ?');
         queryParams.push(parseInt(year_to));
       }
 
       let totalItems = 0;
-      
+
       if (queryParams.length === 0) {
         totalItems = 2499146;
       } else {
         const countSql = `
           SELECT COUNT(*) as total
           FROM (
-            SELECT 1 FROM sphinx_works_summary
+            SELECT 1 FROM summary_publications
             WHERE ${whereConditions.join(' AND ')}
             LIMIT 100000
           ) as limited_count
         `;
-        
+
         const [countResult] = await sequelize.query(withTimeout(countSql), {
           replacements: queryParams,
           type: sequelize.QueryTypes.SELECT
         });
-        
+
         const limitedCount = parseInt(countResult?.total) || 0;
         totalItems = limitedCount === 100000 ? limitedCount * 25 : limitedCount;
       }
 
       const selectSql = `
-        SELECT 
-          id,
-          title,
-          subtitle,
-          abstract,
-          author_string,
-          venue_name,
-          venue_abbrev,
-          doi,
-          created_ts,
-          year as publication_year,
-          year,
-          work_type,
-          language,
-          open_access,
-          peer_reviewed,
-          subjects_string,
-          FROM_UNIXTIME(created_ts) as created_at,
-          (LENGTH(author_string) - LENGTH(REPLACE(author_string, ';', '')) + 1) as author_count
-        FROM sphinx_works_summary
-        WHERE ${whereConditions.join(' AND ')}
-        ORDER BY id DESC
-        LIMIT ? OFFSET ?
+        SELECT
+          sp.work_id AS id,
+          sp.work_id,
+          sp.publication_id,
+          sp.title_search AS title,
+          sp.abstract_search AS abstract,
+          sp.doi,
+          sp.publication_year,
+          sp.work_type,
+          sp.language,
+          sp.open_access,
+          sp.peer_reviewed,
+          sp.has_files,
+          sp.authors_json,
+          sp.subjects_json,
+          sp.venue_id,
+          sp.venue_search AS venue_name,
+          sv.abbrev_search AS venue_abbrev,
+          sp.work_citation_count AS citation_count,
+          sp.work_reference_count AS reference_count
+        FROM (
+          SELECT work_id, MAX(publication_id) AS pub_id
+          FROM summary_publications
+          WHERE ${whereConditions.join(' AND ')}
+          GROUP BY work_id
+          ORDER BY work_id DESC
+          LIMIT ? OFFSET ?
+        ) latest
+        INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
+        LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+        ORDER BY sp.work_id DESC
       `;
 
       const queryParamsWithPagination = [...queryParams, effectiveLimit, offset];
       const primaryQueryStart = process.hrtime.bigint();
-      
+
       const works = await sequelize.query(withTimeout(selectSql), {
         replacements: queryParamsWithPagination,
         type: sequelize.QueryTypes.SELECT
       });
-      
+
       const primaryQueryMs = Number(((process.hrtime.bigint() - primaryQueryStart) / BigInt(1e6)).toString());
 
       const formattedWorks = works.map(work => {
+        const authorsPreview = authorsFromJson(work.authors_json);
         const base = formatWorkListItem({
           id: work.id,
           title: work.title,
-          subtitle: work.subtitle,
+          subtitle: null,
           abstract: work.abstract,
           work_type: work.work_type,
           language: work.language,
@@ -236,22 +253,22 @@ class WorksService {
           venue_name: work.venue_name || work.venue_abbrev || null,
           venue_abbreviated_name: work.venue_abbrev || null,
           venue_abbrev: work.venue_abbrev || null,
-          author_string: work.author_string,
-          author_count: work.author_count,
-          first_author: work.author_string ? work.author_string.split(';')[0]?.trim() : null,
-          created_at: work.created_at
+          authors_preview: authorsPreview.slice(0, 3),
+          author_count: authorsPreview.length,
+          first_author: authorsPreview[0] || null,
+          created_at: null
         });
 
         return {
           ...base,
-          author_string: typeof work.author_string === 'string' ? work.author_string : null,
-          subjects_string: typeof work.subjects_string === 'string' ? work.subjects_string : null,
-          venue_name: typeof (work.venue_name || work.venue_abbrev) === 'string' ? (work.venue_name || work.venue_abbrev) : null,
-          venue_abbreviated_name: typeof work.venue_abbrev === 'string' ? work.venue_abbrev : null,
+          author_string: authorsPreview.join('; ') || null,
+          subjects_string: subjectsFromJson(work.subjects_json).map(s => s.term).join('; ') || null,
+          venue_name: (work.venue_name || work.venue_abbrev) || null,
+          venue_abbreviated_name: work.venue_abbrev || null,
           work_type: work.work_type || null,
-          year: work.year !== undefined && work.year !== null ? work.year : null,
-          created_ts: work.created_ts !== undefined && work.created_ts !== null ? work.created_ts : null,
-          created_at: work.created_at || null
+          year: work.publication_year ?? null,
+          created_ts: null,
+          created_at: null
         };
       });
 
@@ -259,7 +276,7 @@ class WorksService {
         data: formattedWorks,
         pagination: createPagination(page, effectiveLimit, totalItems),
         meta: {
-          query_source: 'sphinx_works_summary',
+          query_source: 'summary_publications',
           performance: {
             engine: 'MariaDB',
             query_type: 'showcase_optimized',
@@ -282,67 +299,70 @@ class WorksService {
   async _getWorksVitrine(filters, limit, offset, page) {
     const { type, year_from, year_to, search, open_access, language, peer_reviewed, venue_name, author, subject } = filters;
 
-    let whereConditions = ['author_string IS NOT NULL'];
+    const whereConditions = ["sp.authors_search IS NOT NULL AND sp.authors_search != ''"];
     const filterParams = [];
 
     if (search) {
-      whereConditions.push('title LIKE ?');
+      whereConditions.push('sp.title_search LIKE ?');
       filterParams.push(`%${search}%`);
     }
 
     if (type) {
-      whereConditions.push('work_type = ?');
+      whereConditions.push('sp.work_type = ?');
       filterParams.push(type);
     }
 
     if (language) {
-      whereConditions.push('language = ?');
+      whereConditions.push('sp.language = ?');
       filterParams.push(language);
     }
 
     if (year_from) {
-      whereConditions.push('year >= ?');
+      whereConditions.push('sp.publication_year >= ?');
       filterParams.push(parseInt(year_from));
     }
 
     if (year_to) {
-      whereConditions.push('year <= ?');
+      whereConditions.push('sp.publication_year <= ?');
       filterParams.push(parseInt(year_to));
     }
 
     if (open_access !== undefined) {
-      whereConditions.push('open_access = ?');
+      whereConditions.push('sp.open_access = ?');
       filterParams.push(open_access === 'true' || open_access === true ? 1 : 0);
     }
 
     if (peer_reviewed !== undefined) {
-      whereConditions.push('peer_reviewed = ?');
+      whereConditions.push('sp.peer_reviewed = ?');
       filterParams.push(peer_reviewed === 'true' || peer_reviewed === true ? 1 : 0);
     }
 
+    let venueJoin = '';
     if (venue_name) {
-      whereConditions.push('(venue_name LIKE ? OR venue_abbrev LIKE ?)');
+      venueJoin = 'LEFT JOIN summary_venues sv_filter ON sv_filter.venue_id = sp.venue_id';
+      whereConditions.push('(sp.venue_search LIKE ? OR sv_filter.abbrev_search LIKE ?)');
       filterParams.push(`%${venue_name}%`, `%${venue_name}%`);
     }
 
     if (author) {
-      whereConditions.push('author_string LIKE ?');
+      whereConditions.push('sp.authors_search LIKE ?');
       filterParams.push(`%${author}%`);
     }
 
     if (subject) {
-      whereConditions.push('subjects_string LIKE ?');
+      whereConditions.push('sp.subjects_search LIKE ?');
       filterParams.push(`%${subject}%`);
     }
 
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000');
 
     const countSql = `
-      SELECT COUNT(*) as total
-      FROM sphinx_works_summary
+      SELECT COUNT(DISTINCT sp.work_id) as total
+      FROM summary_publications sp
+      ${venueJoin}
       WHERE ${whereConditions.join(' AND ')}
     `;
-    
+
     const [countRow] = await Promise.race([
       sequelize.query(countSql, {
         replacements: filterParams,
@@ -354,25 +374,38 @@ class WorksService {
 
     const queryParams = [...filterParams, limit, offset];
     const selectSql = `
-      SELECT 
-        id,
-        title,
-        subtitle,
-        abstract,
-        author_string,
-        venue_name,
-        venue_abbrev,
-        doi,
-        year,
-        work_type,
-        language,
-        open_access,
-        peer_reviewed,
-        FROM_UNIXTIME(created_ts) AS created_at
-      FROM sphinx_works_summary
-      WHERE ${whereConditions.join(' AND ')}
-      ORDER BY id DESC
-      LIMIT ? OFFSET ?
+      SELECT
+        sp.work_id AS id,
+        sp.work_id,
+        sp.publication_id,
+        sp.title_search AS title,
+        sp.abstract_search AS abstract,
+        sp.doi,
+        sp.publication_year,
+        sp.work_type,
+        sp.language,
+        sp.open_access,
+        sp.peer_reviewed,
+        sp.has_files,
+        sp.authors_json,
+        sp.subjects_json,
+        sp.venue_id,
+        sp.venue_search AS venue_name,
+        sv.abbrev_search AS venue_abbrev,
+        sp.work_citation_count AS citation_count,
+        sp.work_reference_count AS reference_count
+      FROM (
+        SELECT sp.work_id, MAX(sp.publication_id) AS pub_id
+        FROM summary_publications sp
+        ${venueJoin}
+        WHERE ${whereConditions.join(' AND ')}
+        GROUP BY sp.work_id
+        ORDER BY sp.work_id DESC
+        LIMIT ? OFFSET ?
+      ) latest
+      INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
+      LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+      ORDER BY sp.work_id DESC
     `;
 
     const primaryQueryStart = process.hrtime.bigint();
@@ -386,16 +419,16 @@ class WorksService {
     const primaryQueryMs = Number(((process.hrtime.bigint() - primaryQueryStart) / BigInt(1e6)).toString());
 
     let processedWorks = works.map(work => {
-      const authors = work.author_string ? work.author_string.split(';').map(a => a.trim()) : [];
-      
+      const authors = authorsFromJson(work.authors_json);
+
       return {
         id: work.id,
         title: work.title,
-        subtitle: work.subtitle,
-        abstract: work.abstract,
+        subtitle: null,
+        abstract: work.abstract || null,
         type: work.work_type,
         language: work.language,
-        publication_year: work.year,
+        publication_year: work.publication_year,
         doi: work.doi,
         peer_reviewed: work.peer_reviewed === 1,
         open_access: work.open_access === 1,
@@ -408,8 +441,8 @@ class WorksService {
         author_count: authors.length,
         first_author: authors.length > 0 ? authors[0] : null,
         authors_preview: authors.slice(0, 3),
-        added_to_database: work.created_at,
-        created_at: work.created_at,
+        added_to_database: null,
+        created_at: null,
         data_source: 'full_api',
         search_engine: null
       };
@@ -430,7 +463,7 @@ class WorksService {
                p1.doi,
                v.id AS venue_id,
                v.name AS venue_name,
-               svs.abbreviated_name AS venue_abbreviated_name,
+               sv.abbrev_search AS venue_abbreviated_name,
                v.type AS venue_type,
                v.issn,
                v.eissn,
@@ -446,7 +479,7 @@ class WorksService {
           GROUP BY work_id
         ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
         LEFT JOIN venues v ON p1.venue_id = v.id
-        LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
+        LEFT JOIN summary_venues sv ON sv.venue_id = v.id
         WHERE p1.work_id IN (${placeholders})
       `;
       const pubsStart = process.hrtime.bigint();
@@ -584,7 +617,7 @@ class WorksService {
         -- Venue data
         v.id as venue_id,
         v.name as venue_name,
-        svs.abbreviated_name as venue_abbreviated_name,
+        sv.abbrev_search as venue_abbreviated_name,
         v.type as venue_type,
         v.issn,
         v.eissn,
@@ -616,7 +649,7 @@ class WorksService {
         SELECT MIN(p3.id) FROM publications p3 WHERE p3.work_id = w.id
       )
       LEFT JOIN venues v ON pub_latest.venue_id = v.id
-      LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
+      LEFT JOIN summary_venues sv ON sv.venue_id = v.id
       LEFT JOIN organizations publisher ON v.publisher_id = publisher.id
       WHERE w.id = ?
     `, {
@@ -779,17 +812,34 @@ class WorksService {
     if (!subjectsData || subjectsData.length === 0) {
       try {
         const [spxRow] = await sequelize.query(
-          `SELECT subjects_string FROM sphinx_works_summary WHERE id = ? LIMIT 1`,
+          `SELECT subjects_json, subjects_search
+             FROM summary_publications
+             WHERE work_id = ?
+             ORDER BY publication_id DESC
+             LIMIT 1`,
           { replacements: [id], type: sequelize.QueryTypes.SELECT }
         );
-        const subjStr = spxRow && spxRow.subjects_string ? String(spxRow.subjects_string).trim() : '';
-        if (subjStr) {
-          const parsed = subjStr
-            .split(';')
-            .map(s => s.trim())
-            .filter(Boolean)
-            .map(term => ({ subject_id: null, term, vocabulary: 'KEYWORD', lang: null, relevance_score: 1.0, assigned_by: 'SYSTEM' }));
-          subjectsData = parsed;
+        if (spxRow) {
+          const fromJson = subjectsFromJson(spxRow.subjects_json);
+          if (fromJson.length > 0) {
+            subjectsData = fromJson;
+          } else {
+            const subjStr = spxRow.subjects_search ? String(spxRow.subjects_search).trim() : '';
+            if (subjStr) {
+              subjectsData = subjStr
+                .split(/[;\s]+/)
+                .map(s => s.trim())
+                .filter(Boolean)
+                .map(term => ({
+                  subject_id: null,
+                  term,
+                  vocabulary: 'KEYWORD',
+                  lang: null,
+                  relevance_score: 1.0,
+                  assigned_by: 'SYSTEM'
+                }));
+            }
+          }
         }
       } catch (_) {}
     }
@@ -870,22 +920,45 @@ class WorksService {
       const inIds = incomingRows.map(r => r.citing_work_id);
       const outIds = outgoingResolvedRows.map(r => r.cited_work_id);
       const allIds = Array.from(new Set([...inIds, ...outIds]));
-      let sphinxMap = {};
+      let summaryMap = {};
       if (allIds.length) {
         const placeholders = allIds.map(() => '?').join(',');
-        const sphinxRows = await sequelize.query(
-          `SELECT id, title, year, author_string, venue_name, venue_abbrev, doi, open_access FROM sphinx_works_summary WHERE id IN (${placeholders})`,
+        const summaryRows = await sequelize.query(
+          `SELECT sp.work_id,
+                  sp.title_search AS title,
+                  sp.publication_year AS year,
+                  sp.authors_json,
+                  sp.venue_search AS venue_name,
+                  sv.abbrev_search AS venue_abbrev,
+                  sp.doi,
+                  sp.open_access
+             FROM summary_publications sp
+             LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+             INNER JOIN (
+               SELECT work_id, MAX(publication_id) AS pub_id
+               FROM summary_publications
+               WHERE work_id IN (${placeholders})
+               GROUP BY work_id
+             ) latest ON latest.pub_id = sp.publication_id`,
           { replacements: allIds, type: sequelize.QueryTypes.SELECT }
         );
-        sphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
+        summaryMap = summaryRows.reduce((acc, row) => {
+          acc[row.work_id] = row;
+          return acc;
+        }, {});
       }
 
+      const citationAuthorString = (row) => {
+        const authors = authorsFromJson(row.authors_json);
+        return authors.length ? authors.join('; ') : null;
+      };
+
       citedBy = includeCitations ? incomingRows.map(row => {
-        const sw = sphinxMap[row.citing_work_id] || {};
+        const sw = summaryMap[row.citing_work_id] || {};
         return {
           work_id: row.citing_work_id,
           title: sw.title || null,
-          authors: sw.author_string || null,
+          authors: citationAuthorString(sw),
           publication_year: sw.year || null,
           venue_name: sw.venue_name || sw.venue_abbrev || null,
           venue_abbreviated_name: sw.venue_abbrev || null,
@@ -897,11 +970,11 @@ class WorksService {
       }) : [];
 
       references = includeReferences ? outgoingResolvedRows.map(row => {
-        const sw = sphinxMap[row.cited_work_id] || {};
+        const sw = summaryMap[row.cited_work_id] || {};
         return {
           work_id: row.cited_work_id,
           title: sw.title || null,
-          authors: sw.author_string || null,
+          authors: citationAuthorString(sw),
           publication_year: sw.year || null,
           venue_name: sw.venue_name || sw.venue_abbrev || null,
           venue_abbreviated_name: sw.venue_abbrev || null,
@@ -1041,11 +1114,11 @@ class WorksService {
     if (type) { where.push('w.work_type = ?'); params.push(type); }
     if (language) { where.push('w.language = ?'); params.push(language); }
     if (author) {
-      where.push('EXISTS (SELECT 1 FROM work_author_summary was2 WHERE was2.work_id = w.id AND was2.author_string LIKE ?)');
+      where.push('EXISTS (SELECT 1 FROM summary_publications sp_a WHERE sp_a.work_id = w.id AND sp_a.authors_search LIKE ?)');
       params.push(`%${author}%`);
     }
     if (subject) {
-      where.push('EXISTS (SELECT 1 FROM sphinx_works_summary sws WHERE sws.id = w.id AND sws.subjects_string LIKE ?)');
+      where.push('EXISTS (SELECT 1 FROM summary_publications sp_s WHERE sp_s.work_id = w.id AND sp_s.subjects_search LIKE ?)');
       params.push(`%${subject}%`);
     }
 
@@ -1106,7 +1179,7 @@ class WorksService {
     const placeholders = workIds.map(() => '?').join(',');
     const [works] = await pool.execute({
       sql: `
-        SELECT 
+        SELECT
           w.id,
           w.title,
           w.subtitle,
@@ -1114,9 +1187,13 @@ class WorksService {
           w.work_type,
           w.language,
           w.created_at,
-          was.author_string
+          sp.authors_json
         FROM works w
-        INNER JOIN work_author_summary was ON was.work_id = w.id
+        LEFT JOIN summary_publications sp ON sp.publication_id = (
+          SELECT MAX(publication_id)
+          FROM summary_publications
+          WHERE work_id = w.id
+        )
         WHERE w.id IN (${placeholders})
       `,
       timeout: dbTimeoutMs
@@ -1134,7 +1211,7 @@ class WorksService {
                  p1.doi,
                  v.id AS venue_id,
                  v.name AS venue_name,
-                 svs.abbreviated_name AS venue_abbreviated_name,
+                 sv.abbrev_search AS venue_abbreviated_name,
                  v.type AS venue_type,
                  v.issn,
                  v.eissn,
@@ -1150,7 +1227,7 @@ class WorksService {
             GROUP BY work_id
           ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
           LEFT JOIN venues v ON p1.venue_id = v.id
-          LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
+          LEFT JOIN summary_venues sv ON sv.venue_id = v.id
         `,
         timeout: dbTimeoutMs
       }, workIds);
@@ -1161,7 +1238,7 @@ class WorksService {
     for (const pub of publicationsData) pubMap[pub.work_id] = pub;
 
     let processed = works.map(work => {
-      const authors = work.author_string ? work.author_string.split(';').map(a => a.trim()) : [];
+      const authors = authorsFromJson(work.authors_json);
       const pub = pubMap[work.id];
       return {
         id: work.id,
@@ -1223,11 +1300,8 @@ class WorksService {
         subject: filters?.subject,
         venue_id: filters?.venue_id,
         publisher_id: filters?.publisher_id,
-        first_author_id: filters?.first_author_id,
         citation_count_min: filters?.citation_count_min,
         reference_count_min: filters?.reference_count_min,
-        resolved_references_min: filters?.resolved_references_min,
-        pending_references_max: filters?.pending_references_max,
         has_files: filters?.has_files
       }, { limit, offset });
 
@@ -1246,7 +1320,7 @@ class WorksService {
 
       const [works] = await pool.execute({
         sql: `
-          SELECT 
+          SELECT
             w.id,
             w.title,
             w.subtitle,
@@ -1254,9 +1328,13 @@ class WorksService {
             w.work_type,
             w.language,
             w.created_at,
-            was.author_string
+            sp.authors_json
           FROM works w
-          INNER JOIN work_author_summary was ON was.work_id = w.id
+          LEFT JOIN summary_publications sp ON sp.publication_id = (
+            SELECT MAX(publication_id)
+            FROM summary_publications
+            WHERE work_id = w.id
+          )
           WHERE w.id IN (${ids.map(() => '?').join(',')})
           ORDER BY ${orderField}
         `,
@@ -1274,7 +1352,7 @@ class WorksService {
                  p1.doi,
                  v.id AS venue_id,
                  v.name AS venue_name,
-                 svs.abbreviated_name AS venue_abbreviated_name,
+                 sv.abbrev_search AS venue_abbreviated_name,
                  v.type AS venue_type,
                  v.issn,
                  v.eissn,
@@ -1290,7 +1368,7 @@ class WorksService {
             GROUP BY work_id
           ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
           LEFT JOIN venues v ON p1.venue_id = v.id
-          LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
+          LEFT JOIN summary_venues sv ON sv.venue_id = v.id
         `,
         timeout: parseInt(process.env.DB_QUERY_TIMEOUT_MS || '6000')
       }, ids);
@@ -1300,7 +1378,7 @@ class WorksService {
       for (const pub of publicationsData) pubMap[pub.work_id] = pub;
 
       let processedWorks = (works || []).map(work => {
-        const authors = work.author_string ? work.author_string.split(';').map(a => a.trim()) : [];
+        const authors = authorsFromJson(work.authors_json);
         const pub = pubMap[work.id];
         return {
           id: work.id,

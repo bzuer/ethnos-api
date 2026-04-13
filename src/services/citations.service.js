@@ -3,6 +3,44 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination } = require('../utils/pagination');
 const { formatCitationWork } = require('../dto/citations.dto');
+const { parseJsonColumn } = require('../dto/helpers');
+
+const fetchWorkSummaryByIds = async (workIds) => {
+  if (!workIds || workIds.length === 0) return {};
+  const placeholders = workIds.map(() => '?').join(',');
+  const rows = await sequelize.query(
+    `SELECT sp.work_id,
+            sp.title_search AS title,
+            sp.publication_year AS year,
+            sp.work_type,
+            sp.venue_search AS venue_name,
+            sv.abbrev_search AS venue_abbrev,
+            sp.doi,
+            sp.authors_json
+       FROM summary_publications sp
+       LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+       INNER JOIN (
+         SELECT work_id, MAX(publication_id) AS pub_id
+         FROM summary_publications
+         WHERE work_id IN (${placeholders})
+         GROUP BY work_id
+       ) latest ON latest.pub_id = sp.publication_id`,
+    { replacements: workIds, type: sequelize.QueryTypes.SELECT }
+  );
+  return rows.reduce((acc, row) => {
+    const authors = parseJsonColumn(row.authors_json);
+    acc[row.work_id] = {
+      title: row.title || null,
+      year: row.year || null,
+      work_type: row.work_type || null,
+      venue_name: row.venue_name || null,
+      venue_abbrev: row.venue_abbrev || null,
+      doi: row.doi || null,
+      authors_count: Array.isArray(authors) ? authors.length : 0
+    };
+    return acc;
+  }, {});
+};
 
 const normalizeDoiValue = (value) => {
   if (!value) return null;
@@ -96,18 +134,9 @@ class CitationsService {
       const total = parseInt(countRow?.total || 0);
 
       const ids = citingRows.map(r => r.citing_work_id);
-      let sphinxMap = {};
-      if (ids.length) {
-        const placeholders = ids.map(() => '?').join(',');
-        const sphinxRows = await sequelize.query(
-          `SELECT id, title, year, work_type, venue_name, venue_abbrev, doi, author_string FROM sphinx_works_summary WHERE id IN (${placeholders})`,
-          { replacements: ids, type: sequelize.QueryTypes.SELECT }
-        );
-        sphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
-      }
+      const summaryMap = await fetchWorkSummaryByIds(ids);
       const citingWorks = citingRows.map(row => {
-        const sw = sphinxMap[row.citing_work_id] || {};
-        const authorsCount = sw.author_string ? sw.author_string.split(';').filter(Boolean).length : 0;
+        const sw = summaryMap[row.citing_work_id] || {};
         return {
           citing_work_id: row.citing_work_id,
           title: sw.title || null,
@@ -116,7 +145,7 @@ class CitationsService {
           venue_name: sw.venue_name || sw.venue_abbrev || null,
           venue_abbreviated_name: sw.venue_abbrev || null,
           doi: sw.doi || null,
-          authors_count: authorsCount,
+          authors_count: sw.authors_count || 0,
           citation: { type: row.citation_type || null, status: row.citation_status || null, context: null }
         };
       }).map(formatCitationWork);
@@ -187,18 +216,9 @@ class CitationsService {
 
       const resolvedRows = Array.from(resolvedByWorkId.values());
       const refIds = resolvedRows.map(r => r.cited_work_id);
-      let refSphinxMap = {};
-      if (refIds.length) {
-        const placeholders = refIds.map(() => '?').join(',');
-        const sphinxRows = await sequelize.query(
-          `SELECT id, title, year, work_type, venue_name, venue_abbrev, doi, author_string FROM sphinx_works_summary WHERE id IN (${placeholders})`,
-          { replacements: refIds, type: sequelize.QueryTypes.SELECT }
-        );
-        refSphinxMap = sphinxRows.reduce((acc, row) => { acc[row.id] = row; return acc; }, {});
-      }
+      const refSummaryMap = await fetchWorkSummaryByIds(refIds);
       const referencedWorks = resolvedRows.map(row => {
-        const sw = refSphinxMap[row.cited_work_id] || {};
-        const authorsCount = sw.author_string ? sw.author_string.split(';').filter(Boolean).length : 0;
+        const sw = refSummaryMap[row.cited_work_id] || {};
         return {
           cited_work_id: row.cited_work_id,
           title: sw.title || null,
@@ -207,7 +227,7 @@ class CitationsService {
           venue_name: sw.venue_name || sw.venue_abbrev || null,
           venue_abbreviated_name: sw.venue_abbrev || null,
           doi: sw.doi || row.cited_doi || null,
-          authors_count: authorsCount,
+          authors_count: sw.authors_count || 0,
           citation: { type: row.citation_type || null, context: null }
         };
       }).map(formatCitationWork);

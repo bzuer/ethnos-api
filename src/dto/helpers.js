@@ -96,10 +96,42 @@ function parseJsonColumn(value) {
   }
 }
 
+function authorsFromJson(value) {
+  const parsed = parseJsonColumn(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .map(author => {
+      if (!author || typeof author !== 'object') return null;
+      const name = author.name || author.preferred_name || null;
+      return name ? String(name).trim() : null;
+    })
+    .filter(Boolean);
+}
+
+function subjectsFromJson(value) {
+  const parsed = parseJsonColumn(value);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .map(subject => {
+      if (!subject || typeof subject !== 'object') return null;
+      const term = subject.term || null;
+      if (!term) return null;
+      return {
+        subject_id: subject.id ?? subject.subject_id ?? null,
+        term,
+        vocabulary: subject.vocabulary || 'KEYWORD',
+        lang: subject.lang || null
+      };
+    })
+    .filter(Boolean);
+}
+
 module.exports = {
   toOptionalBoolean,
   toOptionalInteger,
   normalizeType,
   normalizeVenue,
-  parseJsonColumn
+  parseJsonColumn,
+  authorsFromJson,
+  subjectsFromJson
 };

@@ -156,7 +156,7 @@ const options = {
               nullable: true,
               example: 2023,
               deprecated: true,
-              description: 'Legacy alias from sphinx_works_summary. Returned only by /works/showcase. Prefer publication_year in list payloads or publication.year in detailed payloads.'
+              description: 'Legacy alias from summary_publications. Returned only by /works/showcase. Prefer publication_year in list payloads or publication.year in detailed payloads.'
             },
             work_type: {
               type: 'string',
@@ -164,7 +164,7 @@ const options = {
               enum: ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'],
               example: 'ARTICLE',
               deprecated: true,
-              description: 'Legacy alias from sphinx_works_summary. Returned only by /works/showcase. Prefer type.'
+              description: 'Legacy alias from summary_publications. Returned only by /works/showcase. Prefer type.'
             },
             type: {
               type: 'string',

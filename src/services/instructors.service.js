@@ -9,6 +9,7 @@ const {
   formatInstructorBibliography,
   formatInstructorStatistics
 } = require('../dto/instructor.dto');
+const { authorsFromJson } = require('../dto/helpers');
 
 class InstructorsService {
   
@@ -368,15 +369,18 @@ class InstructorsService {
         w.work_type as document_type,
         pub.open_access,
         cb.reading_type,
-        (LENGTH(was.author_string) - LENGTH(REPLACE(was.author_string, ';', '')) + 1) as author_count,
-        p_first.preferred_name as first_author_name,
+        COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as author_count,
+        sp_a.authors_json,
         COUNT(DISTINCT cb.course_id) as used_in_courses
       FROM works w
       JOIN course_bibliography cb ON w.id = cb.work_id
       JOIN course_instructors ci ON cb.course_id = ci.course_id
-      LEFT JOIN work_author_summary was ON w.id = was.work_id
       LEFT JOIN publications pub ON w.id = pub.work_id
-      LEFT JOIN persons p_first ON was.first_author_id = p_first.id
+      LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+        SELECT MAX(publication_id)
+        FROM summary_publications
+        WHERE work_id = w.id
+      )
       WHERE ci.canonical_person_id = ?
     `;
 
@@ -398,7 +402,7 @@ class InstructorsService {
     }
 
     query += `
-      GROUP BY w.id, w.title, pub.year, w.language, w.work_type, cb.reading_type, p_first.preferred_name
+      GROUP BY w.id, w.title, pub.year, w.language, w.work_type, cb.reading_type, sp_a.authors_json
       ORDER BY used_in_courses DESC, pub.year DESC
       LIMIT ? OFFSET ?
     `;
@@ -407,12 +411,10 @@ class InstructorsService {
     const [bibliography] = await pool.execute(query, params);
 
     for (const item of bibliography) {
-      if (item.first_author_name && item.first_author_name.includes(';')) {
-        const authors = item.first_author_name.split(';').map(name => name.trim());
-        item.authors = authors;
-      } else {
-        item.authors = item.first_author_name ? [item.first_author_name.trim()] : [];
-      }
+      const authors = authorsFromJson(item.authors_json);
+      item.authors = authors;
+      item.first_author_name = authors[0] || null;
+      delete item.authors_json;
     }
 
     const countQuery = `
@@ -561,22 +563,30 @@ class InstructorsService {
     });
 
     const mostUsedAuthorsQuery = `
-      SELECT 
-        was.author_string,
-        p_first.preferred_name as first_author_name,
+      SELECT
+        sp_a.authors_json,
         COUNT(DISTINCT cb.work_id) as usage_count,
         COUNT(DISTINCT cb.course_id) as courses_count
       FROM course_instructors ci
       JOIN course_bibliography cb ON ci.course_id = cb.course_id
-      JOIN work_author_summary was ON cb.work_id = was.work_id
-      LEFT JOIN persons p_first ON was.first_author_id = p_first.id
+      JOIN summary_publications sp_a ON sp_a.publication_id = (
+        SELECT MAX(publication_id)
+        FROM summary_publications
+        WHERE work_id = cb.work_id
+      )
       WHERE ci.canonical_person_id = ?
-      GROUP BY was.author_string, p_first.preferred_name
+      GROUP BY sp_a.authors_json
       ORDER BY usage_count DESC
       LIMIT 15
     `;
 
     const [mostUsedAuthors] = await pool.execute(mostUsedAuthorsQuery, [personId]);
+    mostUsedAuthors.forEach(row => {
+      const authors = authorsFromJson(row.authors_json);
+      row.author_string = authors.join('; ') || null;
+      row.first_author_name = authors[0] || null;
+      delete row.authors_json;
+    });
 
     const subjectsExpertiseQuery = `
       SELECT 

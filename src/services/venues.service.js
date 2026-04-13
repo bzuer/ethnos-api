@@ -29,10 +29,15 @@ const toNullableBoolean = (value) => {
   return Number(value) === 1;
 };
 
+const { parseJsonColumn } = require('../dto/helpers');
+
 const buildSummarySnapshotObject = (row = {}) => {
   if (!row || typeof row !== 'object') {
     return null;
   }
+
+  const topSubjects = parseJsonColumn(row.top_subjects_json);
+  const topPublications = parseJsonColumn(row.top_publications_json);
 
   const snapshot = {
     id: row.id ?? null,
@@ -43,8 +48,8 @@ const buildSummarySnapshotObject = (row = {}) => {
     country_code: row.country_code ?? null,
     issn: row.issn ?? null,
     eissn: row.eissn ?? null,
-    subjects_string: row.subjects_string ?? null,
-    top_works_string: row.top_works_string ?? null,
+    top_subjects: Array.isArray(topSubjects) ? topSubjects : [],
+    top_publications: Array.isArray(topPublications) ? topPublications : [],
     works_count: row.works_count !== undefined && row.works_count !== null ? toInt(row.works_count, null) : null,
     cited_by_count: row.cited_by_count !== undefined && row.cited_by_count !== null ? toInt(row.cited_by_count, null) : null,
     impact_factor: toNullableFloat(row.impact_factor),
@@ -53,24 +58,33 @@ const buildSummarySnapshotObject = (row = {}) => {
     last_updated: row.last_updated ?? null
   };
 
-  const hasData = Object.values(snapshot).some((value) => value !== null && value !== undefined);
+  const hasData = Object.values(snapshot).some((value) => {
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  });
   return hasData ? snapshot : null;
 };
 
 const summarySubjectsFallback = (snapshot) => {
-  if (!snapshot || !snapshot.subjects_string || typeof snapshot.subjects_string !== 'string') {
+  if (!snapshot || !Array.isArray(snapshot.top_subjects) || snapshot.top_subjects.length === 0) {
     return [];
   }
 
-  return [
-    {
-      subject_id: null,
-      term: snapshot.subjects_string,
-      score: null,
-      vocabulary: null,
-      lang: null
-    }
-  ];
+  return snapshot.top_subjects
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const term = entry.term || entry.name || null;
+      if (!term) return null;
+      return {
+        subject_id: entry.id ?? entry.subject_id ?? null,
+        term,
+        score: typeof entry.score === 'number' ? entry.score : null,
+        vocabulary: entry.vocabulary || null,
+        lang: entry.lang || null
+      };
+    })
+    .filter(Boolean);
 };
 
 class VenuesService {
@@ -170,24 +184,24 @@ class VenuesService {
 
     const summaryQuery = `
       SELECT
-        id,
-        name,
-        abbreviated_name,
-        type,
-        publisher_name,
-        country_code,
-        issn,
-        eissn,
-        subjects_string,
-        top_works_string,
-        works_count,
-        cited_by_count,
-        impact_factor,
-        h_index,
-        open_access_percentage,
-        last_updated
-      FROM sphinx_venues_summary
-      WHERE id IN (:venueIds)`;
+        sv.venue_id AS id,
+        sv.name_search AS name,
+        sv.abbrev_search AS abbreviated_name,
+        sv.venue_type AS type,
+        sv.publisher_search AS publisher_name,
+        sv.country_code,
+        sv.issn,
+        sv.eissn,
+        sv.top_subjects_json,
+        sv.top_publications_json,
+        sv.total_publications_count AS works_count,
+        sv.total_cited_by_count AS cited_by_count,
+        sv.impact_factor,
+        sv.h_index,
+        sv.open_access_percentage,
+        sv.summary_updated_at AS last_updated
+      FROM summary_venues sv
+      WHERE sv.venue_id IN (:venueIds)`;
 
     const venueRankingQuery = `
       SELECT 
@@ -743,43 +757,39 @@ class VenuesService {
     const currentLimit = Math.min(Math.max(1, parseInt(limit, 10) || 20), 100);
     const currentOffset = Math.max(0, parseInt(offset, 10) || 0);
 
-    const filterTemplates = [];
+    const whereSummary = [];
+    const whereFallback = [];
     const filterParams = [];
 
     const normalizedMinId = Number.isInteger(min_id) ? min_id : (Number.isInteger(parseInt(min_id, 10)) ? parseInt(min_id, 10) : undefined);
     if (Number.isInteger(normalizedMinId) && normalizedMinId > 0) {
-      filterTemplates.push('{{alias}}.id >= ?');
+      whereSummary.push('sv.venue_id >= ?');
+      whereFallback.push('v.id >= ?');
       filterParams.push(normalizedMinId);
     }
 
     if (type) {
-      filterTemplates.push('{{alias}}.type = ?');
+      whereSummary.push('sv.venue_type = ?');
+      whereFallback.push('v.type = ?');
       filterParams.push(type);
     }
 
     if (search && search.trim().length > 0) {
       const term = `%${search.trim()}%`;
-      filterTemplates.push('({{alias}}.name LIKE ? OR {{alias}}.abbreviated_name LIKE ? OR {{alias}}.issn LIKE ? OR {{alias}}.eissn LIKE ?)');
+      whereSummary.push('(sv.name_search LIKE ? OR sv.abbrev_search LIKE ? OR sv.issn LIKE ? OR sv.eissn LIKE ?)');
+      whereFallback.push('(v.name LIKE ? OR v.abbreviated_name LIKE ? OR v.issn LIKE ? OR v.eissn LIKE ?)');
       filterParams.push(term, term, term, term);
     }
 
-    const buildWhereClause = (alias) => {
-      if (!filterTemplates.length) {
-        return '';
-      }
-      return `WHERE ${filterTemplates
-        .map((condition) => condition.replaceAll('{{alias}}', alias))
-        .join(' AND ')}`;
-    };
-    const whereClauseSummary = buildWhereClause('svs');
-    const whereClauseFallback = buildWhereClause('v');
+    const whereClauseSummary = whereSummary.length ? `WHERE ${whereSummary.join(' AND ')}` : '';
+    const whereClauseFallback = whereFallback.length ? `WHERE ${whereFallback.join(' AND ')}` : '';
 
     const summarySortFields = {
-      name: 'svs.name',
-      type: 'svs.type',
-      impact_factor: 'COALESCE(svs.impact_factor, v.impact_factor)',
-      works_count: 'COALESCE(svs.works_count, v.works_count, 0)',
-      id: 'svs.id'
+      name: 'sv.name_search',
+      type: 'sv.venue_type',
+      impact_factor: 'COALESCE(sv.impact_factor, v.impact_factor)',
+      works_count: 'COALESCE(sv.total_publications_count, v.works_count, 0)',
+      id: 'sv.venue_id'
     };
     const fallbackSortFields = {
       name: 'v.name',
@@ -798,22 +808,22 @@ class VenuesService {
 
     const summaryVenuesQuery = `
       SELECT
-        svs.id AS summary_id,
-        svs.name AS summary_name,
-        svs.abbreviated_name AS summary_abbreviated_name,
-        svs.type AS summary_type,
-        svs.publisher_name AS summary_publisher_name,
-        svs.country_code AS summary_country_code,
-        svs.issn AS summary_issn,
-        svs.eissn AS summary_eissn,
-        svs.subjects_string AS summary_subjects_string,
-        svs.top_works_string AS summary_top_works_string,
-        svs.works_count AS summary_works_count,
-        svs.cited_by_count AS summary_cited_by_count,
-        svs.impact_factor AS summary_impact_factor,
-        svs.h_index AS summary_h_index,
-        svs.open_access_percentage AS summary_open_access_percentage,
-        svs.last_updated AS summary_last_updated,
+        sv.venue_id AS summary_id,
+        sv.name_search AS summary_name,
+        sv.abbrev_search AS summary_abbreviated_name,
+        sv.venue_type AS summary_type,
+        sv.publisher_search AS summary_publisher_name,
+        sv.country_code AS summary_country_code,
+        sv.issn AS summary_issn,
+        sv.eissn AS summary_eissn,
+        sv.top_subjects_json AS summary_top_subjects_json,
+        sv.top_publications_json AS summary_top_publications_json,
+        sv.total_publications_count AS summary_works_count,
+        sv.total_cited_by_count AS summary_cited_by_count,
+        sv.impact_factor AS summary_impact_factor,
+        sv.h_index AS summary_h_index,
+        sv.open_access_percentage AS summary_open_access_percentage,
+        sv.summary_updated_at AS summary_last_updated,
         v.id,
         v.name,
         v.abbreviated_name,
@@ -843,11 +853,11 @@ class VenuesService {
         pub.name as publisher_name,
         pub.type as publisher_type,
         pub.country_code as publisher_country
-      FROM sphinx_venues_summary svs
-      LEFT JOIN venues v ON v.id = svs.id
+      FROM summary_venues sv
+      LEFT JOIN venues v ON v.id = sv.venue_id
       LEFT JOIN organizations pub ON v.publisher_id = pub.id
       ${whereClauseSummary}
-      ORDER BY ${finalSummarySortField} ${finalSortOrder}, svs.name ASC
+      ORDER BY ${finalSummarySortField} ${finalSortOrder}, sv.name_search ASC
       LIMIT ? OFFSET ?
     `;
 
@@ -967,7 +977,7 @@ class VenuesService {
         try {
           return await sequelize.query(`
             SELECT COUNT(*) as total
-            FROM sphinx_venues_summary svs
+            FROM summary_venues sv
             ${whereClauseSummary}
           `, {
             replacements: countParams,
@@ -978,7 +988,7 @@ class VenuesService {
           if (code === 'ER_NO_SUCH_TABLE' || code === '42S02' || code === 'ER_BAD_FIELD_ERROR' || code === '42S22') {
             logger.warn('Venues summary count fallback triggered', { error: err.message });
             return sequelize.query(`
-              SELECT COUNT(*) as total 
+              SELECT COUNT(*) as total
               FROM venues v
               ${whereClauseFallback}
             `, {
@@ -1039,8 +1049,8 @@ class VenuesService {
             country_code: row.summary_country_code ?? null,
             issn: row.summary_issn ?? null,
             eissn: row.summary_eissn ?? null,
-            subjects_string: row.summary_subjects_string ?? null,
-            top_works_string: row.summary_top_works_string ?? null,
+            top_subjects_json: row.summary_top_subjects_json ?? null,
+            top_publications_json: row.summary_top_publications_json ?? null,
             works_count: row.summary_works_count ?? null,
             cited_by_count: row.summary_cited_by_count ?? null,
             impact_factor: row.summary_impact_factor ?? null,
@@ -1098,102 +1108,6 @@ class VenuesService {
     }
   }
 
-  
-  async getVenuesSphinx(options = {}) {
-    const pagination = normalizePagination(options);
-    const { page, limit, offset } = pagination;
-    const { type, sortBy, sortOrder } = options;
-    const cacheKey = `venues:sphinx:${JSON.stringify(options)}`;
-
-    try {
-      const sphinxResponse = await sphinxService.getAllVenues({
-        limit: parseInt(limit, 10),
-        offset: parseInt(offset, 10),
-        type,
-        sortBy,
-        sortOrder
-      });
-
-      const sphinxIds = Array.from(new Set((sphinxResponse.venues || []).map(v => v.id).filter(Boolean)));
-      let existingIdSet = new Set(sphinxIds);
-      let reconciliationWarnings = [];
-      if (sphinxIds.length > 0) {
-        try {
-          const placeholders = sphinxIds.map(() => '?').join(',');
-          const rows = await sequelize.query(
-            `SELECT id FROM venues WHERE id IN (${placeholders})`,
-            { replacements: sphinxIds, type: sequelize.QueryTypes.SELECT }
-          );
-          const validIds = new Set(rows.map(r => r.id));
-          const missing = sphinxIds.filter(id => !validIds.has(id));
-          if (missing.length > 0) {
-            const rate = (missing.length / sphinxIds.length) * 100;
-            const msg = `Reconciliation dropped ${missing.length}/${sphinxIds.length} IDs not found in DB`;
-            reconciliationWarnings.push(`Partial data due to reconciliation: ${msg}`);
-            if (rate > 5) {
-              logger.error(msg, { rate: `${rate.toFixed(2)}%`, missing: missing.slice(0, 10) });
-            } else {
-              logger.warn(msg, { rate: `${rate.toFixed(2)}%`, missing: missing.slice(0, 10) });
-            }
-          }
-          existingIdSet = validIds;
-        } catch (reconErr) {
-          logger.warn('Reconciliation step failed; using Sphinx IDs as-is', { error: reconErr.message });
-        }
-      }
-
-      let venues = sphinxResponse.venues
-        .filter(v => existingIdSet.has(v.id))
-        .map(venue => ({
-        ...venue,
-        metrics: {
-          works_count: toInt(venue.metrics?.works_count ?? venue.works_count ?? 0),
-          publications_count: toInt(venue.metrics?.works_count ?? venue.works_count ?? 0),
-          unique_authors: toInt(venue.metrics?.unique_authors ?? 0),
-          first_publication_year: venue.metrics?.first_publication_year ?? null,
-          latest_publication_year: venue.metrics?.latest_publication_year ?? null,
-        },
-      }));
-
-      venues = await this._enrichVenues(venues, { includeSubjects: true });
-
-      let totalFromDb = sphinxResponse.total;
-      try {
-        const [countRow] = await sequelize.query(
-          `SELECT COUNT(*) as total FROM venues ${type ? 'WHERE type = ?' : ''}`,
-          { replacements: type ? [type] : [], type: sequelize.QueryTypes.SELECT }
-        );
-        totalFromDb = countRow.total;
-      } catch (e) {
-        logger.warn('Failed to get total venues from DB; using Sphinx total');
-      }
-
-      const meta = {};
-      const combinedWarnings = [];
-      if (Array.isArray(venues.warnings) && venues.warnings.length) combinedWarnings.push(...venues.warnings);
-      if (reconciliationWarnings.length) combinedWarnings.push(...reconciliationWarnings);
-      if (combinedWarnings.length) meta.warnings = Array.from(new Set(combinedWarnings));
-
-      const result = {
-        venues,
-        pagination: createPagination(page, limit, totalFromDb),
-        search_engine: 'sphinx',
-        performance_note: `Phase 2: Sphinx query completed in ${sphinxResponse.query_time}ms`,
-        ...(Object.keys(meta).length ? { meta } : {})
-     };
-
-      await cacheService.set(cacheKey, result, 7200);
-      logger.info(`Venues Sphinx retrieval: ${sphinxResponse.venues.length} venues in ${sphinxResponse.query_time}ms`);
-      
-      return result;
-
-    } catch (error) {
-      logger.error('Sphinx venues retrieval failed:', error);
-      throw error;
-    }
-  }
-
-  
   async getVenuesFallback(options = {}) {
     const pagination = normalizePagination(options);
     const { page, limit, offset } = pagination;

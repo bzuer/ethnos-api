@@ -5,6 +5,7 @@ const { logger } = require('../middleware/errorHandler');
 const sphinxService = require('./sphinx.service');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatOrganizationListItem, formatOrganizationDetails } = require('../dto/organization.dto');
+const { authorsFromJson } = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
 
 class OrganizationsService {
@@ -114,22 +115,21 @@ class OrganizationsService {
           pub.open_access,
           v.id AS venue_id,
           v.name AS venue_name,
-          svs.abbreviated_name AS venue_abbreviated_name,
+          sv.abbrev_search AS venue_abbreviated_name,
           v.type AS venue_type,
-          was.author_string,
-          CASE 
-            WHEN was.author_string IS NOT NULL AND was.author_string != '' THEN 
-              (LENGTH(was.author_string) - LENGTH(REPLACE(was.author_string, ';', '')) + 1)
-            ELSE 0 
-          END as author_count,
-          CONCAT(p_first.given_names, ' ', p_first.family_name) as first_author_name
+          sp_a.authors_json,
+          COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as author_count,
+          NULL as first_author_name
         FROM works w
         INNER JOIN authorships a ON w.id = a.work_id
         LEFT JOIN publications pub ON w.id = pub.work_id
         LEFT JOIN venues v ON pub.venue_id = v.id
-        LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
-        LEFT JOIN work_author_summary was ON w.id = was.work_id
-        LEFT JOIN persons p_first ON was.first_author_id = p_first.id
+        LEFT JOIN summary_venues sv ON sv.venue_id = v.id
+        LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+          SELECT MAX(publication_id)
+          FROM summary_publications
+          WHERE work_id = w.id
+        )
         WHERE a.affiliation_id = :id
         ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
         LIMIT 10
@@ -652,22 +652,21 @@ class OrganizationsService {
             pub.pages,
             v.id AS venue_id,
             v.name AS venue_name,
-            svs.abbreviated_name AS venue_abbreviated_name,
+            sv.abbrev_search AS venue_abbreviated_name,
             v.type AS venue_type,
-            was.author_string,
-            CASE 
-              WHEN was.author_string IS NOT NULL AND was.author_string != '' THEN 
-                (LENGTH(was.author_string) - LENGTH(REPLACE(was.author_string, ';', '')) + 1)
-              ELSE 0 
-            END as author_count,
-            CONCAT(p_first.given_names, ' ', p_first.family_name) as first_author_name
+            sp_a.authors_json,
+            COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as author_count,
+            NULL as first_author_name
           FROM works w
           INNER JOIN authorships a ON w.id = a.work_id
           LEFT JOIN publications pub ON w.id = pub.work_id
           LEFT JOIN venues v ON pub.venue_id = v.id
-          LEFT JOIN sphinx_venues_summary svs ON svs.id = v.id
-          LEFT JOIN work_author_summary was ON w.id = was.work_id
-          LEFT JOIN persons p_first ON was.first_author_id = p_first.id
+          LEFT JOIN summary_venues sv ON sv.venue_id = v.id
+          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+            SELECT MAX(publication_id)
+            FROM summary_publications
+            WHERE work_id = w.id
+          )
           ${whereClause}
           ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
           LIMIT :limit OFFSET :offset
@@ -693,9 +692,7 @@ class OrganizationsService {
       const total = countResult[0].total;
 
       const data = works.map(work => {
-        const authorsPreview = work.author_string
-          ? work.author_string.split(';').map(author => author.trim()).filter(Boolean)
-          : [];
+        const authorsPreview = authorsFromJson(work.authors_json);
 
         return {
           id: work.id,
