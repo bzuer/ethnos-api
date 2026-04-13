@@ -660,7 +660,7 @@ cmd_test_endpoints() {
 
 cmd_test_data() {
   load_env
-  local precheck_sql="$ROOT_DIR/scripts/maintenance/00_precheck_structural_data.sql"
+  local precheck_sql="$ROOT_DIR/scripts/maintenance/publications/10_precheck_baseline.sql"
   if [ ! -f "$precheck_sql" ]; then
     err "Precheck SQL missing: $precheck_sql"
     return 1

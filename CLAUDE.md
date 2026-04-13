@@ -4,11 +4,17 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 
 ## Database
 - Database name: `data`. Direct access: `mariadb data` or `mariadb data -e "..."`.
-- 37 base tables, 11 views, 60 stored procedures, 1 function.
+- 23 base tables, 0 views, 36 stored procedures, 1 function, 5 triggers.
 - Schema files:
-  - `database/data.schema.sql` — current production schema dump (tables, views, routines, triggers).
-  - `database/schema.sql` — reference schema.
+  - `database/data.schema.sql` — current production schema dump (tables, routines, triggers). Regenerated via `./scripts/maintenance/publications/regenerate_schema_dump.sh data database/data.schema.sql`.
+  - `database/schema.sql` — reference schema (kept for historical diff; not regenerated).
   - `data_dev.schema.sql` (root level) — development snapshot with data; not versioned.
+- Summary architecture: three denormalized tables are built by `sp_orchestrate_all_summaries(batch_size)`:
+  - `summary_publications` — one row per publication, joined to `works`/`publications` by PK. Carries text corpus (`title_search`, `abstract_search`, `authors_search`, `venue_search`, `subjects_search`), unique key `uq_summary_pubs_doi`, fulltext indexes `ft_summary_pubs_content` and `ft_summary_pubs_metadata`, and embedded JSON columns `authors_json`, `subjects_json`, `files_json`.
+  - `summary_venues` — one row per venue with text corpus (`name_search`, `abbrev_search`, `publisher_search`), fulltext `ft_summary_venues_text`, and embedded `top_subjects_json`, `top_publications_json`.
+  - `summary_persons` — one row per person with text corpus (`preferred_name_search`, `name_variations_search`, `affiliations_search`), fulltext `ft_summary_persons_text`, and embedded `current_affiliations_json`, `top_collaborators_json`, `research_subjects_json`.
+- Summary builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches.
+- Legacy artefacts explicitly absent (do not reintroduce): `sphinx_works_summary`, `sphinx_venues_summary`, `sphinx_persons_summary`, `work_author_summary`, `work_subjects_summary`, `sphinx_queue`, `processing_log`, `person_match_log`, `staging_*`, `temp_*`, and the four dormant `v_*` views.
 
 ## Project Structure
 - Runtime: Node.js (>= 18), Framework: Express
@@ -24,7 +30,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
   - `src/config/` — database.js, redis.js
 - Config: `config/swagger.config.js`, `config/sphinx-unified.conf`
 - Scripts: `scripts/manage.sh`, `scripts/process.sh`, `scripts/generate-swagger.js`, `scripts/clean_ram.sh`
-  - `scripts/maintenance/` — SQL maintenance routines with RUN_ORDER.md
+  - `scripts/maintenance/publications/` — migration SQL + `RUN_ORDER.md` + `regenerate_schema_dump.sh` helper.
   - `scripts/systemd/` — systemd service definition
 - Tests: `tests/` with `helpers/` and `disabled/` subdirectories
 - Documentation: `docs/swagger.json`, `docs/swagger.yaml`
@@ -57,7 +63,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - `work_references` status semantics: `RESOLVED` = cited work exists in DB; `PENDING` = does not exist yet (expected state, not an error).
 - Person-signature relation: direct via `persons.signature_id`; do not use legacy `persons_signatures`.
 - Publication-file relation: direct in `files` (`publication_id`, `work_id`, `file_role`); do not use legacy `publication_files`.
-- Sphinx summaries must stay aligned with DB routines: `sphinx_works_summary.venue_abbrev` and `sphinx_venues_summary.abbreviated_name` are part of current query contracts.
+- Summary column contracts (read path): `summary_publications.publication_year`, `summary_publications.work_citation_count`, `summary_publications.work_reference_count`, `summary_venues.name_search` / `abbrev_search`, `summary_persons.preferred_name_search`. Denormalized lists (`authors_json`, `subjects_json`, `files_json`, `top_subjects_json`, `top_publications_json`) are parsed on the service side, not re-joined per row.
 
 ## Documentation (OpenAPI)
 - UI: `/docs` (Swagger UI) sourced from `/docs.json`.
