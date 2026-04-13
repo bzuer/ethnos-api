@@ -85,27 +85,28 @@ class SphinxMonitoringService {
         try {
             const indexDir = SPHINX_DATA_DIR;
             const files = await fs.readdir(indexDir);
-            
+
+            const trackedPrefixes = ['publications_', 'venues_', 'persons_'];
             let totalSize = 0;
             let indexFiles = 0;
-            
+
             for (const file of files) {
-                if (file.startsWith('works_') && !file.includes('.lock') && !file.includes('.tmp')) {
-                    const stats = await fs.stat(`${indexDir}/${file}`);
-                    totalSize += stats.size;
-                    indexFiles++;
-                }
+                if (!trackedPrefixes.some(prefix => file.startsWith(prefix))) continue;
+                if (file.includes('.lock') || file.includes('.tmp')) continue;
+                const stats = await fs.stat(`${indexDir}/${file}`);
+                totalSize += stats.size;
+                indexFiles++;
             }
-            
+
             const rtStats = await this.getRTIndexStats();
-            
+
             return {
                 index_size_mb: Math.round(totalSize / 1024 / 1024 * 100) / 100,
                 index_files: indexFiles,
                 rt_index_size_mb: Math.round(rtStats.size / 1024 / 1024 * 100) / 100,
                 rt_index_documents: rtStats.documents
             };
-            
+
         } catch (error) {
             logger.error('Failed to get index stats', error);
             return {
@@ -120,12 +121,12 @@ class SphinxMonitoringService {
     async getRTIndexStats() {
         try {
             const rtFiles = [
-                path.join(SPHINX_DATA_DIR, 'works_rt.ram'),
-                path.join(SPHINX_DATA_DIR, 'works_rt.meta')
+                path.join(SPHINX_DATA_DIR, 'publications_rt.ram'),
+                path.join(SPHINX_DATA_DIR, 'publications_rt.meta')
             ];
             let size = 0;
             let documents = 0;
-            
+
             for (const file of rtFiles) {
                 try {
                     const stats = await fs.stat(file);
@@ -133,12 +134,12 @@ class SphinxMonitoringService {
                 } catch (err) {
                 }
             }
-            
+
             try {
                 await sphinxService.ensureConnection();
                 const result = await new Promise((resolve, reject) => {
                     sphinxService.connection.query(
-                        'SELECT COUNT(*) as count FROM works_rt',
+                        'SELECT COUNT(*) as count FROM publications_rt',
                         (error, results) => {
                             if (error) reject(error);
                             else resolve(results[0]?.count || 0);
@@ -148,9 +149,9 @@ class SphinxMonitoringService {
                 documents = result;
             } catch (err) {
             }
-            
+
             return { size, documents };
-            
+
         } catch (error) {
             return { size: 0, documents: 0 };
         }

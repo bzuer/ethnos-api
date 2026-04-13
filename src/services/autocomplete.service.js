@@ -88,19 +88,18 @@ class AutocompleteService {
     }
 
 
-    async getTitleSuggestions(query, limit) {
+    async _fetchPublicationIdsByMatch(query, fetchLimit) {
         await sphinxService.ensureConnection();
 
         const matchExpr = sphinxService.formatMatchQuery(query);
-        const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
+        const cappedLimit = Math.max(1, Math.min(parseInt(fetchLimit, 10) || 50, 500));
 
-        const sql = `SELECT title, COUNT(*) as relevance
-            FROM works_poc
+        const sql = `SELECT id, WEIGHT() as weight
+            FROM publications_poc
             WHERE MATCH(${matchExpr})
-            AND title != ''
-            GROUP BY title
-            ORDER BY relevance DESC, title ASC
-            LIMIT ${sanitizedLimit}`;
+            ORDER BY weight DESC
+            LIMIT ${cappedLimit}
+            OPTION max_matches=${cappedLimit}`;
 
         return new Promise((resolve, reject) => {
             sphinxService.connection.query(sql, (error, results) => {
@@ -108,101 +107,113 @@ class AutocompleteService {
                     reject(error);
                     return;
                 }
-
-                const suggestions = (results || []).map(row => ({
-                    text: row.title,
-                    type: 'title',
-                    relevance: row.relevance,
-                    preview: row.title.substring(0, 100) + (row.title.length > 100 ? '...' : '')
-                }));
-
-                resolve(suggestions);
+                resolve((results || []).map(row => row.id).filter(Number.isFinite));
             });
         });
     }
 
+    async getTitleSuggestions(query, limit) {
+        const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
+        const ids = await this._fetchPublicationIdsByMatch(query, sanitizedLimit * 5);
+        if (ids.length === 0) return [];
+
+        const rows = await sequelize.query(
+            `SELECT title_search AS title, COUNT(*) AS relevance
+             FROM summary_publications
+             WHERE publication_id IN (:ids)
+               AND title_search != ''
+             GROUP BY title_search
+             ORDER BY relevance DESC, title_search ASC
+             LIMIT :limit`,
+            {
+                replacements: { ids, limit: sanitizedLimit },
+                type: sequelize.QueryTypes.SELECT
+            }
+        );
+
+        return rows.map(row => ({
+            text: row.title,
+            type: 'title',
+            relevance: parseInt(row.relevance, 10) || 0,
+            preview: row.title.substring(0, 100) + (row.title.length > 100 ? '...' : '')
+        }));
+    }
 
     async getAuthorSuggestions(query, limit) {
-        await sphinxService.ensureConnection();
-
-        const matchExpr = sphinxService.formatMatchQuery(query);
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
+        const ids = await this._fetchPublicationIdsByMatch(query, sanitizedLimit * 5);
+        if (ids.length === 0) return [];
 
-        const sql = `SELECT author_string, COUNT(*) as work_count
-            FROM works_poc
-            WHERE MATCH(${matchExpr})
-            AND author_string != ''
-            GROUP BY author_string
-            ORDER BY work_count DESC
-            LIMIT ${sanitizedLimit}`;
+        const rows = await sequelize.query(
+            `SELECT authors_search AS author_string, COUNT(*) AS work_count
+             FROM summary_publications
+             WHERE publication_id IN (:ids)
+               AND authors_search IS NOT NULL
+               AND authors_search != ''
+             GROUP BY authors_search
+             ORDER BY work_count DESC
+             LIMIT :limit`,
+            {
+                replacements: { ids, limit: sanitizedLimit * 3 },
+                type: sequelize.QueryTypes.SELECT
+            }
+        );
 
-        return new Promise((resolve, reject) => {
-            sphinxService.connection.query(sql, (error, results) => {
-                if (error) {
-                    reject(error);
-                    return;
-                }
-
-                const queryLower = query.toLowerCase();
-                const suggestions = [];
-                (results || []).forEach(row => {
-                    const authors = row.author_string.split(';').map(a => a.trim());
-                    const matchingAuthors = authors.filter(author =>
-                        author.toLowerCase().includes(queryLower)
-                    );
-
-                    matchingAuthors.forEach(author => {
-                        if (!suggestions.find(s => s.text === author)) {
-                            suggestions.push({
-                                text: author,
-                                type: 'author',
-                                work_count: row.work_count,
-                                preview: `${author} (${row.work_count} works)`
-                            });
-                        }
-                    });
+        const queryLower = query.toLowerCase();
+        const suggestions = [];
+        for (const row of rows) {
+            const authors = (row.author_string || '').split(/[;,]\s*/).map(a => a.trim()).filter(Boolean);
+            for (const author of authors) {
+                if (!author.toLowerCase().includes(queryLower)) continue;
+                if (suggestions.find(s => s.text === author)) continue;
+                suggestions.push({
+                    text: author,
+                    type: 'author',
+                    work_count: parseInt(row.work_count, 10) || 0,
+                    preview: `${author} (${row.work_count} works)`
                 });
+                if (suggestions.length >= sanitizedLimit) break;
+            }
+            if (suggestions.length >= sanitizedLimit) break;
+        }
 
-                suggestions.sort((a, b) => b.work_count - a.work_count);
-                resolve(suggestions.slice(0, limit));
-            });
-        });
+        suggestions.sort((a, b) => b.work_count - a.work_count);
+        return suggestions.slice(0, sanitizedLimit);
     }
 
-
     async getVenueSuggestions(query, limit) {
-        await sphinxService.ensureConnection();
-
-        const matchExpr = sphinxService.formatMatchQuery(query);
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
+        const ids = await this._fetchPublicationIdsByMatch(query, sanitizedLimit * 5);
+        if (ids.length === 0) return [];
 
-        const sql = `SELECT venue_name, venue_abbrev, COUNT(*) as work_count
-            FROM works_poc
-            WHERE MATCH(${matchExpr})
-            AND venue_name != ''
-            GROUP BY venue_name, venue_abbrev
-            ORDER BY work_count DESC
-            LIMIT ${sanitizedLimit}`;
+        const rows = await sequelize.query(
+            `SELECT sp.venue_id,
+                    sv.name_search AS venue_name,
+                    sv.abbrev_search AS venue_abbrev,
+                    COUNT(*) AS work_count
+             FROM summary_publications sp
+             LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+             WHERE sp.publication_id IN (:ids)
+               AND sp.venue_id IS NOT NULL
+             GROUP BY sp.venue_id, sv.name_search, sv.abbrev_search
+             ORDER BY work_count DESC
+             LIMIT :limit`,
+            {
+                replacements: { ids, limit: sanitizedLimit },
+                type: sequelize.QueryTypes.SELECT
+            }
+        );
 
-        return new Promise((resolve, reject) => {
-            sphinxService.connection.query(sql, (error, results) => {
-                if (error) {
-                    reject(error);
-                    return;
-                }
-
-                const suggestions = (results || []).map(row => ({
-                    text: row.venue_name,
-                    name: row.venue_name,
-                    abbreviated_name: row.venue_abbrev || null,
-                    type: 'venue',
-                    work_count: row.work_count,
-                    preview: `${row.venue_name}${row.venue_abbrev ? ` [${row.venue_abbrev}]` : ''} (${row.work_count} works)`
-                }));
-
-                resolve(suggestions);
-            });
-        });
+        return rows
+            .filter(row => row.venue_name)
+            .map(row => ({
+                text: row.venue_name,
+                name: row.venue_name,
+                abbreviated_name: row.venue_abbrev || null,
+                type: 'venue',
+                work_count: parseInt(row.work_count, 10) || 0,
+                preview: `${row.venue_name}${row.venue_abbrev ? ` [${row.venue_abbrev}]` : ''} (${row.work_count} works)`
+            }));
     }
 
 
@@ -246,17 +257,17 @@ class AutocompleteService {
             const fetchLimit = sanitizedLimit * 3;
 
             const rows = await sequelize.query(`
-                SELECT LOWER(SUBSTRING_INDEX(SUBSTRING_INDEX(sws.title, ' ', numbers.n), ' ', -1)) AS term,
+                SELECT LOWER(SUBSTRING_INDEX(SUBSTRING_INDEX(sp.title_search, ' ', numbers.n), ' ', -1)) AS term,
                        COUNT(*) AS frequency
-                FROM sphinx_works_summary sws
+                FROM summary_publications sp
                 JOIN (
                     SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL
                     SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL
                     SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10
                 ) numbers
-                ON CHAR_LENGTH(sws.title) - CHAR_LENGTH(REPLACE(sws.title, ' ', '')) >= numbers.n - 1
-                WHERE sws.year >= 2020
-                AND CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(sws.title, ' ', numbers.n), ' ', -1)) > 3
+                ON CHAR_LENGTH(sp.title_search) - CHAR_LENGTH(REPLACE(sp.title_search, ' ', '')) >= numbers.n - 1
+                WHERE sp.publication_year >= 2020
+                  AND CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(sp.title_search, ' ', numbers.n), ' ', -1)) > 3
                 GROUP BY term
                 HAVING frequency > 10
                 ORDER BY frequency DESC

@@ -1,6 +1,11 @@
 const mysql = require('mysql2');
 const { logger } = require('../middleware/errorHandler');
 
+const PUBLICATION_INDEX = 'publications_poc';
+const PUBLICATION_RT_INDEX = 'publications_rt';
+const PERSON_INDEX = 'persons_poc';
+const VENUE_INDEX = 'venues_poc';
+
 class SphinxService {
     constructor() {
         this.connection = null;
@@ -21,8 +26,7 @@ class SphinxService {
         };
     }
 
-    
-    async searchWorkIds(query, filters = {}, options = {}) {
+    async searchPublicationIds(query, filters = {}, options = {}) {
         await this.ensureConnection();
 
         const trimmedQuery = (query || '').trim();
@@ -42,107 +46,81 @@ class SphinxService {
                 matchParts.push(this._escapeMatchTerm(trimmedQuery));
             }
             if (filters.venue_name) {
-                matchParts.push(`@venue_name ${this._escapeMatchTerm(filters.venue_name)}`);
+                matchParts.push(`@venue_search ${this._escapeMatchTerm(filters.venue_name)}`);
             }
             if (filters.author) {
-                matchParts.push(`@author_string ${this._escapeMatchTerm(filters.author)}`);
+                matchParts.push(`@authors_search ${this._escapeMatchTerm(filters.author)}`);
             }
             if (filters.subject) {
-                matchParts.push(`@subjects_string ${this._escapeMatchTerm(filters.subject)}`);
+                matchParts.push(`@subjects_search ${this._escapeMatchTerm(filters.subject)}`);
             }
 
             let sql;
             if (matchParts.length > 0) {
-                sql = `SELECT id, WEIGHT() as weight, year
-                   FROM works_poc
-                   WHERE MATCH(${this.connection.escape(matchParts.join(' '))})`;
+                sql = `SELECT id, work_id, WEIGHT() as weight, publication_year
+                       FROM ${PUBLICATION_INDEX}
+                       WHERE MATCH(${this.connection.escape(matchParts.join(' '))})`;
             } else {
-                sql = `SELECT id, 1 as weight, year
-                   FROM works_poc
-                   WHERE id > 0`;
+                sql = `SELECT id, work_id, 1 as weight, publication_year
+                       FROM ${PUBLICATION_INDEX}
+                       WHERE id > 0`;
             }
 
             const params = [];
+            const appendWhere = (clause, value) => {
+                sql += ` AND ${clause}`;
+                params.push(value);
+            };
 
             if (filters.year) {
-                sql += ' AND year = ?';
-                params.push(parseInt(filters.year, 10));
+                appendWhere('publication_year = ?', parseInt(filters.year, 10));
             }
-
+            if (filters.year_from) {
+                appendWhere('publication_year >= ?', parseInt(filters.year_from, 10));
+            }
+            if (filters.year_to) {
+                appendWhere('publication_year <= ?', parseInt(filters.year_to, 10));
+            }
             if (filters.work_type) {
-                sql += ' AND work_type = ?';
-                params.push(filters.work_type);
+                appendWhere('work_type = ?', filters.work_type);
             }
-
             if (filters.language && filters.language !== 'unknown') {
-                sql += ' AND language = ?';
-                params.push(filters.language);
+                appendWhere('language = ?', filters.language);
             }
 
             const peerReviewedFlag = this._toTinyIntFlag(filters.peer_reviewed);
             if (peerReviewedFlag !== null) {
-                sql += ' AND peer_reviewed = ?';
-                params.push(peerReviewedFlag);
+                appendWhere('peer_reviewed = ?', peerReviewedFlag);
             }
 
             const openAccessFlag = this._toTinyIntFlag(filters.open_access);
             if (openAccessFlag !== null) {
-                sql += ' AND open_access = ?';
-                params.push(openAccessFlag);
-            }
-
-            if (filters.year_from) {
-                sql += ' AND year >= ?';
-                params.push(parseInt(filters.year_from, 10));
-            }
-
-            if (filters.year_to) {
-                sql += ' AND year <= ?';
-                params.push(parseInt(filters.year_to, 10));
+                appendWhere('open_access = ?', openAccessFlag);
             }
 
             if (filters.venue_id) {
-                sql += ' AND venue_id = ?';
-                params.push(parseInt(filters.venue_id, 10));
+                appendWhere('venue_id = ?', parseInt(filters.venue_id, 10));
             }
-
             if (filters.publisher_id) {
-                sql += ' AND publisher_id = ?';
-                params.push(parseInt(filters.publisher_id, 10));
+                appendWhere('publisher_id = ?', parseInt(filters.publisher_id, 10));
             }
-
-            if (filters.first_author_id) {
-                sql += ' AND first_author_id = ?';
-                params.push(parseInt(filters.first_author_id, 10));
+            if (filters.work_id) {
+                appendWhere('work_id = ?', parseInt(filters.work_id, 10));
             }
-
             if (filters.citation_count_min) {
-                sql += ' AND citation_count >= ?';
-                params.push(parseInt(filters.citation_count_min, 10));
+                appendWhere('work_citation_count >= ?', parseInt(filters.citation_count_min, 10));
             }
-
             if (filters.reference_count_min) {
-                sql += ' AND reference_count >= ?';
-                params.push(parseInt(filters.reference_count_min, 10));
-            }
-
-            if (filters.resolved_references_min) {
-                sql += ' AND resolved_references_count >= ?';
-                params.push(parseInt(filters.resolved_references_min, 10));
-            }
-
-            if (filters.pending_references_max !== undefined) {
-                sql += ' AND pending_references_count <= ?';
-                params.push(parseInt(filters.pending_references_max, 10));
+                appendWhere('work_reference_count >= ?', parseInt(filters.reference_count_min, 10));
             }
 
             const hasFilesFlag = this._toTinyIntFlag(filters.has_files);
             if (hasFilesFlag !== null) {
-                sql += ' AND has_files = ?';
-                params.push(hasFilesFlag);
+                appendWhere('has_files = ?', hasFilesFlag);
             }
 
-            sql += ` ORDER BY weight DESC, year DESC, id DESC LIMIT ?, ? OPTION max_matches=${maxMatches}`;
+            const orderClause = this._publicationOrderClause(options.orderBy);
+            sql += ` ORDER BY ${orderClause} LIMIT ?, ? OPTION max_matches=${maxMatches}`;
             params.push(offset, limit);
 
             const startTime = Date.now();
@@ -158,25 +136,22 @@ class SphinxService {
                     }
 
                     this.connection.query('SHOW META', (metaError, metaRows = []) => {
-                        if (metaError) {
-                            this._handleQueryError(metaError);
-                            resolve({
-                                ids: results.map(r => r.id),
-                                total: results.length,
-                                query_time: queryTime,
-                                meta: {}
+                        const meta = {};
+                        if (!metaError) {
+                            metaRows.forEach(row => {
+                                const key = row.Variable_name || row.Var_name;
+                                meta[key] = row.Value;
                             });
-                            return;
+                        } else {
+                            this._handleQueryError(metaError);
                         }
 
-                        const meta = {};
-                        metaRows.forEach(row => {
-                            const key = row.Variable_name || row.Var_name;
-                            meta[key] = row.Value;
-                        });
-
+                        const publicationIds = results.map(r => r.id);
+                        const workIds = results.map(r => r.work_id).filter(Number.isFinite);
                         resolve({
-                            ids: results.map(r => r.id),
+                            publication_ids: publicationIds,
+                            work_ids: workIds,
+                            ids: publicationIds,
                             total: parseInt(meta.total_found || meta.total || results.length, 10),
                             query_time: queryTime,
                             meta
@@ -186,7 +161,7 @@ class SphinxService {
             });
         } catch (error) {
             if (error.code !== 'SPHINX_UNAVAILABLE') {
-                logger.error('Sphinx work ID search failed', {
+                logger.error('Sphinx publication ID search failed', {
                     message: error.message,
                     code: error.code
                 });
@@ -196,6 +171,611 @@ class SphinxService {
         }
     }
 
+    async searchWorkIds(query, filters = {}, options = {}) {
+        const response = await this.searchPublicationIds(query, filters, {
+            ...options,
+            limit: Math.min(
+                (options.limit ?? filters.limit ?? 50) * 3,
+                500
+            )
+        });
+
+        const seen = new Set();
+        const orderedWorkIds = [];
+        for (const workId of response.work_ids) {
+            if (workId === null || workId === undefined) continue;
+            if (seen.has(workId)) continue;
+            seen.add(workId);
+            orderedWorkIds.push(workId);
+            if (orderedWorkIds.length >= (options.limit ?? filters.limit ?? 50)) break;
+        }
+
+        return {
+            ids: orderedWorkIds,
+            total: response.total,
+            query_time: response.query_time,
+            meta: response.meta
+        };
+    }
+
+    async searchPublications(query, filters = {}, options = {}) {
+        await this.ensureConnection();
+
+        const trimmedQuery = (query || '').trim();
+        const hasSearchTerm = trimmedQuery.length > 0 && trimmedQuery !== '*';
+        const limit = this._sanitizeLimit(options.limit ?? filters.limit);
+        const offset = this._sanitizeOffset(options.offset ?? filters.offset);
+        const MAX_SPHINX_MATCHES = 10000;
+        const DEFAULT_MAX_MATCHES = 1000;
+        const maxMatches = Math.min(
+            MAX_SPHINX_MATCHES,
+            Math.max(DEFAULT_MAX_MATCHES, offset + limit)
+        );
+
+        try {
+            const matchParts = [];
+            if (hasSearchTerm) {
+                matchParts.push(this._escapeMatchTerm(trimmedQuery));
+            }
+            if (filters.venue_name) {
+                matchParts.push(`@venue_search ${this._escapeMatchTerm(filters.venue_name)}`);
+            }
+            if (filters.author) {
+                matchParts.push(`@authors_search ${this._escapeMatchTerm(filters.author)}`);
+            }
+            if (filters.subject) {
+                matchParts.push(`@subjects_search ${this._escapeMatchTerm(filters.subject)}`);
+            }
+
+            let sql;
+            const columns = `id, work_id, venue_id, publisher_id, publication_year, work_type, language, open_access, peer_reviewed, has_files, work_citation_count, work_reference_count, publication_download_count`;
+            if (matchParts.length > 0) {
+                sql = `SELECT ${columns}, WEIGHT() as relevance
+                       FROM ${PUBLICATION_INDEX}
+                       WHERE MATCH(${this.connection.escape(matchParts.join(' '))})`;
+            } else {
+                sql = `SELECT ${columns}, 1 as relevance
+                       FROM ${PUBLICATION_INDEX}
+                       WHERE id > 0`;
+            }
+
+            const params = [];
+            const appendWhere = (clause, value) => {
+                sql += ` AND ${clause}`;
+                params.push(value);
+            };
+
+            if (filters.year) {
+                appendWhere('publication_year = ?', parseInt(filters.year, 10));
+            }
+            if (filters.year_from) {
+                appendWhere('publication_year >= ?', parseInt(filters.year_from, 10));
+            }
+            if (filters.year_to) {
+                appendWhere('publication_year <= ?', parseInt(filters.year_to, 10));
+            }
+            if (filters.work_type) {
+                appendWhere('work_type = ?', filters.work_type);
+            }
+            if (filters.language && filters.language !== 'unknown') {
+                appendWhere('language = ?', filters.language);
+            }
+
+            const peerReviewedFlag = this._toTinyIntFlag(filters.peer_reviewed);
+            if (peerReviewedFlag !== null) {
+                appendWhere('peer_reviewed = ?', peerReviewedFlag);
+            }
+
+            const openAccessFlag = this._toTinyIntFlag(filters.open_access);
+            if (openAccessFlag !== null) {
+                appendWhere('open_access = ?', openAccessFlag);
+            }
+
+            if (filters.venue_id) {
+                appendWhere('venue_id = ?', parseInt(filters.venue_id, 10));
+            }
+            if (filters.publisher_id) {
+                appendWhere('publisher_id = ?', parseInt(filters.publisher_id, 10));
+            }
+            if (filters.work_id) {
+                appendWhere('work_id = ?', parseInt(filters.work_id, 10));
+            }
+            if (filters.citation_count_min) {
+                appendWhere('work_citation_count >= ?', parseInt(filters.citation_count_min, 10));
+            }
+            if (filters.reference_count_min) {
+                appendWhere('work_reference_count >= ?', parseInt(filters.reference_count_min, 10));
+            }
+
+            const hasFilesFlag = this._toTinyIntFlag(filters.has_files);
+            if (hasFilesFlag !== null) {
+                appendWhere('has_files = ?', hasFilesFlag);
+            }
+
+            const orderClause = this._publicationOrderClause(options.orderBy);
+            sql += ` ORDER BY ${orderClause} LIMIT ?, ? OPTION max_matches=${maxMatches}`;
+            params.push(offset, limit);
+
+            const startTime = Date.now();
+
+            return new Promise((resolve, reject) => {
+                const qopts = { sql, timeout: this.queryTimeoutMs };
+                this.connection.query(qopts, params, (error, results = []) => {
+                    const queryTime = Date.now() - startTime;
+
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+
+                    this.connection.query('SHOW META', (metaError, metaRows = []) => {
+                        if (metaError) {
+                            this._handleQueryError(metaError);
+                            reject(metaError);
+                            return;
+                        }
+
+                        const meta = {};
+                        metaRows.forEach(row => {
+                            const key = row.Variable_name || row.Var_name;
+                            meta[key] = row.Value;
+                        });
+
+                        const totalFound = parseInt(meta.total_found || meta.total, 10);
+                        const totalReturned = results.length;
+
+                        const formattedResults = results.map(row => ({
+                            publication_id: row.id,
+                            work_id: row.work_id || null,
+                            venue_id: row.venue_id || null,
+                            publisher_id: row.publisher_id || null,
+                            publication_year: row.publication_year || null,
+                            work_type: row.work_type,
+                            language: row.language,
+                            open_access: Boolean(row.open_access),
+                            peer_reviewed: Boolean(row.peer_reviewed),
+                            has_files: Boolean(row.has_files),
+                            citation_count: row.work_citation_count || 0,
+                            reference_count: row.work_reference_count || 0,
+                            download_count: row.publication_download_count || 0,
+                            relevance_score: row.relevance || row.weight || null
+                        }));
+
+                        logger.info('Sphinx publication search completed', {
+                            query,
+                            results: totalReturned,
+                            totalFound: Number.isNaN(totalFound) ? totalReturned : totalFound,
+                            queryTime: `${queryTime}ms`,
+                            filters: Object.keys(filters).length
+                        });
+
+                        resolve({
+                            results: formattedResults,
+                            total: Number.isNaN(totalFound) ? totalReturned : totalFound,
+                            returned: totalReturned,
+                            query_time: queryTime,
+                            query,
+                            filters,
+                            meta: {
+                                total: parseInt(meta.total, 10) || totalReturned,
+                                total_found: Number.isNaN(totalFound) ? totalReturned : totalFound,
+                                time: meta.time_ms ? parseFloat(meta.time_ms) : queryTime,
+                                limit,
+                                offset
+                            }
+                        });
+                    });
+                });
+            });
+        } catch (error) {
+            if (error.code !== 'SPHINX_UNAVAILABLE') {
+                logger.error('Sphinx publication search failed', {
+                    message: error.message,
+                    code: error.code
+                });
+            }
+            this._handleQueryError(error);
+            throw error;
+        }
+    }
+
+    async searchWorks(query, filters = {}, options = {}) {
+        const response = await this.searchPublications(query, filters, options);
+
+        const seen = new Set();
+        const dedupedResults = [];
+        for (const row of response.results) {
+            const workId = row.work_id;
+            if (workId === null || workId === undefined) continue;
+            if (seen.has(workId)) continue;
+            seen.add(workId);
+            dedupedResults.push({
+                id: workId,
+                publication_id: row.publication_id,
+                work_id: workId,
+                title: null,
+                subtitle: null,
+                abstract: null,
+                author_string: null,
+                venue_name: null,
+                venue_abbreviated_name: null,
+                venue_id: row.venue_id,
+                publisher_id: row.publisher_id,
+                first_author_id: null,
+                doi: null,
+                year: row.publication_year,
+                publication_year: row.publication_year,
+                work_type: row.work_type,
+                language: row.language,
+                open_access: row.open_access,
+                peer_reviewed: row.peer_reviewed,
+                citation_count: row.citation_count,
+                reference_count: row.reference_count,
+                resolved_references_count: 0,
+                pending_references_count: 0,
+                cited_by_count: row.citation_count,
+                has_files: row.has_files,
+                relevance_score: row.relevance_score,
+                created_ts: null
+            });
+        }
+
+        return {
+            results: dedupedResults,
+            total: response.total,
+            returned: dedupedResults.length,
+            query_time: response.query_time,
+            query: response.query,
+            filters: response.filters,
+            meta: response.meta
+        };
+    }
+
+    async getPublicationFacets(query, filters = {}) {
+        await this.ensureConnection();
+
+        try {
+            const trimmedQuery = (query || '').trim();
+            if (!trimmedQuery) {
+                return {
+                    years: [],
+                    work_types: [],
+                    languages: [],
+                    venues: [],
+                    open_access: []
+                };
+            }
+
+            const matchExpression = `MATCH(${this.connection.escape(trimmedQuery)})`;
+
+            const yearPromise = new Promise((resolve, reject) => {
+                this.connection.query(`
+                    SELECT publication_year, COUNT(*) as count
+                    FROM ${PUBLICATION_INDEX}
+                    WHERE ${matchExpression}
+                      AND publication_year > 0
+                    GROUP BY publication_year
+                    ORDER BY count DESC, publication_year DESC
+                    LIMIT 20
+                `, (error, results = []) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results.map(f => ({ value: f.publication_year, count: f.count })));
+                });
+            });
+
+            const typePromise = new Promise((resolve, reject) => {
+                this.connection.query(`
+                    SELECT work_type, COUNT(*) as count
+                    FROM ${PUBLICATION_INDEX}
+                    WHERE ${matchExpression}
+                    GROUP BY work_type
+                    ORDER BY count DESC
+                    LIMIT 10
+                `, (error, results = []) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results.map(f => ({ value: f.work_type, count: f.count })));
+                });
+            });
+
+            const languagePromise = new Promise((resolve, reject) => {
+                this.connection.query(`
+                    SELECT language, COUNT(*) as count
+                    FROM ${PUBLICATION_INDEX}
+                    WHERE ${matchExpression}
+                      AND language != ''
+                      AND language != 'unknown'
+                    GROUP BY language
+                    ORDER BY count DESC
+                    LIMIT 10
+                `, (error, results = []) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results.map(f => ({ value: f.language, count: f.count })));
+                });
+            });
+
+            const venuesPromise = new Promise((resolve, reject) => {
+                this.connection.query(`
+                    SELECT venue_id, COUNT(*) as count
+                    FROM ${PUBLICATION_INDEX}
+                    WHERE ${matchExpression}
+                      AND venue_id > 0
+                    GROUP BY venue_id
+                    ORDER BY count DESC
+                    LIMIT 15
+                `, (error, results = []) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results.map(f => ({
+                        value: f.venue_id,
+                        venue_id: f.venue_id,
+                        count: f.count
+                    })));
+                });
+            });
+
+            const openAccessPromise = new Promise((resolve, reject) => {
+                this.connection.query(`
+                    SELECT open_access, COUNT(*) as count
+                    FROM ${PUBLICATION_INDEX}
+                    WHERE ${matchExpression}
+                    GROUP BY open_access
+                    ORDER BY open_access DESC
+                `, (error, results = []) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results.map(f => ({
+                        value: Boolean(f.open_access),
+                        count: f.count
+                    })));
+                });
+            });
+
+            const [years, work_types, languages, venues, open_access] = await Promise.all([
+                yearPromise,
+                typePromise,
+                languagePromise,
+                venuesPromise,
+                openAccessPromise
+            ]);
+
+            return { years, work_types, languages, venues, open_access };
+
+        } catch (error) {
+            if (error.code !== 'SPHINX_UNAVAILABLE') {
+                logger.error('Sphinx publication facets failed', {
+                    message: error.message,
+                    code: error.code
+                });
+            }
+            this._handleQueryError(error);
+            throw error;
+        }
+    }
+
+    async getFacets(query, filters = {}) {
+        return this.getPublicationFacets(query, filters);
+    }
+
+    async searchPublicationsWithFacets(query, filters = {}, options = {}) {
+        const searchResults = await this.searchPublications(query, filters, options);
+        let facets = {};
+        try {
+            facets = await this.getPublicationFacets(query, filters);
+        } catch (error) {
+            logger.warn('Facets fetch failed in searchPublicationsWithFacets', { error: error.message });
+        }
+
+        return {
+            ...searchResults,
+            facets,
+            meta: {
+                ...searchResults.meta,
+                faceted_search: true,
+                total_facets: Object.keys(facets).length
+            }
+        };
+    }
+
+    async searchWithFacets(query, filters = {}, options = {}) {
+        const searchResults = await this.searchWorks(query, filters, options);
+        let facets = {};
+        try {
+            facets = await this.getPublicationFacets(query, filters);
+        } catch (error) {
+            logger.warn('Facets fetch failed in searchWithFacets', { error: error.message });
+        }
+
+        return {
+            ...searchResults,
+            facets,
+            meta: {
+                ...searchResults.meta,
+                faceted_search: true,
+                total_facets: Object.keys(facets).length
+            }
+        };
+    }
+
+    async indexPublication(publicationData) {
+        await this.ensureConnection();
+
+        try {
+            const sql = `
+                INSERT INTO ${PUBLICATION_RT_INDEX}
+                (id, title_search, abstract_search, authors_search, venue_search, subjects_search, doi,
+                 work_id, venue_id, publisher_id, publication_year, open_access, peer_reviewed, has_files,
+                 work_citation_count, work_reference_count, publication_download_count, work_type, language)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+
+            const params = [
+                publicationData.publication_id || publicationData.id,
+                publicationData.title_search || publicationData.title || '',
+                publicationData.abstract_search || publicationData.abstract || '',
+                publicationData.authors_search || publicationData.author_string || '',
+                publicationData.venue_search || publicationData.venue_name || '',
+                publicationData.subjects_search || publicationData.subjects_string || '',
+                publicationData.doi || '',
+                publicationData.work_id || 0,
+                publicationData.venue_id || 0,
+                publicationData.publisher_id || 0,
+                publicationData.publication_year || publicationData.year || 0,
+                publicationData.open_access ? 1 : 0,
+                publicationData.peer_reviewed ? 1 : 0,
+                publicationData.has_files ? 1 : 0,
+                publicationData.work_citation_count || publicationData.citation_count || 0,
+                publicationData.work_reference_count || publicationData.reference_count || 0,
+                publicationData.publication_download_count || publicationData.download_count || 0,
+                publicationData.work_type || 'ARTICLE',
+                publicationData.language || 'unknown'
+            ];
+
+            const result = await new Promise((resolve, reject) => {
+                this.connection.query(sql, params, (error, results) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results);
+                });
+            });
+
+            logger.info('Publication indexed in RT index', {
+                publication_id: publicationData.publication_id || publicationData.id,
+                work_id: publicationData.work_id
+            });
+
+            return result;
+
+        } catch (error) {
+            if (error.code !== 'SPHINX_UNAVAILABLE') {
+                logger.error('RT indexing failed', {
+                    message: error.message,
+                    code: error.code
+                });
+            }
+            this._handleQueryError(error);
+            throw error;
+        }
+    }
+
+    async updatePublication(publicationId, updates) {
+        await this.ensureConnection();
+
+        try {
+            const setParts = [];
+            const params = [];
+
+            Object.entries(updates).forEach(([field, value]) => {
+                setParts.push(`${field} = ?`);
+                params.push(value);
+            });
+
+            if (setParts.length === 0) {
+                return { affectedRows: 0 };
+            }
+
+            params.push(publicationId);
+            const sql = `UPDATE ${PUBLICATION_RT_INDEX} SET ${setParts.join(', ')} WHERE id = ?`;
+
+            const result = await new Promise((resolve, reject) => {
+                this.connection.query(sql, params, (error, results) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results);
+                });
+            });
+
+            logger.info('Publication updated in RT index', {
+                publication_id: publicationId,
+                fields: Object.keys(updates)
+            });
+
+            return result;
+
+        } catch (error) {
+            if (error.code !== 'SPHINX_UNAVAILABLE') {
+                logger.error('RT update failed', {
+                    message: error.message,
+                    code: error.code
+                });
+            }
+            this._handleQueryError(error);
+            throw error;
+        }
+    }
+
+    async deletePublication(publicationId) {
+        await this.ensureConnection();
+
+        try {
+            const sql = `DELETE FROM ${PUBLICATION_RT_INDEX} WHERE id = ?`;
+            const result = await new Promise((resolve, reject) => {
+                this.connection.query(sql, [publicationId], (error, results) => {
+                    if (error) {
+                        this._handleQueryError(error);
+                        reject(error);
+                        return;
+                    }
+                    resolve(results);
+                });
+            });
+
+            logger.info('Publication deleted from RT index', { publication_id: publicationId });
+            return result;
+
+        } catch (error) {
+            if (error.code !== 'SPHINX_UNAVAILABLE') {
+                logger.error('RT deletion failed', {
+                    message: error.message,
+                    code: error.code
+                });
+            }
+            this._handleQueryError(error);
+            throw error;
+        }
+    }
+
+    async indexWork(workData) {
+        if (!workData || (!workData.publication_id && !workData.id)) {
+            logger.warn('indexWork called without publication_id; RT update skipped');
+            return { affectedRows: 0, skipped: true };
+        }
+        return this.indexPublication(workData);
+    }
+
+    async updateWork(workId, updates) {
+        logger.warn('updateWork called on sphinx.service; use updatePublication', { work_id: workId });
+        return { affectedRows: 0, skipped: true };
+    }
+
+    async deleteWork(workId) {
+        logger.warn('deleteWork called on sphinx.service; use deletePublication', { work_id: workId });
+        return { affectedRows: 0, skipped: true };
+    }
 
     async searchPersonIds(searchTerm, options = {}) {
         await this.ensureConnection();
@@ -212,7 +792,7 @@ class SphinxService {
 
         const sql = `
             SELECT id, WEIGHT() as weight
-            FROM persons_poc
+            FROM ${PERSON_INDEX}
             ${whereClause}
             ORDER BY weight DESC, id ASC
             LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}
@@ -227,19 +807,22 @@ class SphinxService {
                     reject(error);
                     return;
                 }
-                const countSql = `SELECT COUNT(*) as total FROM persons_poc ${whereClause}`;
+                const countSql = `SELECT COUNT(*) as total FROM ${PERSON_INDEX} ${whereClause}`;
                 this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, (countError, countRows = []) => {
                     if (countError) {
                         this._handleQueryError(countError);
                         resolve({ ids: rows.map(r => r.id), total: rows.length, query_time: queryTime, meta: {} });
                         return;
                     }
-                    resolve({ ids: rows.map(r => r.id), total: parseInt(countRows[0]?.total || rows.length, 10), query_time: queryTime });
+                    resolve({
+                        ids: rows.map(r => r.id),
+                        total: parseInt(countRows[0]?.total || rows.length, 10),
+                        query_time: queryTime
+                    });
                 });
             });
         });
     }
-
 
     async searchVenueIds(searchTerm, options = {}) {
         await this.ensureConnection();
@@ -256,13 +839,13 @@ class SphinxService {
         const params = [];
 
         if (type) {
-            whereClause += ' AND type = ?';
+            whereClause += ' AND venue_type = ?';
             params.push(type);
         }
 
         const orderClause = this._venueOrderClause(options.sortBy, options.sortOrder);
-        const sql = `SELECT id, WEIGHT() as weight FROM venues_poc ${whereClause} ORDER BY weight DESC, ${orderClause} LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}`;
-        const countSql = `SELECT COUNT(*) as total FROM venues_poc ${whereClause}`;
+        const sql = `SELECT id, WEIGHT() as weight FROM ${VENUE_INDEX} ${whereClause} ORDER BY weight DESC, ${orderClause} LIMIT ${parseInt(sanitizedOffset)}, ${parseInt(sanitizedLimit)}`;
+        const countSql = `SELECT COUNT(*) as total FROM ${VENUE_INDEX} ${whereClause}`;
 
         const startTime = Date.now();
         return new Promise((resolve, reject) => {
@@ -289,7 +872,6 @@ class SphinxService {
             });
         });
     }
-
 
     _ensureEnabled() {
         if (!this.enabled) {
@@ -338,7 +920,6 @@ class SphinxService {
         }
     }
 
-    
     async connect() {
         this._ensureEnabled();
         if (this._isTemporarilyDisabled()) {
@@ -415,7 +996,6 @@ class SphinxService {
         }
     }
 
-    
     async ensureConnection() {
         if (!this.enabled) {
             const error = new Error('Sphinx disabled by configuration');
@@ -503,13 +1083,14 @@ class SphinxService {
         return this._formatMatchExpression(term);
     }
 
-    _workOrderClause(orderBy) {
+    _publicationOrderClause(orderBy) {
         const allowed = {
-            default: 'relevance DESC, year DESC, id DESC',
-            year_desc: 'year DESC, id DESC',
-            year_asc: 'year ASC, id ASC',
-            created_desc: 'created_ts DESC, id DESC',
-            created_asc: 'created_ts ASC, id ASC'
+            default: 'relevance DESC, publication_year DESC, id DESC',
+            relevance: 'relevance DESC, publication_year DESC, id DESC',
+            year_desc: 'publication_year DESC, id DESC',
+            year_asc: 'publication_year ASC, id ASC',
+            citations_desc: 'work_citation_count DESC, publication_year DESC, id DESC',
+            citations_asc: 'work_citation_count ASC, publication_year ASC, id ASC'
         };
 
         return this._sanitizeOrderClause(orderBy, allowed, 'default');
@@ -517,10 +1098,14 @@ class SphinxService {
 
     _venueOrderClause(sortBy, sortOrder) {
         const fieldMap = {
-            name: 'name',
-            type: 'type',
-            impact_factor: 'impact_factor',
-            works_count: 'works_count'
+            id: 'id',
+            type: 'id',
+            name: 'id',
+            impact_factor: 'impact_factor_x1000',
+            h_index: 'h_index',
+            works_count: 'total_publications_count',
+            publications_count: 'total_publications_count',
+            cited_by_count: 'total_cited_by_count'
         };
 
         const normalizedSort = typeof sortBy === 'string' ? sortBy.toLowerCase() : 'works_count';
@@ -530,557 +1115,9 @@ class SphinxService {
         return `${field} ${direction}, id ASC`;
     }
 
-    
-    async searchWorks(query, filters = {}, options = {}) {
-        await this.ensureConnection();
-
-        const trimmedQuery = (query || '').trim();
-        const hasSearchTerm = trimmedQuery.length > 0 && trimmedQuery !== '*';
-        const limit = this._sanitizeLimit(options.limit ?? filters.limit);
-        const offset = this._sanitizeOffset(options.offset ?? filters.offset);
-        const MAX_SPHINX_MATCHES = 10000;
-        const DEFAULT_MAX_MATCHES = 1000;
-        const maxMatches = Math.min(
-            MAX_SPHINX_MATCHES,
-            Math.max(DEFAULT_MAX_MATCHES, offset + limit)
-        );
-
-        try {
-            const matchParts = [];
-            if (hasSearchTerm) {
-                matchParts.push(this._escapeMatchTerm(trimmedQuery));
-            }
-            if (filters.venue_name) {
-                matchParts.push(`@venue_name ${this._escapeMatchTerm(filters.venue_name)}`);
-            }
-            if (filters.author) {
-                matchParts.push(`@author_string ${this._escapeMatchTerm(filters.author)}`);
-            }
-            if (filters.subject) {
-                matchParts.push(`@subjects_string ${this._escapeMatchTerm(filters.subject)}`);
-            }
-
-            let sql;
-            if (matchParts.length > 0) {
-                sql = `SELECT *, WEIGHT() as relevance,
-                           year,
-                           work_type,
-                           language,
-                           peer_reviewed
-                   FROM works_poc
-                   WHERE MATCH(${this.connection.escape(matchParts.join(' '))})`;
-            } else {
-                sql = `SELECT *, 1 as relevance,
-                           year,
-                           work_type,
-                           language,
-                           peer_reviewed
-                   FROM works_poc
-                   WHERE id > 0`;
-            }
-
-            const params = [];
-
-            if (filters.year) {
-                sql += ' AND year = ?';
-                params.push(parseInt(filters.year, 10));
-            }
-
-            if (filters.work_type) {
-                sql += ' AND work_type = ?';
-                params.push(filters.work_type);
-            }
-
-            if (filters.language && filters.language !== 'unknown') {
-                sql += ' AND language = ?';
-                params.push(filters.language);
-            }
-
-            const peerReviewedFlag = this._toTinyIntFlag(filters.peer_reviewed);
-            if (peerReviewedFlag !== null) {
-                sql += ' AND peer_reviewed = ?';
-                params.push(peerReviewedFlag);
-            }
-
-            const openAccessFlag = this._toTinyIntFlag(filters.open_access);
-            if (openAccessFlag !== null) {
-                sql += ' AND open_access = ?';
-                params.push(openAccessFlag);
-            }
-
-            if (filters.year_from) {
-                sql += ' AND year >= ?';
-                params.push(parseInt(filters.year_from, 10));
-            }
-
-            if (filters.year_to) {
-                sql += ' AND year <= ?';
-                params.push(parseInt(filters.year_to, 10));
-            }
-
-            if (filters.venue_id) {
-                sql += ' AND venue_id = ?';
-                params.push(parseInt(filters.venue_id, 10));
-            }
-
-            if (filters.publisher_id) {
-                sql += ' AND publisher_id = ?';
-                params.push(parseInt(filters.publisher_id, 10));
-            }
-
-            if (filters.first_author_id) {
-                sql += ' AND first_author_id = ?';
-                params.push(parseInt(filters.first_author_id, 10));
-            }
-
-            if (filters.citation_count_min) {
-                sql += ' AND citation_count >= ?';
-                params.push(parseInt(filters.citation_count_min, 10));
-            }
-
-            if (filters.reference_count_min) {
-                sql += ' AND reference_count >= ?';
-                params.push(parseInt(filters.reference_count_min, 10));
-            }
-
-            if (filters.resolved_references_min) {
-                sql += ' AND resolved_references_count >= ?';
-                params.push(parseInt(filters.resolved_references_min, 10));
-            }
-
-            if (filters.pending_references_max !== undefined) {
-                sql += ' AND pending_references_count <= ?';
-                params.push(parseInt(filters.pending_references_max, 10));
-            }
-
-            const hasFilesFlag = this._toTinyIntFlag(filters.has_files);
-            if (hasFilesFlag !== null) {
-                sql += ' AND has_files = ?';
-                params.push(hasFilesFlag);
-            }
-
-            const orderClause = this._workOrderClause(options.orderBy);
-            sql += ` ORDER BY ${orderClause} LIMIT ?, ? OPTION max_matches=${maxMatches}`;
-            params.push(offset, limit);
-
-            const startTime = Date.now();
-
-            return new Promise((resolve, reject) => {
-                const qopts = { sql, timeout: this.queryTimeoutMs };
-                this.connection.query(qopts, params, (error, results = []) => {
-                    const queryTime = Date.now() - startTime;
-
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-
-                    this.connection.query('SHOW META', (metaError, metaRows = []) => {
-                        if (metaError) {
-                            this._handleQueryError(metaError);
-                            reject(metaError);
-                            return;
-                        }
-
-                        const meta = {};
-                        metaRows.forEach(row => {
-                            const key = row.Variable_name || row.Var_name;
-                            meta[key] = row.Value;
-                        });
-
-                        const totalFound = parseInt(meta.total_found || meta.total, 10);
-                        const totalReturned = results.length;
-
-                        logger.info('Sphinx search completed', {
-                            query,
-                            results: totalReturned,
-                            totalFound: Number.isNaN(totalFound) ? totalReturned : totalFound,
-                            queryTime: `${queryTime}ms`,
-                            filters: Object.keys(filters).length
-                        });
-
-                        const formattedResults = results.map(row => ({
-                            id: row.id,
-                            title: row.title,
-                            subtitle: row.subtitle,
-                            abstract: row.abstract,
-                            author_string: row.author_string,
-                            venue_name: row.venue_name,
-                            venue_abbreviated_name: row.venue_abbrev || null,
-                            venue_id: row.venue_id || null,
-                            publisher_id: row.publisher_id || null,
-                            first_author_id: row.first_author_id || null,
-                            doi: row.doi,
-                            year: row.year,
-                            work_type: row.work_type,
-                            language: row.language,
-                            open_access: Boolean(row.open_access),
-                            peer_reviewed: Boolean(row.peer_reviewed),
-                            citation_count: row.citation_count || 0,
-                            reference_count: row.reference_count || 0,
-                            resolved_references_count: row.resolved_references_count || 0,
-                            pending_references_count: row.pending_references_count || 0,
-                            cited_by_count: row.cited_by_count || 0,
-                            has_files: Boolean(row.has_files),
-                            relevance_score: row.relevance || row.weight,
-                            created_ts: row.created_ts
-                        }));
-
-                        resolve({
-                            results: formattedResults,
-                            total: Number.isNaN(totalFound) ? totalReturned : totalFound,
-                            returned: totalReturned,
-                            query_time: queryTime,
-                            query,
-                            filters,
-                            meta: {
-                                total: parseInt(meta.total, 10) || totalReturned,
-                                total_found: Number.isNaN(totalFound) ? totalReturned : totalFound,
-                                time: meta.time_ms ? parseFloat(meta.time_ms) : queryTime,
-                                limit,
-                                offset
-                            }
-                        });
-                    });
-                });
-            });
-            
-        } catch (error) {
-            if (error.code !== 'SPHINX_UNAVAILABLE') {
-                logger.error('Sphinx search failed', {
-                    message: error.message,
-                    code: error.code
-                });
-            }
-            this._handleQueryError(error);
-            throw error;
-        }
-    }
-
-    
-    async getAllWorks(options = {}) {
-        await this.ensureConnection();
-
-        const limit = this._sanitizeLimit(options.limit, 50, 200);
-        const offset = this._sanitizeOffset(options.offset);
-        const orderClause = this._workOrderClause(options.orderBy);
-
-        try {
-            const sql = `
-                SELECT *, 
-                       1 as relevance,
-                       year,
-                       work_type,
-                       language,
-                       peer_reviewed
-                FROM works_poc 
-                WHERE id > 0
-                ORDER BY ${orderClause}
-                LIMIT ${offset}, ${limit}
-            `;
-
-            const startTime = Date.now();
-
-            return new Promise((resolve, reject) => {
-                const qopts = { sql, timeout: this.queryTimeoutMs };
-                this.connection.query(qopts, [], (error, results = []) => {
-                    const queryTime = Date.now() - startTime;
-                    
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    
-                    logger.info('Sphinx getAllWorks completed', {
-                        results: results.length,
-                        queryTime: `${queryTime}ms`
-                    });
-                    
-                    const formattedResults = results.map(row => ({
-                        id: row.id,
-                        title: row.title,
-                        subtitle: row.subtitle,
-                        abstract: row.abstract,
-                        author_string: row.author_string,
-                        venue_name: row.venue_name,
-                        venue_abbreviated_name: row.venue_abbrev || null,
-                        venue_id: row.venue_id || null,
-                        publisher_id: row.publisher_id || null,
-                        first_author_id: row.first_author_id || null,
-                        doi: row.doi,
-                        year: row.year,
-                        work_type: row.work_type,
-                        language: row.language,
-                        open_access: Boolean(row.open_access),
-                        peer_reviewed: Boolean(row.peer_reviewed),
-                        citation_count: row.citation_count || 0,
-                        reference_count: row.reference_count || 0,
-                        resolved_references_count: row.resolved_references_count || 0,
-                        pending_references_count: row.pending_references_count || 0,
-                        cited_by_count: row.cited_by_count || 0,
-                        has_files: Boolean(row.has_files),
-                        relevance_score: 1,
-                        created_ts: row.created_ts
-                    }));
-                    
-                    resolve({
-                        results: formattedResults,
-                        total: results.length,
-                        query_time: queryTime,
-                        query: 'all',
-                        filters: {}
-                    });
-                });
-            });
-        } catch (error) {
-            if (error.code !== 'SPHINX_UNAVAILABLE') {
-                logger.error('Sphinx getAllWorks error', {
-                    message: error.message,
-                    code: error.code
-                });
-            }
-            this._handleQueryError(error);
-            throw error;
-        }
-    }
-
-    
-    async getFacets(query) {
-        await this.ensureConnection();
-        
-        try {
-            const trimmedQuery = (query || '').trim();
-            if (!trimmedQuery) {
-                return { years: [], work_types: [], languages: [], venues: [], authors: [] };
-            }
-
-            const matchExpression = `MATCH(${this.connection.escape(trimmedQuery)})`;
-            
-            const yearPromise = new Promise((resolve, reject) => {
-                this.connection.query(`
-                    SELECT year, COUNT(*) as count 
-                    FROM works_poc 
-                    WHERE ${matchExpression}
-                    GROUP BY year 
-                    ORDER BY count DESC, year DESC 
-                    LIMIT 20
-                `, (error, results) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    resolve(results.map(f => ({ value: f.year, count: f.count })));
-                });
-            });
-
-            const typePromise = new Promise((resolve, reject) => {
-                this.connection.query(`
-                    SELECT work_type, COUNT(*) as count 
-                    FROM works_poc 
-                    WHERE ${matchExpression} 
-                    GROUP BY work_type 
-                    ORDER BY count DESC 
-                    LIMIT 10
-                `, (error, results) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    resolve(results.map(f => ({ value: f.work_type, count: f.count })));
-                });
-            });
-
-            const languagePromise = new Promise((resolve, reject) => {
-                this.connection.query(`
-                    SELECT language, COUNT(*) as count 
-                    FROM works_poc 
-                    WHERE ${matchExpression} AND language != 'unknown' AND language != ''
-                    GROUP BY language 
-                    ORDER BY count DESC 
-                    LIMIT 10
-                `, (error, results) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    resolve(results.map(f => ({ value: f.language, count: f.count })));
-                });
-            });
-
-            const venuesPromise = new Promise((resolve, reject) => {
-                this.connection.query(`
-                    SELECT venue_name, venue_abbrev, COUNT(*) as count 
-                    FROM works_poc 
-                    WHERE ${matchExpression} AND venue_name != ''
-                    GROUP BY venue_name, venue_abbrev 
-                    ORDER BY count DESC 
-                    LIMIT 15
-                `, (error, results) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    resolve(results.map(f => ({
-                        value: f.venue_name,
-                        name: f.venue_name,
-                        abbreviated_name: f.venue_abbrev || null,
-                        count: f.count
-                    })));
-                });
-            });
-
-            const authorsPromise = new Promise((resolve, reject) => {
-                this.connection.query(`
-                    SELECT author_string, COUNT(*) as count 
-                    FROM works_poc 
-                    WHERE ${matchExpression} AND author_string != ''
-                    GROUP BY author_string 
-                    ORDER BY count DESC 
-                    LIMIT 10
-                `, (error, results) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    resolve(results.map(f => ({ 
-                        value: f.author_string.split(';')[0].trim(),
-                        count: f.count 
-                    })));
-                });
-            });
-
-            const [years, work_types, languages, venues, authors] = await Promise.all([
-                yearPromise, typePromise, languagePromise, venuesPromise, authorsPromise
-            ]);
-            
-            return { years, work_types, languages, venues, authors };
-            
-        } catch (error) {
-            if (error.code !== 'SPHINX_UNAVAILABLE') {
-                logger.error('Sphinx facets failed', {
-                    message: error.message,
-                    code: error.code
-                });
-            }
-            this._handleQueryError(error);
-            throw error;
-        }
-    }
-
-    
-    async indexWork(workData) {
-        await this.ensureConnection();
-        
-        try {
-            const sql = `
-                INSERT INTO works_rt
-                (id, title, subtitle, abstract, author_string, venue_name, venue_abbrev, doi, subjects_string,
-                 created_ts, year, open_access, peer_reviewed, work_type, language)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `;
-
-            const params = [
-                workData.id,
-                workData.title || '',
-                workData.subtitle || '',
-                workData.abstract || '',
-                workData.author_string || '',
-                workData.venue_name || '',
-                workData.venue_abbrev || '',
-                workData.doi || '',
-                workData.subjects_string || '',
-                Math.floor(Date.now() / 1000),
-                workData.year || 0,
-                workData.open_access ? 1 : 0,
-                workData.peer_reviewed ? 1 : 0,
-                workData.work_type || 'ARTICLE',
-                workData.language || 'unknown'
-            ];
-            
-            const result = await new Promise((resolve, reject) => {
-                this.connection.query(sql, params, (error, results) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    resolve(results);
-                });
-            });
-
-            logger.info('Work indexed in RT index', {
-                work_id: workData.id,
-                title: workData.title ? `${workData.title.substring(0, 50)}...` : null
-            });
-
-            return result;
-            
-        } catch (error) {
-            if (error.code !== 'SPHINX_UNAVAILABLE') {
-                logger.error('RT indexing failed', {
-                    message: error.message,
-                    code: error.code
-                });
-            }
-            this._handleQueryError(error);
-            throw error;
-        }
-    }
-
-    
-    async updateWork(workId, updates) {
-        await this.ensureConnection();
-        
-        try {
-            const setParts = [];
-            const params = [];
-            
-            Object.entries(updates).forEach(([field, value]) => {
-                setParts.push(`${field} = ?`);
-                params.push(value);
-            });
-            
-            params.push(workId);
-            
-            const sql = `UPDATE works_rt SET ${setParts.join(', ')} WHERE id = ?`;
-            
-            return new Promise((resolve, reject) => {
-                this.connection.query(sql, params, (error, results) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-                    resolve(results);
-                });
-            }).then((results) => {
-                logger.info('Work updated in RT index', { work_id: workId, fields: Object.keys(updates) });
-                return results;
-            });
-            
-        } catch (error) {
-            if (error.code !== 'SPHINX_UNAVAILABLE') {
-                logger.error('RT update failed', {
-                    message: error.message,
-                    code: error.code
-                });
-            }
-            this._handleQueryError(error);
-            throw error;
-        }
-    }
-
-    
     async getStatus() {
         await this.ensureConnection();
-        
+
         try {
             const statusPromise = new Promise((resolve, reject) => {
                 this.connection.query('SHOW STATUS', (error, results) => {
@@ -1105,17 +1142,17 @@ class SphinxService {
             });
 
             const [status, variables] = await Promise.all([statusPromise, variablesPromise]);
-            
+
             const statusObj = {};
             status.forEach(row => {
                 statusObj[row.Counter || row.Variable_name] = row.Value;
             });
-            
+
             const variablesObj = {};
             variables.forEach(row => {
                 variablesObj[row.Variable_name] = row.Value;
             });
-            
+
             return {
                 connected: this.isConnected,
                 uptime: parseInt(statusObj.uptime) || 0,
@@ -1128,7 +1165,7 @@ class SphinxService {
                     queries_per_second: statusObj.uptime ? (statusObj.queries / statusObj.uptime).toFixed(2) : 0
                 }
             };
-            
+
         } catch (error) {
             if (error.code !== 'SPHINX_UNAVAILABLE') {
                 logger.error('Sphinx status failed', {
@@ -1144,28 +1181,6 @@ class SphinxService {
         }
     }
 
-    
-    async searchWithFacets(query, filters = {}, options = {}) {
-        const searchResults = await this.searchWorks(query, filters, options);
-        let facets = {};
-        try {
-            facets = await this.getFacets(query);
-        } catch (error) {
-            logger.warn('Facets fetch failed in searchWithFacets', { error: error.message });
-        }
-
-        return {
-            ...searchResults,
-            facets,
-            meta: {
-                ...searchResults.meta,
-                faceted_search: true,
-                total_facets: Object.keys(facets).length
-            }
-        };
-    }
-
-    
     async close() {
         if (this.connection) {
             try {
@@ -1175,119 +1190,6 @@ class SphinxService {
             }
             this.connection = null;
             this.isConnected = false;
-        }
-    }
-
-    
-    async getAllVenues(options = {}) {
-        await this.ensureConnection();
-        
-        const { 
-            limit = 20, 
-            offset = 0,
-            type = null,
-            sortBy = 'works_count',
-            sortOrder = 'DESC'
-        } = options;
-
-        const sanitizedLimit = this._sanitizeLimit(limit, 20, 200);
-        const sanitizedOffset = this._sanitizeOffset(offset);
-        const MAX_SPHINX_MATCHES = 10000;
-        const DEFAULT_MAX_MATCHES = 1000;
-        const maxMatches = Math.min(
-            MAX_SPHINX_MATCHES,
-            Math.max(DEFAULT_MAX_MATCHES, sanitizedOffset + sanitizedLimit)
-        );
-        const sortClause = this._venueOrderClause(sortBy, sortOrder);
-
-        const params = [];
-        const countParams = [];
-
-        try {
-            let sql = `
-                SELECT id, name, type, issn, eissn, scopus_source_id, 
-                       publisher_id, impact_factor, works_count, unique_authors,
-                       first_publication_year, latest_publication_year, publisher_name
-                FROM venues_metrics_poc 
-                WHERE id > 0
-            `;
-
-            if (type) {
-                sql += ' AND type = ?';
-                params.push(type);
-                countParams.push(type);
-            }
-
-            sql += ` ORDER BY ${sortClause} LIMIT ${sanitizedOffset}, ${sanitizedLimit} OPTION max_matches=${maxMatches}`;
-
-            const countSql = `
-                SELECT COUNT(*) as total
-                FROM venues_metrics_poc 
-                WHERE id > 0
-                ${type ? ' AND type = ?' : ''}
-            `;
-
-            const startTime = Date.now();
-
-            return new Promise((resolve, reject) => {
-                this.connection.query({ sql, timeout: this.queryTimeoutMs }, params, (error, venueResults = []) => {
-                    if (error) {
-                        this._handleQueryError(error);
-                        reject(error);
-                        return;
-                    }
-
-                    this.connection.query({ sql: countSql, timeout: this.queryTimeoutMs }, countParams, (countError, countResults = []) => {
-                        if (countError) {
-                            this._handleQueryError(countError);
-                            reject(countError);
-                            return;
-                        }
-                        
-                        const queryTime = Date.now() - startTime;
-                        const total = countResults[0]?.total || venueResults.length;
-                        
-                        logger.info('Sphinx getAllVenues completed', {
-                            results: venueResults.length,
-                            total: total,
-                            queryTime: `${queryTime}ms`
-                        });
-                        
-                        const formattedVenues = venueResults.map(venue => ({
-                            id: venue.id,
-                            name: venue.name,
-                            type: venue.type,
-                            issn: venue.issn || null,
-                            eissn: venue.eissn || null,
-                            scopus_source_id: venue.scopus_source_id || null,
-                            publisher_id: venue.publisher_id,
-                            impact_factor: venue.impact_factor || null,
-                            works_count: venue.works_count || 0,
-                            publisher_name: venue.publisher_name || null,
-                            metrics: {
-                                unique_authors: venue.unique_authors || 0,
-                                first_publication_year: venue.first_publication_year,
-                                latest_publication_year: venue.latest_publication_year
-                            }
-                        }));
-                        
-                        resolve({
-                            venues: formattedVenues,
-                            total: total,
-                            query_time: queryTime
-                        });
-                    });
-                });
-            });
-        } catch (error) {
-            if (error.code !== 'SPHINX_UNAVAILABLE') {
-                logger.error('Sphinx getAllVenues error', {
-                    message: error.message,
-                    code: error.code
-                });
-            }
-            this._handleQueryError(error);
-            throw error;
         }
     }
 }
