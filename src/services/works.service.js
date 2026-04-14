@@ -262,6 +262,7 @@ class WorksService {
         data: formattedWorks,
         pagination: createPagination(page, effectiveLimit, totalItems),
         meta: {
+          match_mode: 'any_publication',
           query_source: 'summary_publications',
           performance: {
             engine: 'MariaDB',
@@ -543,6 +544,7 @@ class WorksService {
       performance: {
         engine: 'MariaDB',
         query_type: 'showcase_enriched',
+        match_mode: 'any_publication',
         primary_query_ms: primaryQueryMs,
         publications_query_ms: publicationsQueryMs,
         authors_query_ms: authorsQueryMs,
@@ -983,179 +985,135 @@ class WorksService {
       return { data: [], pagination: createPagination(page, limit, 0) };
     }
 
-    const { pool } = require('../config/database');
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '4000');
 
-    const where = ['w.title LIKE ?'];
-    const params = [`%${trimmed}%`];
-    if (type) { where.push('w.work_type = ?'); params.push(type); }
-    if (language) { where.push('w.language = ?'); params.push(language); }
-    if (author) {
-      where.push('EXISTS (SELECT 1 FROM summary_publications sp_a WHERE sp_a.work_id = w.id AND sp_a.authors_search LIKE ?)');
-      params.push(`%${author}%`);
-    }
-    if (subject) {
-      where.push('EXISTS (SELECT 1 FROM summary_publications sp_s WHERE sp_s.work_id = w.id AND sp_s.subjects_search LIKE ?)');
-      params.push(`%${subject}%`);
-    }
+    const whereConditions = ['sp.title_search LIKE ?'];
+    const filterParams = [`%${trimmed}%`];
 
-    const publicationFilters = [];
-    const publicationParams = [];
+    if (type) {
+      whereConditions.push('sp.work_type = ?');
+      filterParams.push(type);
+    }
+    if (language) {
+      whereConditions.push('sp.language = ?');
+      filterParams.push(language);
+    }
     if (year_from) {
-      publicationFilters.push('p.year >= ?');
-      publicationParams.push(parseInt(year_from, 10));
+      whereConditions.push('sp.publication_year >= ?');
+      filterParams.push(parseInt(year_from, 10));
     }
     if (year_to) {
-      publicationFilters.push('p.year <= ?');
-      publicationParams.push(parseInt(year_to, 10));
+      whereConditions.push('sp.publication_year <= ?');
+      filterParams.push(parseInt(year_to, 10));
     }
     if (open_access !== undefined) {
-      publicationFilters.push('p.open_access = ?');
-      publicationParams.push(open_access === true || open_access === 'true' || open_access === 1 || open_access === '1' ? 1 : 0);
+      whereConditions.push('sp.open_access = ?');
+      filterParams.push(open_access === true || open_access === 'true' || open_access === 1 || open_access === '1' ? 1 : 0);
     }
     if (peer_reviewed !== undefined) {
-      publicationFilters.push('p.peer_reviewed = ?');
-      publicationParams.push(peer_reviewed === true || peer_reviewed === 'true' || peer_reviewed === 1 || peer_reviewed === '1' ? 1 : 0);
+      whereConditions.push('sp.peer_reviewed = ?');
+      filterParams.push(peer_reviewed === true || peer_reviewed === 'true' || peer_reviewed === 1 || peer_reviewed === '1' ? 1 : 0);
     }
+
+    let venueJoin = '';
     if (venue_name) {
-      publicationFilters.push('(v.name LIKE ? OR v.abbreviated_name LIKE ?)');
-      publicationParams.push(`%${venue_name}%`, `%${venue_name}%`);
+      venueJoin = 'LEFT JOIN summary_venues sv_filter ON sv_filter.venue_id = sp.venue_id';
+      whereConditions.push('(sp.venue_search LIKE ? OR sv_filter.abbrev_search LIKE ?)');
+      filterParams.push(`%${venue_name}%`, `%${venue_name}%`);
     }
-    if (publicationFilters.length > 0) {
-      where.push(`
-        EXISTS (
-          SELECT 1
-          FROM publications p
-          LEFT JOIN venues v ON v.id = p.venue_id
-          WHERE p.work_id = w.id
-            AND ${publicationFilters.join(' AND ')}
-        )
-      `);
-      params.push(...publicationParams);
+    if (author) {
+      whereConditions.push('sp.authors_search LIKE ?');
+      filterParams.push(`%${author}%`);
+    }
+    if (subject) {
+      whereConditions.push('sp.subjects_search LIKE ?');
+      filterParams.push(`%${subject}%`);
     }
 
-    const idSql = `
-      SELECT w.id
-      FROM works w
-      WHERE ${where.join(' AND ')}
-      ORDER BY w.id DESC
-      LIMIT ? OFFSET ?
+    const selectSql = `
+      SELECT
+        sp.work_id AS id,
+        sp.work_id,
+        sp.publication_id,
+        sp.title_search AS title,
+        sp.abstract_search AS abstract,
+        sp.publication_year,
+        sp.work_type,
+        sp.language,
+        sp.open_access,
+        sp.peer_reviewed,
+        sp.has_files,
+        sp.authors_json,
+        sp.doi,
+        sp.venue_id,
+        sp.venue_search AS venue_name,
+        sv.abbrev_search AS venue_abbreviated_name,
+        w.subtitle,
+        w.created_at
+      FROM (
+        SELECT sp.work_id, MAX(sp.publication_id) AS pub_id
+        FROM summary_publications sp
+        ${venueJoin}
+        WHERE ${whereConditions.join(' AND ')}
+        GROUP BY sp.work_id
+        ORDER BY sp.work_id DESC
+        LIMIT ? OFFSET ?
+      ) latest
+      INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
+      LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+      LEFT JOIN works w ON w.id = sp.work_id
+      ORDER BY sp.work_id DESC
     `;
-    params.push(limit, offset);
 
-    const [idRows] = await pool.execute({ sql: idSql, timeout: dbTimeoutMs }, params);
-    const workIds = idRows.map(r => r.id);
-    if (workIds.length === 0) {
+    const queryParams = [...filterParams, limit, offset];
+    const primaryQueryStart = process.hrtime.bigint();
+    const rows = await Promise.race([
+      sequelize.query(selectSql, {
+        replacements: queryParams,
+        type: sequelize.QueryTypes.SELECT
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), dbTimeoutMs))
+    ]);
+    const primaryQueryMs = Number(((process.hrtime.bigint() - primaryQueryStart) / BigInt(1e6)).toString());
+
+    const processed = (rows || []).map(row => {
+      const authors = authorsFromJson(row.authors_json);
       return {
-        data: [],
-        pagination: createPagination(page, limit, 0),
-        performance: { engine: 'MariaDB', query_type: 'search_fallback', primary_query_ms: 0, publications_query_ms: 0 }
-      };
-    }
-
-    const placeholders = workIds.map(() => '?').join(',');
-    const [works] = await pool.execute({
-      sql: `
-        SELECT
-          w.id,
-          w.title,
-          w.subtitle,
-          w.abstract,
-          w.work_type,
-          w.language,
-          w.created_at,
-          sp.authors_json
-        FROM works w
-        LEFT JOIN summary_publications sp ON sp.publication_id = (
-          SELECT MAX(publication_id)
-          FROM summary_publications
-          WHERE work_id = w.id
-        )
-        WHERE w.id IN (${placeholders})
-      `,
-      timeout: dbTimeoutMs
-    }, workIds);
-
-    let publicationsData = [];
-    {
-      const [pubs] = await pool.execute({
-        sql: `
-          SELECT p1.work_id,
-                 p1.id AS publication_id,
-                 p1.year AS publication_year,
-                 p1.peer_reviewed,
-                 p1.open_access,
-                 p1.doi,
-                 v.id AS venue_id,
-                 v.name AS venue_name,
-                 sv.abbrev_search AS venue_abbreviated_name,
-                 v.type AS venue_type,
-                 v.issn,
-                 v.eissn,
-                 v.scopus_id,
-                 v.wikidata_id,
-                 v.openalex_id,
-                 v.mag_id
-          FROM publications p1
-          INNER JOIN (
-            SELECT work_id, MAX(year) AS max_year
-            FROM publications
-            WHERE work_id IN (${placeholders})
-            GROUP BY work_id
-          ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
-          LEFT JOIN venues v ON p1.venue_id = v.id
-          LEFT JOIN summary_venues sv ON sv.venue_id = v.id
-        `,
-        timeout: dbTimeoutMs
-      }, workIds);
-      publicationsData = pubs;
-    }
-
-    const pubMap = Object.create(null);
-    for (const pub of publicationsData) pubMap[pub.work_id] = pub;
-
-    let processed = works.map(work => {
-      const authors = authorsFromJson(work.authors_json);
-      const pub = pubMap[work.id];
-      return {
-        id: work.id,
-        title: work.title,
-        subtitle: work.subtitle,
-        abstract: work.abstract || null,
-        work_type: work.work_type,
-        language: work.language,
-        publication_year: pub?.publication_year,
-        doi: pub?.doi,
-        peer_reviewed: pub ? pub.peer_reviewed === 1 : null,
-        open_access: pub ? pub.open_access === 1 : null,
-        venue: pub?.venue_name ? {
-          id: pub.venue_id || null,
-          name: pub.venue_name,
-          abbreviated_name: pub.venue_abbreviated_name || null,
-          type: pub.venue_type,
-          issn: pub.issn || null,
-          eissn: pub.eissn || null,
-          scopus_id: pub.scopus_id || null,
-          wikidata_id: pub.wikidata_id || null,
-          openalex_id: pub.openalex_id || null,
-          mag_id: pub.mag_id || null
+        id: row.work_id,
+        title: row.title,
+        subtitle: row.subtitle || null,
+        abstract: row.abstract || null,
+        work_type: row.work_type,
+        language: row.language,
+        publication_year: row.publication_year,
+        doi: row.doi,
+        peer_reviewed: row.peer_reviewed === 1,
+        open_access: row.open_access === 1,
+        venue: row.venue_name ? {
+          id: row.venue_id || null,
+          name: row.venue_name,
+          abbreviated_name: row.venue_abbreviated_name || null
         } : null,
         author_count: authors.length,
         first_author: authors[0] || null,
         authors_preview: authors.slice(0, 3),
-        added_to_database: work.created_at,
+        added_to_database: row.created_at,
         data_source: 'showcase',
         search_engine: 'MariaDB'
       };
     });
 
-    processed = uniqueById(processed);
-    const approxTotal = offset + processed.length;
     const items = processed.map(formatWorkListItem);
+    const approxTotal = offset + processed.length;
     return {
       data: items,
       pagination: createPagination(page, limit, approxTotal),
-      performance: { engine: 'MariaDB', query_type: 'search_fallback' }
+      performance: {
+        engine: 'MariaDB',
+        query_type: 'search_fallback',
+        match_mode: 'any_publication',
+        primary_query_ms: primaryQueryMs
+      }
     };
   }
 
@@ -1164,146 +1122,142 @@ class WorksService {
     const pagination = normalizePagination(filters);
     const { limit, offset } = pagination;
 
-    try {
-      const spx = await SphinxService.searchWorkIds(search, {
-        work_type: filters?.type,
-        language: filters?.language,
-        year_from: filters?.year_from,
-        year_to: filters?.year_to,
-        peer_reviewed: filters?.peer_reviewed,
-        open_access: filters?.open_access,
-        venue_name: filters?.venue_name,
-        author: filters?.author,
-        subject: filters?.subject,
-        venue_id: filters?.venue_id,
-        publisher_id: filters?.publisher_id,
-        citation_count_min: filters?.citation_count_min,
-        reference_count_min: filters?.reference_count_min,
-        has_files: filters?.has_files
-      }, { limit, offset });
+    const spx = await SphinxService.searchPublicationIds(search, {
+      work_type: filters?.type,
+      language: filters?.language,
+      year_from: filters?.year_from,
+      year_to: filters?.year_to,
+      peer_reviewed: filters?.peer_reviewed,
+      open_access: filters?.open_access,
+      venue_name: filters?.venue_name,
+      author: filters?.author,
+      subject: filters?.subject,
+      venue_id: filters?.venue_id,
+      publisher_id: filters?.publisher_id,
+      citation_count_min: filters?.citation_count_min,
+      reference_count_min: filters?.reference_count_min,
+      has_files: filters?.has_files
+    }, { limit, offset });
 
-      const ids = Array.isArray(spx?.ids) ? spx.ids : [];
-      const total = parseInt(spx?.total || 0, 10) || 0;
-      if (ids.length === 0) {
-        return {
-          data: [],
-          pagination: createPagination(pagination.page, limit, total),
-          performance: { engine: 'Sphinx+MariaDB', query_type: 'search_hydrate', sphinx_query_ms: spx?.query_time || null }
-        };
-      }
+    const matchedPubIds = Array.isArray(spx?.publication_ids) ? spx.publication_ids : (Array.isArray(spx?.ids) ? spx.ids : []);
+    const matchedWorkIds = Array.isArray(spx?.work_ids) ? spx.work_ids : [];
+    const total = parseInt(spx?.total || 0, 10) || 0;
 
-      const { pool } = require('../config/database');
-      const orderField = `FIELD(w.id, ${ids.map(() => '?').join(',')})`;
-
-      const [works] = await pool.execute({
-        sql: `
-          SELECT
-            w.id,
-            w.title,
-            w.subtitle,
-            w.abstract,
-            w.work_type,
-            w.language,
-            w.created_at,
-            sp.authors_json
-          FROM works w
-          LEFT JOIN summary_publications sp ON sp.publication_id = (
-            SELECT MAX(publication_id)
-            FROM summary_publications
-            WHERE work_id = w.id
-          )
-          WHERE w.id IN (${ids.map(() => '?').join(',')})
-          ORDER BY ${orderField}
-        `,
-        timeout: parseInt(process.env.DB_QUERY_TIMEOUT_MS || '6000')
-      }, [...ids, ...ids]);
-
-      let publicationsData = [];
-      const placeholders = ids.map(() => '?').join(',');
-      const [pubs] = await pool.execute({
-        sql: `
-          SELECT p1.work_id,
-                 p1.year AS publication_year,
-                 p1.peer_reviewed,
-                 p1.open_access,
-                 p1.doi,
-                 v.id AS venue_id,
-                 v.name AS venue_name,
-                 sv.abbrev_search AS venue_abbreviated_name,
-                 v.type AS venue_type,
-                 v.issn,
-                 v.eissn,
-                 v.scopus_id,
-                 v.wikidata_id,
-                 v.openalex_id,
-                 v.mag_id
-          FROM publications p1
-          INNER JOIN (
-            SELECT work_id, MAX(year) AS max_year
-            FROM publications
-            WHERE work_id IN (${placeholders})
-            GROUP BY work_id
-          ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
-          LEFT JOIN venues v ON p1.venue_id = v.id
-          LEFT JOIN summary_venues sv ON sv.venue_id = v.id
-        `,
-        timeout: parseInt(process.env.DB_QUERY_TIMEOUT_MS || '6000')
-      }, ids);
-      publicationsData = pubs || [];
-
-      const pubMap = Object.create(null);
-      for (const pub of publicationsData) pubMap[pub.work_id] = pub;
-
-      let processedWorks = (works || []).map(work => {
-        const authors = authorsFromJson(work.authors_json);
-        const pub = pubMap[work.id];
-        return {
-          id: work.id,
-          title: work.title,
-          subtitle: work.subtitle || null,
-          abstract: work.abstract || null,
-          work_type: work.work_type || 'ARTICLE',
-          language: work.language || null,
-          publication_year: pub?.publication_year || null,
-          doi: pub?.doi || null,
-          open_access: pub ? pub.open_access === 1 : null,
-          venue: pub?.venue_name ? {
-            id: pub.venue_id || null,
-            name: pub.venue_name,
-            abbreviated_name: pub.venue_abbreviated_name || null,
-            type: pub.venue_type,
-            issn: pub.issn || null,
-            eissn: pub.eissn || null,
-            scopus_id: pub.scopus_id || null,
-            wikidata_id: pub.wikidata_id || null,
-            openalex_id: pub.openalex_id || null,
-            mag_id: pub.mag_id || null
-          } : null,
-          peer_reviewed: pub ? pub.peer_reviewed === 1 : null,
-          author_count: authors.length,
-          first_author: authors[0] || null,
-          authors_preview: authors.slice(0, 3),
-          added_to_database: work.created_at,
-          data_source: 'showcase',
-          search_engine: 'Sphinx'
-        };
-      });
-
-      processedWorks = uniqueById(processedWorks);
-      const items = processedWorks.map(formatWorkListItem);
-
+    if (matchedPubIds.length === 0) {
       return {
-        data: items,
+        data: [],
         pagination: createPagination(pagination.page, limit, total),
         performance: {
           engine: 'Sphinx+MariaDB',
           query_type: 'search_hydrate',
+          match_mode: 'any_publication',
           sphinx_query_ms: spx?.query_time || null
         }
       };
-    } catch (error) {
-      throw error;
     }
+
+    const seen = new Set();
+    const orderedPubIds = [];
+    for (let i = 0; i < matchedPubIds.length; i += 1) {
+      const wid = matchedWorkIds[i];
+      if (wid === null || wid === undefined) continue;
+      if (seen.has(wid)) continue;
+      seen.add(wid);
+      orderedPubIds.push(matchedPubIds[i]);
+    }
+
+    if (orderedPubIds.length === 0) {
+      return {
+        data: [],
+        pagination: createPagination(pagination.page, limit, total),
+        performance: {
+          engine: 'Sphinx+MariaDB',
+          query_type: 'search_hydrate',
+          match_mode: 'any_publication',
+          sphinx_query_ms: spx?.query_time || null
+        }
+      };
+    }
+
+    const placeholders = orderedPubIds.map(() => '?').join(',');
+    const orderField = `FIELD(sp.publication_id, ${placeholders})`;
+    const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '6000');
+    const hydrateStart = process.hrtime.bigint();
+
+    const rows = await Promise.race([
+      sequelize.query(`
+        SELECT
+          sp.work_id AS id,
+          sp.work_id,
+          sp.publication_id,
+          sp.title_search AS title,
+          sp.abstract_search AS abstract,
+          sp.publication_year,
+          sp.work_type,
+          sp.language,
+          sp.open_access,
+          sp.peer_reviewed,
+          sp.has_files,
+          sp.authors_json,
+          sp.doi,
+          sp.venue_id,
+          sp.venue_search AS venue_name,
+          sv.abbrev_search AS venue_abbreviated_name,
+          w.subtitle,
+          w.created_at
+        FROM summary_publications sp
+        LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+        LEFT JOIN works w ON w.id = sp.work_id
+        WHERE sp.publication_id IN (${placeholders})
+        ORDER BY ${orderField}
+      `, {
+        replacements: [...orderedPubIds, ...orderedPubIds],
+        type: sequelize.QueryTypes.SELECT
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), dbTimeoutMs))
+    ]);
+    const hydrateMs = Number(((process.hrtime.bigint() - hydrateStart) / BigInt(1e6)).toString());
+
+    const processedWorks = (rows || []).map(row => {
+      const authors = authorsFromJson(row.authors_json);
+      return {
+        id: row.work_id,
+        title: row.title,
+        subtitle: row.subtitle || null,
+        abstract: row.abstract || null,
+        work_type: row.work_type || 'ARTICLE',
+        language: row.language || null,
+        publication_year: row.publication_year || null,
+        doi: row.doi || null,
+        open_access: row.open_access === 1,
+        peer_reviewed: row.peer_reviewed === 1,
+        venue: row.venue_name ? {
+          id: row.venue_id || null,
+          name: row.venue_name,
+          abbreviated_name: row.venue_abbreviated_name || null
+        } : null,
+        author_count: authors.length,
+        first_author: authors[0] || null,
+        authors_preview: authors.slice(0, 3),
+        added_to_database: row.created_at,
+        data_source: 'showcase',
+        search_engine: 'Sphinx'
+      };
+    });
+
+    const items = uniqueById(processedWorks).map(formatWorkListItem);
+
+    return {
+      data: items,
+      pagination: createPagination(pagination.page, limit, total),
+      performance: {
+        engine: 'Sphinx+MariaDB',
+        query_type: 'search_hydrate',
+        match_mode: 'any_publication',
+        sphinx_query_ms: spx?.query_time || null,
+        hydrate_query_ms: hydrateMs
+      }
+    };
   }
 
   async getWorkBibliography(workId, filters = {}) {

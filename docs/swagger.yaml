@@ -3775,9 +3775,14 @@ paths:
   /works:
     get:
       summary: Get list of academic works
-      description: Retrieve a paginated list of academic publications including
-        papers, books, theses, and conference proceedings. Supports filtering by
-        various criteria.
+      description: |
+        Returns a paginated list of works backed by `summary_publications`.
+        Filters apply with **`match_mode: "any_publication"`** semantics: a
+        work appears in the result set if **any of its publications** matches
+        the filter set. When a filter matches multiple siblings of the same
+        work, the latest matching publication is the one displayed in the
+        card (its venue, year, doi, etc.). The semantic is signalled in
+        `meta.match_mode`.
       tags:
         - Works
       parameters:
@@ -3858,10 +3863,21 @@ paths:
   /works/showcase:
     get:
       summary: Get works list optimized for browsing (showcase)
-      description: High-performance endpoint for browsing works using the
-        summary_publications table (one row per publication, latest pick per
-        work). Returns work-level fields plus derived browsing columns,
-        including legacy aliases work_type/year for backward compatibility.
+      description: >
+        High-performance endpoint for browsing works using
+        `summary_publications`
+
+        (one row per publication, latest pick per work). Filters apply with
+
+        **`match_mode: "any_publication"`** semantics: a work appears in the
+
+        result if any of its publications matches the filter set, and the
+
+        displayed publication is the latest matching one. Returns work-level
+
+        fields plus derived browsing columns, including legacy aliases
+
+        `work_type`/`year` for backward compatibility.
       tags:
         - Works
       parameters:

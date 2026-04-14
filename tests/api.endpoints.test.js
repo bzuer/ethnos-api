@@ -81,14 +81,14 @@ describe('Health', () => {
 });
 
 describe('Works', () => {
-  test('GET /works returns paginated list', async () => {
+  test('GET /works returns paginated list with match_mode meta', async () => {
     stubResolved(worksService, 'getWorks', {
       data: [
         { id: 1, title: 'Sample Work', type: 'ARTICLE', authors_preview: [], venue: { name: 'Test' }, publication_year: 2020, data_source: 'TEST' },
         { id: 2, title: 'Another Work', type: 'BOOK', authors_preview: [], venue: { name: 'Test' }, publication_year: 2019, data_source: 'TEST' },
       ],
       pagination: pageMeta(1, 10, 2),
-      performance: { engine: 'mock', query_type: 'list', elapsed_ms: 1 },
+      performance: { engine: 'mock', query_type: 'list', match_mode: 'any_publication', elapsed_ms: 1 },
     });
 
     const req = createMockReq({ method: 'GET', path: '/works', query: { limit: 10 } });
@@ -98,6 +98,7 @@ describe('Works', () => {
     expect(res.body.status).toBe('success');
     expect(Array.isArray(res.body.data)).toBe(true);
     expect(res.body).toHaveProperty('pagination');
+    expect(res.body.meta).toHaveProperty('match_mode', 'any_publication');
   });
 
   test('GET /works/:id returns work object', async () => {

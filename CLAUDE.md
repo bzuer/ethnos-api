@@ -127,10 +127,11 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Venue payloads must expose `abbreviated_name` when available.
 - Any endpoint exposing venue naming must include both `name` and `abbreviated_name` (or `venue_name` and `venue_abbreviated_name`) together.
 - Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
-- Works listing: `/works/showcase`.
+- Works listing: `/works`, `/works/showcase`. Filters apply with `meta.match_mode = "any_publication"` semantics — a work appears if **any of its publications** matches the filter set, and the displayed publication is the latest matching one.
+- Works detail: `/works/{id}` embeds `publications[]` (full per-publication entries with their own `identifiers`, `venue`, `publisher`, `files`, `_links.self`), `publications_total`, `publications_has_more`. The legacy single `publication`/`venue`/`publisher`/`files`/`licenses` blocks were removed in Phase 6. Aggregated `identifiers` (union over every publication) remains. Cache key: `work:v2:{id}:c{0|1}:r{0|1}`.
 - Publications: `/publications` and `/publications/{id}` are backed by `summary_publications` (free-text via `q` routes through Sphinx; filter-only paths hit MariaDB). Detail responses embed `work`, `siblings[]`, optional `citations` / `references` blocks.
 - Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
-- DOI resolution: `/{doi}`, `/doi.org/{doi}`, `/https://doi.org/{doi}` — currently resolves DOI to work details via `publications.doi` lookup. Regex route in `src/app.js`. (Phase 7 will flip the resolver to `publicationsController.getPublicationByDoi`.)
+- DOI resolution: `/{doi}`, `/doi.org/{doi}`, `/https://doi.org/{doi}` — resolves DOI to a publication via `summary_publications.uq_summary_pubs_doi` (with `publications.doi` as a fallback) and returns the publication-shaped payload (with the parent `work` block embedded). Regex route in `src/app.js`, handled by `publicationsController.getPublicationByDoi`.
 - Sphinx endpoints: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
 - Search endpoints (`/search/works`, `/search/advanced`): `q` is optional; filter-only queries (e.g. `venue=mana`) are supported.
 - All optional query params must use `optional({ values: 'falsy' })` so empty strings (`param=`) are treated as absent.
