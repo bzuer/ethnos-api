@@ -1204,7 +1204,9 @@ BEGIN
     CREATE TEMPORARY TABLE tmp_batch_files (
         publication_id INT PRIMARY KEY,
         files_json LONGTEXT,
-        publication_download_count INT
+        publication_download_count INT,
+        has_scimag_file TINYINT(1),
+        has_libgen_file TINYINT(1)
     ) ENGINE=InnoDB;
 
     WHILE v_current_id <= v_max_id DO
@@ -1235,7 +1237,10 @@ BEGIN
         WHERE ws.work_id >= v_current_id AND ws.work_id < v_current_id + p_batch_size
         GROUP BY ws.work_id;
 
-        INSERT INTO tmp_batch_files (publication_id, files_json, publication_download_count)
+        INSERT INTO tmp_batch_files (
+            publication_id, files_json, publication_download_count,
+            has_scimag_file, has_libgen_file
+        )
         SELECT
             f.publication_id,
             JSON_ARRAYAGG(JSON_OBJECT(
@@ -1254,7 +1259,9 @@ BEGIN
                 'verification', f.verification_status,
                 'downloads',    f.download_count
             )),
-            COALESCE(SUM(f.download_count), 0)
+            COALESCE(SUM(f.download_count), 0),
+            MAX(CASE WHEN f.scimag_id IS NOT NULL THEN 1 ELSE 0 END),
+            MAX(CASE WHEN f.libgen_id IS NOT NULL THEN 1 ELSE 0 END)
         FROM files f
         JOIN publications pub ON pub.id = f.publication_id
         WHERE pub.work_id >= v_current_id AND pub.work_id < v_current_id + p_batch_size
@@ -1263,18 +1270,41 @@ BEGIN
         INSERT INTO summary_publications (
             publication_id, work_id, venue_id, publisher_id,
             title_search, abstract_search, authors_search, venue_search, subjects_search,
-            doi, work_type, publication_year, language, open_access, peer_reviewed,
-            has_files, work_citation_count, work_reference_count, publication_download_count,
-            authors_json, subjects_json, files_json
+            doi, work_type, publication_year,
+            publication_date, volume, issue, pages_text, source,
+            license_url, license_version,
+            language, open_access, peer_reviewed,
+            has_files, has_scimag_file, has_libgen_file,
+            work_citation_count, work_reference_count, publication_download_count,
+            authors_json, subjects_json, files_json, identifiers_json
         )
         SELECT
             pub.id, w.id, pub.venue_id, pub.publisher_id,
             w.title, w.abstract, tpa.authors_search, v.name, tps.subjects_search,
-            pub.doi, w.work_type, pub.year, w.language, pub.open_access, pub.peer_reviewed,
+            pub.doi, w.work_type, pub.year,
+            pub.publication_date, pub.volume, pub.issue, pub.pages, pub.source,
+            pub.license_url, pub.license_version,
+            w.language, pub.open_access, pub.peer_reviewed,
             CASE WHEN tpf.publication_id IS NULL THEN 0 ELSE 1 END,
+            COALESCE(tpf.has_scimag_file, 0),
+            COALESCE(tpf.has_libgen_file, 0),
             w.citation_count, w.reference_count,
             COALESCE(tpf.publication_download_count, 0),
-            tpa.authors_json, tps.subjects_json, tpf.files_json
+            tpa.authors_json, tps.subjects_json, tpf.files_json,
+            JSON_OBJECT(
+                'pmid',           pub.pmid,
+                'pmcid',          pub.pmcid,
+                'arxiv',          pub.arxiv,
+                'wos_id',         pub.wos_id,
+                'handle',         pub.handle,
+                'scielo_pid',     pub.scielo_pid,
+                'isbn',           pub.isbn,
+                'wikidata_id',    pub.wikidata_id,
+                'openalex_id',    pub.openalex_id,
+                'mag_id',         pub.mag_id,
+                'openlibrary_id', pub.openlibrary_id,
+                'google_book_id', pub.google_book_id
+            )
         FROM works w
         JOIN publications pub ON pub.work_id = w.id
         LEFT JOIN venues v ON pub.venue_id = v.id
@@ -2616,9 +2646,13 @@ BEGIN
     INSERT INTO summary_publications (
         publication_id, work_id, venue_id, publisher_id,
         title_search, abstract_search, authors_search, venue_search, subjects_search,
-        doi, work_type, publication_year, language, open_access, peer_reviewed,
-        has_files, work_citation_count, work_reference_count, publication_download_count,
-        authors_json, subjects_json, files_json
+        doi, work_type, publication_year,
+        publication_date, volume, issue, pages_text, source,
+        license_url, license_version,
+        language, open_access, peer_reviewed,
+        has_files, has_scimag_file, has_libgen_file,
+        work_citation_count, work_reference_count, publication_download_count,
+        authors_json, subjects_json, files_json, identifiers_json
     )
     SELECT
         pub.id,
@@ -2639,10 +2673,21 @@ BEGIN
         pub.doi,
         w.work_type,
         pub.year,
+        pub.publication_date,
+        pub.volume,
+        pub.issue,
+        pub.pages,
+        pub.source,
+        pub.license_url,
+        pub.license_version,
         w.language,
         pub.open_access,
         pub.peer_reviewed,
         (SELECT COUNT(*) > 0 FROM files WHERE publication_id = pub.id),
+        (SELECT COALESCE(MAX(CASE WHEN scimag_id IS NOT NULL THEN 1 ELSE 0 END), 0)
+           FROM files WHERE publication_id = pub.id),
+        (SELECT COALESCE(MAX(CASE WHEN libgen_id IS NOT NULL THEN 1 ELSE 0 END), 0)
+           FROM files WHERE publication_id = pub.id),
         w.citation_count,
         w.reference_count,
         (SELECT COALESCE(SUM(download_count), 0) FROM files WHERE publication_id = pub.id),
@@ -2671,7 +2716,21 @@ BEGIN
                   'downloads',    f.download_count
                 ))
            FROM files f
-           WHERE f.publication_id = pub.id)
+           WHERE f.publication_id = pub.id),
+        JSON_OBJECT(
+            'pmid',           pub.pmid,
+            'pmcid',          pub.pmcid,
+            'arxiv',          pub.arxiv,
+            'wos_id',         pub.wos_id,
+            'handle',         pub.handle,
+            'scielo_pid',     pub.scielo_pid,
+            'isbn',           pub.isbn,
+            'wikidata_id',    pub.wikidata_id,
+            'openalex_id',    pub.openalex_id,
+            'mag_id',         pub.mag_id,
+            'openlibrary_id', pub.openlibrary_id,
+            'google_book_id', pub.google_book_id
+        )
     FROM works w
     JOIN publications pub ON pub.work_id = w.id
     LEFT JOIN venues v ON v.id = pub.venue_id

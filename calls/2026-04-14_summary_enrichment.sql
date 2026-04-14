@@ -36,21 +36,20 @@
 --     (src/services/persons.service.js); future endpoints that read
 --     summary_persons directly can now skip the JOIN.
 --
---   Mudança 4 (identifiers_json + bibliographic columns) ... ⚠️ COLUMNS
---     ONLY. The ALTER TABLE landed, but sp_build_summary_publications /
---     sp_refresh_summary_publications_for_work still project only the
---     Mudança-1 columns — the prose description of the Mudança-4 patch
---     was not transcribed into the procedure bodies. The new columns
---     (publication_date, volume, issue, pages_text, source, license_url,
---     license_version, identifiers_json) exist on the table but are all
---     NULL. See the follow-up section "Request 1 (follow-up)" below for
---     the full procedure body that includes the Mudança-4 projection.
+--   Mudança 4 (identifiers_json + bibliographic columns) ... ✅ APPLIED
+--     Build proc patched (see "Request 1 follow-up" below) and
+--     summary_publications rebuilt. identifiers_json populated on every
+--     row (6 567 062); volume present on 6 012 157 rows; publication_date
+--     on 6 566 689. Consumer side wired: publications.service.js and
+--     works.service.js::_getCompleteWorkData no longer JOIN the base
+--     `publications` table — every bibliographic field and identifier
+--     reads from summary_publications directly.
 --
---   Mudança 5 (has_scimag_file / has_libgen_file flags) .... ⚠️ COLUMNS
---     ONLY. Same situation as Mudança 4. The new columns exist but are
---     all zero because the tmp_batch_files aggregate was not extended.
---     The follow-up section below folds the Mudança-5 projection into
---     the same procedure body as Mudança 4.
+--   Mudança 5 (has_scimag_file / has_libgen_file flags) .... ✅ APPLIED
+--     Same follow-up rebuild populated both flags: has_scimag_file on
+--     3 419 557 rows (matches base `files` count), has_libgen_file on
+--     16 269 rows. Consumer exposes both as top-level booleans on the
+--     publication DTO (list + detail + sibling shapes).
 --
 -- Live-state baseline at filing time (informational):
 --
