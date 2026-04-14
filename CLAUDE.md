@@ -20,10 +20,10 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Runtime: Node.js (>= 18), Framework: Express
 - Entry point: `src/app.js` (HTTP), `src/https-app.js` (HTTPS)
 - Source layout:
-  - `src/routes/` — 17 route modules
-  - `src/controllers/` — 13 controllers
-  - `src/services/` — 21 services (includes Sphinx, cache, real-time indexing)
-  - `src/dto/` — 13 DTOs (work, person, organization, venue, bibliography, citations, collaborations, course, dashboard, instructor, metrics, signatures, subjects)
+  - `src/routes/` — 18 route modules (includes `publications`)
+  - `src/controllers/` — 14 controllers (includes `publications`)
+  - `src/services/` — 22 services (includes `publications`, Sphinx, cache, real-time indexing)
+  - `src/dto/` — 14 DTOs + `helpers.js` (work, publication, person, organization, venue, bibliography, citations, collaborations, course, dashboard, instructor, metrics, signatures, subjects)
   - `src/middleware/` — 9 middleware modules (accessKey, errorHandler, monitoring, pagination, rateLimiting, responseFormatter, sanitization, timeout, validation)
   - `src/utils/` — responseBuilder.js, pagination.js, db.js
   - `src/models/` — Sequelize model definitions
@@ -119,17 +119,18 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Do not expose keys or sensitive data in responses, logs, or error payloads.
 
 ## Endpoints State
-- 79 operations across 79 paths in `docs/swagger.json`.
+- 81 operations across 81 paths in `docs/swagger.json`.
 - Disabled endpoints: `/signatures`, `/subjects` (root). Nested endpoints remain active.
 
 ## Route Standards
-- Use plural collections: `/bibliographies`, `/institutions`.
+- Use plural collections: `/bibliographies`, `/institutions`, `/publications`.
 - Venue payloads must expose `abbreviated_name` when available.
 - Any endpoint exposing venue naming must include both `name` and `abbreviated_name` (or `venue_name` and `venue_abbreviated_name`) together.
 - Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
 - Works listing: `/works/showcase`.
+- Publications: `/publications` and `/publications/{id}` are backed by `summary_publications` (free-text via `q` routes through Sphinx; filter-only paths hit MariaDB). Detail responses embed `work`, `siblings[]`, optional `citations` / `references` blocks.
 - Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
-- DOI resolution: `/{doi}`, `/doi.org/{doi}`, `/https://doi.org/{doi}` — resolves DOI to work details via `publications.doi` lookup. Regex route in `src/app.js`.
+- DOI resolution: `/{doi}`, `/doi.org/{doi}`, `/https://doi.org/{doi}` — currently resolves DOI to work details via `publications.doi` lookup. Regex route in `src/app.js`. (Phase 7 will flip the resolver to `publicationsController.getPublicationByDoi`.)
 - Sphinx endpoints: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
 - Search endpoints (`/search/works`, `/search/advanced`): `q` is optional; filter-only queries (e.g. `venue=mana`) are supported.
 - All optional query params must use `optional({ values: 'falsy' })` so empty strings (`param=`) are treated as absent.

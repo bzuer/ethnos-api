@@ -10,6 +10,7 @@ const { invokeRouter } = require('./helpers/router-invoke');
 
 const healthRouter = require('../src/routes/health');
 const worksRouter = require('../src/routes/works');
+const publicationsRouter = require('../src/routes/publications');
 const personsRouter = require('../src/routes/persons');
 const orgsRouter = require('../src/routes/organizations');
 const venuesRouter = require('../src/routes/venues');
@@ -23,6 +24,7 @@ const securityRouter = require('../src/routes/security');
 const dashboardRouter = require('../src/routes/dashboard');
 
 const worksService = require('../src/services/works.service');
+const publicationsService = require('../src/services/publications.service');
 const personsService = require('../src/services/persons.service');
 const orgsService = require('../src/services/organizations.service');
 const venuesService = require('../src/services/venues.service');
@@ -106,6 +108,111 @@ describe('Works', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe('success');
     expect(res.body.data).toHaveProperty('id', 123);
+  });
+});
+
+describe('Publications', () => {
+  test('GET /publications returns paginated list', async () => {
+    stubResolved(publicationsService, 'getPublications', {
+      data: [
+        { id: 11, work_id: 7, doi: '10.1234/foo', title: 'Sample publication', type: 'ARTICLE', publication_year: 2024 },
+        { id: 12, work_id: 8, doi: '10.1234/bar', title: 'Another publication', type: 'BOOK', publication_year: 2023 }
+      ],
+      pagination: pageMeta(1, 10, 2),
+      meta: { engine: 'mock', sphinx_query_ms: null, elapsed_ms: 1 }
+    });
+
+    const req = createMockReq({ method: 'GET', path: '/publications', query: { limit: 10 } });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: publicationsRouter, method: 'get', path: '/', req, res });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.status).toBe('success');
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data[0]).toHaveProperty('id', 11);
+    expect(res.body.data[0]).toHaveProperty('work_id', 7);
+    expect(res.body).toHaveProperty('pagination');
+  });
+
+  test('GET /publications honours the venue filter without a query term', async () => {
+    let captured = null;
+    stubMethod(publicationsService, 'getPublications', async (filters) => {
+      captured = filters;
+      return {
+        data: [],
+        pagination: pageMeta(1, 10, 0),
+        meta: { engine: 'MariaDB', elapsed_ms: 0 }
+      };
+    });
+
+    const req = createMockReq({
+      method: 'GET',
+      path: '/publications',
+      query: { venue: 'mana', year_from: '1990' }
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: publicationsRouter, method: 'get', path: '/', req, res });
+
+    expect(res.statusCode).toBe(200);
+    expect(captured).not.toBeNull();
+    expect(captured.venue).toBe('mana');
+    expect(captured.year_from).toBe('1990');
+    expect(captured.q).toBeUndefined();
+  });
+
+  test('GET /publications/:id returns the publication payload with siblings', async () => {
+    stubResolved(publicationsService, 'getPublicationById', {
+      id: 42,
+      identifiers: { doi: '10.5678/x' },
+      publication_year: 2022,
+      work: { id: 7, title: 'Parent work', authors: [], subjects: [] },
+      siblings: [
+        { id: 41, doi: '10.5678/x-prev', publication_year: 2018, _links: { self: '/publications/41' } }
+      ],
+      files: []
+    });
+
+    const req = createMockReq({
+      method: 'GET',
+      path: '/publications/42',
+      params: { id: '42' }
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: publicationsRouter, method: 'get', path: '/:id', req, res });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data).toHaveProperty('id', 42);
+    expect(res.body.data).toHaveProperty('work');
+    expect(res.body.data.work).toHaveProperty('id', 7);
+    expect(Array.isArray(res.body.data.siblings)).toBe(true);
+    expect(res.body.data.siblings).toHaveLength(1);
+  });
+
+  test('GET /publications/:id returns 404 when the publication does not exist', async () => {
+    stubResolved(publicationsService, 'getPublicationById', null);
+
+    const req = createMockReq({
+      method: 'GET',
+      path: '/publications/999999',
+      params: { id: '999999' }
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: publicationsRouter, method: 'get', path: '/:id', req, res });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.status).toBe('error');
+  });
+
+  test('GET /publications/:id rejects non-integer id', async () => {
+    const req = createMockReq({
+      method: 'GET',
+      path: '/publications/not-a-number',
+      params: { id: 'not-a-number' }
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: publicationsRouter, method: 'get', path: '/:id', req, res });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.status).toBe('error');
   });
 });
 

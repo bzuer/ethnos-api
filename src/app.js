@@ -263,6 +263,7 @@ const subjectsRoutes = require('./routes/subjects');
 const coursesRoutes = require('./routes/courses');
 const instructorsRoutes = require('./routes/instructors');
 const bibliographyRoutes = require('./routes/bibliography');
+const publicationsRoutes = require('./routes/publications');
 
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('../config/swagger.config');
@@ -325,6 +326,7 @@ app.use('/health', healthRoutes);
 app.use('/security', metricsLimiter, securityRoutes);
 
 app.use('/search', searchLimiter, searchRoutes);
+app.use('/publications', relationalLimiter, publicationsRoutes);
 app.use('/works', relationalLimiter, worksRoutes);
 app.use('/persons', relationalLimiter, personsRoutes);
 app.use('/institutions', relationalLimiter, organizationsRoutes);

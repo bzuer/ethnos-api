@@ -158,7 +158,7 @@ components:
           nullable: true
           example: 2023
           deprecated: true
-          description: Legacy alias from sphinx_works_summary. Returned only by
+          description: Legacy alias from summary_publications. Returned only by
             /works/showcase. Prefer publication_year in list payloads or
             publication.year in detailed payloads.
         work_type:
@@ -179,7 +179,7 @@ components:
             - OTHER
           example: ARTICLE
           deprecated: true
-          description: Legacy alias from sphinx_works_summary. Returned only by
+          description: Legacy alias from summary_publications. Returned only by
             /works/showcase. Prefer type.
         type:
           type: string
@@ -3858,10 +3858,10 @@ paths:
   /works/showcase:
     get:
       summary: Get works list optimized for browsing (showcase)
-      description: High-performance endpoint for browsing works using pre-compiled
-        summary table. Returns all columns from sphinx_works_summary plus
-        derived browsing fields, including legacy aliases work_type/year for
-        backward compatibility.
+      description: High-performance endpoint for browsing works using the
+        summary_publications table (one row per publication, latest pick per
+        work). Returns work-level fields plus derived browsing columns,
+        including legacy aliases work_type/year for backward compatibility.
       tags:
         - Works
       parameters:
@@ -3937,7 +3937,7 @@ paths:
                     properties:
                       query_source:
                         type: string
-                        example: sphinx_works_summary
+                        example: summary_publications
                       performance:
                         $ref: "#/components/schemas/PerformanceMeta"
   /works/{id}:
@@ -5604,6 +5604,256 @@ paths:
       responses:
         "200":
           description: Popular search terms
+  /publications:
+    get:
+      summary: List publications
+      description: >
+        Returns a paginated list of publications backed by
+        `summary_publications`.
+
+        Filters can target the parent work (`work_type`, `language`, `work_id`)
+
+        or the publication itself (`year_from`, `year_to`, `open_access`,
+
+        `peer_reviewed`, `has_files`, `venue`, `venue_id`, `publisher_id`,
+
+        `doi`). Free-text queries (`q`) route through Sphinx and dedupe by
+
+        publication id; filter-only queries hit MariaDB directly.
+      tags:
+        - Publications
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number for pagination
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of results per page (max 100)
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of items to skip (alternative to page)
+        - in: query
+          name: q
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          description: Free-text query routed through Sphinx
+          example: machine learning
+        - in: query
+          name: type
+          schema:
+            type: string
+            maxLength: 50
+          description: Work type filter (ARTICLE, BOOK, CHAPTER, ...)
+          example: ARTICLE
+        - in: query
+          name: language
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 5
+          description: ISO language code
+          example: en
+        - in: query
+          name: year_from
+          schema:
+            type: integer
+            minimum: 1000
+          description: Inclusive lower bound on publication_year
+          example: 2020
+        - in: query
+          name: year_to
+          schema:
+            type: integer
+            minimum: 1000
+          description: Inclusive upper bound on publication_year
+          example: 2024
+        - in: query
+          name: open_access
+          schema:
+            type: boolean
+          description: Filter by open access flag
+        - in: query
+          name: peer_reviewed
+          schema:
+            type: boolean
+          description: Filter by peer reviewed flag
+        - in: query
+          name: has_files
+          schema:
+            type: boolean
+          description: Filter publications that carry attached files
+        - in: query
+          name: venue
+          schema:
+            type: string
+            maxLength: 255
+          description: Substring match against the publication venue search field
+        - in: query
+          name: venue_id
+          schema:
+            type: integer
+            minimum: 1
+          description: Exact match against summary_publications.venue_id
+        - in: query
+          name: publisher_id
+          schema:
+            type: integer
+            minimum: 1
+          description: Exact match against summary_publications.publisher_id
+        - in: query
+          name: work_id
+          schema:
+            type: integer
+            minimum: 1
+          description: Restrict the result set to siblings of a single work
+        - in: query
+          name: doi
+          schema:
+            type: string
+            maxLength: 255
+          description: Exact DOI lookup (uses summary_publications.uq_summary_pubs_doi)
+        - in: query
+          name: author
+          schema:
+            type: string
+            maxLength: 255
+          description: Substring match against authors_search
+        - in: query
+          name: subject
+          schema:
+            type: string
+            maxLength: 255
+          description: Substring match against subjects_search
+      responses:
+        "200":
+          description: Publications retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+                  meta:
+                    type: object
+                    properties:
+                      engine:
+                        type: string
+                        example: Sphinx+MariaDB
+                      sphinx_query_ms:
+                        type: integer
+                        nullable: true
+                      elapsed_ms:
+                        type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /publications/{id}:
+    get:
+      summary: Get a publication by id
+      description: >
+        Returns a single publication identified by
+        `summary_publications.publication_id`.
+
+        The response carries a nested `work` block (parent work fields), the
+
+        full identifier set from `publications`, embedded `files` parsed from
+
+        `files_json`, an array of `siblings` (other publications of the same
+
+        work, capped at 50), and optional `citations` / `references` blocks
+
+        hydrated from `work_references`.
+      tags:
+        - Publications
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          description: summary_publications.publication_id
+          example: 123456
+        - in: query
+          name: include_citations
+          schema:
+            type: boolean
+            default: true
+          description: Include the cited_by block hydrated from work_references
+        - in: query
+          name: include_references
+          schema:
+            type: boolean
+            default: true
+          description: Include the references block hydrated from work_references
+      responses:
+        "200":
+          description: Publication retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      identifiers:
+                        type: object
+                      work:
+                        type: object
+                      siblings:
+                        type: array
+                        items:
+                          type: object
+                      files:
+                        type: array
+                        items:
+                          type: object
+                      venue:
+                        type: object
+                        nullable: true
+                      publisher:
+                        type: object
+                        nullable: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /persons:
     get:
       summary: Get list of researchers and authors
