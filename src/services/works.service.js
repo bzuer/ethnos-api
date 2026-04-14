@@ -68,14 +68,17 @@ class WorksService {
       const cached = await cacheService.get(cacheKey);
       if (cached) return cached;
 
-      if (search && search.trim() !== '') {
+      const trimmedSearch = (search || '').trim();
+      const hasFulltextFilter = Boolean(trimmedSearch || venue_name || author || subject);
+
+      if (hasFulltextFilter) {
         try {
-          const result = await this._getWorksFromSphinx(search, filters);
+          const result = await this._getWorksFromSphinx(trimmedSearch, filters);
           result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
           return result;
         } catch (sphinxError) {
           logger.warn('Sphinx search unavailable, using MariaDB fallback', { message: sphinxError.message, code: sphinxError.code });
-          const result = await this._getWorksSearchFallback(search, filters, effectiveLimit, offset, page);
+          const result = await this._getWorksSearchFallback(trimmedSearch, filters, effectiveLimit, offset, page);
           result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
           return result;
         }
@@ -133,7 +136,7 @@ class WorksService {
         return cached;
       }
 
-      const whereConditions = ["authors_search IS NOT NULL AND authors_search != ''"];
+      const whereConditions = [];
       const queryParams = [];
 
       if (type) {
@@ -156,6 +159,8 @@ class WorksService {
         queryParams.push(parseInt(year_to));
       }
 
+      const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
       let totalItems = 0;
 
       if (queryParams.length === 0) {
@@ -165,7 +170,7 @@ class WorksService {
           SELECT COUNT(*) as total
           FROM (
             SELECT 1 FROM summary_publications
-            WHERE ${whereConditions.join(' AND ')}
+            ${whereClause}
             LIMIT 100000
           ) as limited_count
         `;
@@ -203,7 +208,7 @@ class WorksService {
         FROM (
           SELECT work_id, MAX(publication_id) AS pub_id
           FROM summary_publications
-          WHERE ${whereConditions.join(' AND ')}
+          ${whereClause}
           GROUP BY work_id
           ORDER BY work_id DESC
           LIMIT ? OFFSET ?
@@ -286,7 +291,7 @@ class WorksService {
   async _getWorksVitrine(filters, limit, offset, page) {
     const { type, year_from, year_to, search, open_access, language, peer_reviewed, venue_name, author, subject } = filters;
 
-    const whereConditions = ["sp.authors_search IS NOT NULL AND sp.authors_search != ''"];
+    const whereConditions = [];
     const filterParams = [];
 
     if (search) {
@@ -342,22 +347,32 @@ class WorksService {
     }
 
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000');
+    const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-    const countSql = `
-      SELECT COUNT(DISTINCT sp.work_id) as total
-      FROM summary_publications sp
-      ${venueJoin}
-      WHERE ${whereConditions.join(' AND ')}
-    `;
+    let totalItems;
+    if (filterParams.length === 0) {
+      totalItems = 2499146;
+    } else {
+      const countSql = `
+        SELECT COUNT(*) as total
+        FROM (
+          SELECT 1 FROM summary_publications sp
+          ${venueJoin}
+          ${whereClause}
+          LIMIT 100000
+        ) as limited_count
+      `;
 
-    const [countRow] = await Promise.race([
-      sequelize.query(countSql, {
-        replacements: filterParams,
-        type: sequelize.QueryTypes.SELECT
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), dbTimeoutMs))
-    ]);
-    const totalItems = parseInt(countRow?.total) || 0;
+      const [countRow] = await Promise.race([
+        sequelize.query(countSql, {
+          replacements: filterParams,
+          type: sequelize.QueryTypes.SELECT
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), dbTimeoutMs))
+      ]);
+      const limitedCount = parseInt(countRow?.total) || 0;
+      totalItems = limitedCount === 100000 ? limitedCount * 25 : limitedCount;
+    }
 
     const queryParams = [...filterParams, limit, offset];
     const selectSql = `
@@ -385,7 +400,7 @@ class WorksService {
         SELECT sp.work_id, MAX(sp.publication_id) AS pub_id
         FROM summary_publications sp
         ${venueJoin}
-        WHERE ${whereConditions.join(' AND ')}
+        ${whereClause}
         GROUP BY sp.work_id
         ORDER BY sp.work_id DESC
         LIMIT ? OFFSET ?

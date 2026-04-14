@@ -57,11 +57,11 @@ class SphinxService {
 
             let sql;
             if (matchParts.length > 0) {
-                sql = `SELECT id, work_id, WEIGHT() as weight, publication_year
+                sql = `SELECT id, work_id, WEIGHT() as relevance, publication_year
                        FROM ${PUBLICATION_INDEX}
                        WHERE MATCH(${this.connection.escape(matchParts.join(' '))})`;
             } else {
-                sql = `SELECT id, work_id, 1 as weight, publication_year
+                sql = `SELECT id, work_id, 1 as relevance, publication_year
                        FROM ${PUBLICATION_INDEX}
                        WHERE id > 0`;
             }

@@ -4,8 +4,9 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 
 ## Database
 - **Strict consumer-only**: this project NEVER creates, executes, or alters database procedures, events, triggers, indexes, table structures, or row data. It only issues read-side `SELECT` / `EXISTS` queries against the schema the database provides. Any structural change (DDL, `CREATE`/`ALTER`/`DROP PROCEDURE`/`EVENT`/`TRIGGER`/`TABLE`/`INDEX`, `INSERT`/`UPDATE`/`DELETE`, `CALL`, `TRUNCATE`) must be **requested from the user** and applied via a separate operations pipeline. Read-only utilities (`mariadb-dump --no-data`, `SELECT … FROM information_schema.*`, baseline asserts) are allowed.
+- **Where to file requests**: every change the application needs from the operator goes into `calls/` as a markdown file. The canonical entry is `calls/database-change-requests.md`; new requests get appended there in priority order using its template (Status / Why / Current state / Proposed change / Verification / Rollback). `calls/` is also the right place for any other operator-side runbook, SQL draft, or follow-up ask the application generates.
 - Database name: `data`. Direct access: `mariadb data` or `mariadb data -e "..."`.
-- 23 base tables, 0 views, 36 stored procedures, 1 function, 5 triggers.
+- 23 base tables, 0 views, 37 stored procedures, 1 function, 5 triggers.
 - Schema files:
   - `database/data.schema.sql` — current production schema dump (tables, routines, triggers). Regenerated via `./scripts/maintenance/publications/regenerate_schema_dump.sh data database/data.schema.sql`.
   - `database/schema.sql` — reference schema (kept for historical diff; not regenerated).
@@ -14,7 +15,8 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
   - `summary_publications` — one row per publication, joined to `works`/`publications` by PK. Carries text corpus (`title_search`, `abstract_search`, `authors_search`, `venue_search`, `subjects_search`), unique key `uq_summary_pubs_doi`, fulltext indexes `ft_summary_pubs_content` and `ft_summary_pubs_metadata`, and embedded JSON columns `authors_json`, `subjects_json`, `files_json`.
   - `summary_venues` — one row per venue with text corpus (`name_search`, `abbrev_search`, `publisher_search`), fulltext `ft_summary_venues_text`, and embedded `top_subjects_json`, `top_publications_json`.
   - `summary_persons` — one row per person with text corpus (`preferred_name_search`, `name_variations_search`, `affiliations_search`), fulltext `ft_summary_persons_text`, and embedded `current_affiliations_json`, `top_collaborators_json`, `research_subjects_json`.
-- Summary builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches.
+- Summary builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches. `sp_build_summary_publications` populates `has_files` / `files_json` / `publication_download_count` from the base `files` table during the build.
+- Incremental refresh: `sp_refresh_summary_publications_for_work(p_work_id)` deletes and reinserts every `summary_publications` row for a single work, including the file aggregates. The Ethnos_API project never calls this procedure (consumer-only rule); it is invoked by the operator's mutation pipeline after `publications` / `works` / `authorships` / `work_subjects` / `files` writes.
 - Legacy artefacts explicitly absent (do not reintroduce): `sphinx_works_summary`, `sphinx_venues_summary`, `sphinx_persons_summary`, `work_author_summary`, `work_subjects_summary`, `sphinx_queue`, `processing_log`, `person_match_log`, `staging_*`, `temp_*`, and the four dormant `v_*` views.
 
 ## Project Structure
@@ -63,7 +65,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - For citation/reference logic, use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`); never rely on legacy `citations` or `unresolved_citations`.
 - `work_references` status semantics: `RESOLVED` = cited work exists in DB; `PENDING` = does not exist yet (expected state, not an error).
 - Person-signature relation: direct via `persons.signature_id`; do not use legacy `persons_signatures`.
-- Publication-file relation: direct in `files` (`publication_id`, `work_id`, `file_role`); do not use legacy `publication_files`.
+- Publication-file relation: direct in `files` via `publication_id` (`file_role` distinguishes roles). The legacy `files.work_id` column was dropped — never reintroduce a parallel work-level path; always join through `publications.work_id` when a work-scoped query is needed. Legacy `publication_files` is also gone.
 - Summary column contracts (read path): `summary_publications.publication_year`, `summary_publications.work_citation_count`, `summary_publications.work_reference_count`, `summary_venues.name_search` / `abbrev_search`, `summary_persons.preferred_name_search`. Denormalized lists (`authors_json`, `subjects_json`, `files_json`, `top_subjects_json`, `top_publications_json`) are parsed on the service side, not re-joined per row.
 
 ## Documentation (OpenAPI)
@@ -105,7 +107,8 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 
 ## Repository Hygiene
 - Ignored: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql` (except `database/schema.sql` and `database/data.schema.sql`), `node_modules/`, `.env*`.
-- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `database/`.
+- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `database/`, `calls/`.
+- `calls/` holds operator-side requests the application has filed (see `## Database` → "Where to file requests"). Its contents are tracked in git.
 - `ssl/` is a runtime-only directory for TLS certificates (not tracked; referenced by `src/config/database.js`).
 - `config/` must contain only `swagger.config.js` and `sphinx-unified.conf` (remove `.bak` and stale files).
 - `runtime/` must not contain Sphinx indexes (use only `/var/lib/ethnos-api/sphinx`).

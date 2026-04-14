@@ -157,7 +157,6 @@ CREATE TABLE `files` (
   `upload_date` timestamp NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `publication_id` int(11) NOT NULL,
-  `work_id` int(11) DEFAULT NULL,
   `file_role` enum('MAIN','SUPPLEMENT','COVER','PREVIEW') DEFAULT 'MAIN',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_md5_publication` (`md5`,`publication_id`),
@@ -176,10 +175,8 @@ CREATE TABLE `files` (
   KEY `idx_files_id_openalex` (`openacess_id`),
   KEY `idx_files_content_version` (`content_version`),
   KEY `idx_files_publication_id` (`publication_id`),
-  KEY `idx_files_work_id` (`work_id`),
-  CONSTRAINT `fk_files_publication` FOREIGN KEY (`publication_id`) REFERENCES `publications` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_files_work` FOREIGN KEY (`work_id`) REFERENCES `works` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=20079536 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+  CONSTRAINT `fk_files_publication` FOREIGN KEY (`publication_id`) REFERENCES `publications` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=20669282 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -205,7 +202,7 @@ CREATE TABLE `funding` (
   KEY `idx_funding_work_funder` (`work_id`,`funder_id`),
   CONSTRAINT `funding_ibfk_1` FOREIGN KEY (`work_id`) REFERENCES `works` (`id`) ON DELETE CASCADE,
   CONSTRAINT `funding_ibfk_2` FOREIGN KEY (`funder_id`) REFERENCES `organizations` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=706781 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=847086 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -249,7 +246,7 @@ CREATE TABLE `organizations` (
   KEY `idx_organizations_researcher_count` (`researcher_count`),
   KEY `idx_semantic_key` (`semantic_key`),
   FULLTEXT KEY `ft_organizations_name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=1979922 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2138558 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -296,7 +293,7 @@ CREATE TABLE `persons` (
   KEY `idx_persons_signature_id` (`signature_id`),
   FULLTEXT KEY `ft_persons_names` (`preferred_name`,`given_names`,`family_name`),
   CONSTRAINT `fk_persons_signature` FOREIGN KEY (`signature_id`) REFERENCES `signatures` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=7190187 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=8451964 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -401,7 +398,7 @@ CREATE TABLE `publications` (
   CONSTRAINT `publications_ibfk_1` FOREIGN KEY (`work_id`) REFERENCES `works` (`id`) ON DELETE CASCADE,
   CONSTRAINT `publications_ibfk_2` FOREIGN KEY (`venue_id`) REFERENCES `venues` (`id`) ON DELETE SET NULL,
   CONSTRAINT `publications_ibfk_3` FOREIGN KEY (`publisher_id`) REFERENCES `organizations` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=1119041183 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1120910819 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -505,7 +502,7 @@ CREATE TABLE `signatures` (
   UNIQUE KEY `uq_signature` (`signature`),
   KEY `idx_signature_search` (`signature`(20)),
   KEY `idx_signatures_signature` (`signature`)
-) ENGINE=InnoDB AUTO_INCREMENT=28920084 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=29575434 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -573,7 +570,7 @@ CREATE TABLE `subjects` (
   KEY `idx_subjects_vocabulary_term` (`vocabulary`,`normalized_term`),
   FULLTEXT KEY `ft_subjects_term` (`term`),
   CONSTRAINT `subjects_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `subjects` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=2021608 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2033802 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -798,7 +795,7 @@ CREATE TABLE `venues` (
   KEY `idx_venues_is_scielo` (`is_in_scielo`),
   KEY `idx_venues_abbreviated_name` (`abbreviated_name`),
   CONSTRAINT `venues_ibfk_1` FOREIGN KEY (`publisher_id`) REFERENCES `organizations` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=1072237 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1072640 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -824,7 +821,7 @@ CREATE TABLE `work_references` (
   KEY `fk_ref_cited_work` (`cited_work_id`),
   CONSTRAINT `fk_ref_cited_work` FOREIGN KEY (`cited_work_id`) REFERENCES `works` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_ref_citing_work` FOREIGN KEY (`citing_work_id`) REFERENCES `works` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=52095416 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=64008992 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -957,7 +954,7 @@ CREATE TABLE `works` (
   KEY `idx_works_metrics_updated` (`metrics_last_updated` DESC),
   KEY `idx_works_full_title_normalized` (`full_title_normalized`),
   FULLTEXT KEY `ft_works_content` (`title`,`subtitle`,`abstract`)
-) ENGINE=InnoDB AUTO_INCREMENT=13942325 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=15811961 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -977,7 +974,7 @@ CREATE TABLE `works` (
 /*!50003 SET character_set_results = utf8mb4 */ ;
 /*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` FUNCTION `fn_calculate_10yr_impact_factor`(p_venue_id INT, p_target_year INT) RETURNS decimal(10,3)
+CREATE DEFINER=`dev`@`localhost` FUNCTION `fn_calculate_10yr_impact_factor`(p_venue_id INT, p_target_year INT) RETURNS decimal(10,3)
     READS SQL DATA
     DETERMINISTIC
 BEGIN
@@ -1140,6 +1137,10 @@ BEGIN
     DECLARE v_max_id INT;
     DECLARE v_current_id INT;
 
+    IF p_batch_size IS NULL OR p_batch_size <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'p_batch_size must be a positive integer';
+    END IF;
+
     SET SESSION group_concat_max_len = 1000000;
 
     SELECT MIN(id), MAX(id) INTO v_min_id, v_max_id FROM works;
@@ -1161,10 +1162,18 @@ BEGIN
         subjects_json LONGTEXT
     ) ENGINE=InnoDB;
 
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_files;
+    CREATE TEMPORARY TABLE tmp_batch_files (
+        publication_id INT PRIMARY KEY,
+        files_json LONGTEXT,
+        publication_download_count INT
+    ) ENGINE=InnoDB;
+
     WHILE v_current_id <= v_max_id DO
 
         TRUNCATE TABLE tmp_batch_authors;
         TRUNCATE TABLE tmp_batch_subjects;
+        TRUNCATE TABLE tmp_batch_files;
 
         START TRANSACTION;
 
@@ -1188,24 +1197,43 @@ BEGIN
         WHERE ws.work_id >= v_current_id AND ws.work_id < v_current_id + p_batch_size
         GROUP BY ws.work_id;
 
+        INSERT INTO tmp_batch_files (publication_id, files_json, publication_download_count)
+        SELECT
+            f.publication_id,
+            JSON_ARRAYAGG(JSON_OBJECT(
+                'id', f.id,
+                'format', f.file_format,
+                'size', f.file_size,
+                'role', f.file_role,
+                'md5', f.md5
+            )),
+            COALESCE(SUM(f.download_count), 0)
+        FROM files f
+        JOIN publications pub ON pub.id = f.publication_id
+        WHERE pub.work_id >= v_current_id AND pub.work_id < v_current_id + p_batch_size
+        GROUP BY f.publication_id;
+
         INSERT INTO summary_publications (
             publication_id, work_id, venue_id, publisher_id,
             title_search, abstract_search, authors_search, venue_search, subjects_search,
             doi, work_type, publication_year, language, open_access, peer_reviewed,
-            work_citation_count, work_reference_count,
-            authors_json, subjects_json
+            has_files, work_citation_count, work_reference_count, publication_download_count,
+            authors_json, subjects_json, files_json
         )
         SELECT
             pub.id, w.id, pub.venue_id, pub.publisher_id,
             w.title, w.abstract, tpa.authors_search, v.name, tps.subjects_search,
             pub.doi, w.work_type, pub.year, w.language, pub.open_access, pub.peer_reviewed,
+            CASE WHEN tpf.publication_id IS NULL THEN 0 ELSE 1 END,
             w.citation_count, w.reference_count,
-            tpa.authors_json, tps.subjects_json
+            COALESCE(tpf.publication_download_count, 0),
+            tpa.authors_json, tps.subjects_json, tpf.files_json
         FROM works w
         JOIN publications pub ON pub.work_id = w.id
         LEFT JOIN venues v ON pub.venue_id = v.id
         LEFT JOIN tmp_batch_authors tpa ON w.id = tpa.work_id
         LEFT JOIN tmp_batch_subjects tps ON w.id = tps.work_id
+        LEFT JOIN tmp_batch_files tpf ON pub.id = tpf.publication_id
         WHERE w.id >= v_current_id AND w.id < v_current_id + p_batch_size;
 
         COMMIT;
@@ -1215,6 +1243,7 @@ BEGIN
 
     DROP TEMPORARY TABLE IF EXISTS tmp_batch_authors;
     DROP TEMPORARY TABLE IF EXISTS tmp_batch_subjects;
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_files;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -1627,11 +1656,11 @@ DELIMITER ;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
 /*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb3 */ ;
-/*!50003 SET character_set_results = utf8mb3 */ ;
-/*!50003 SET collation_connection  = utf8mb3_general_ci */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_clean_html_entities`()
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_clean_html_entities`()
 BEGIN
     DECLARE total_cleaned INT DEFAULT 0;
     
@@ -1726,11 +1755,11 @@ DELIMITER ;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
 /*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb3 */ ;
-/*!50003 SET character_set_results = utf8mb3 */ ;
-/*!50003 SET collation_connection  = utf8mb3_general_ci */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_disable_all_triggers`()
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_disable_all_triggers`()
 BEGIN
     CREATE TEMPORARY TABLE IF NOT EXISTS temp_trigger_definitions (
         trigger_name VARCHAR(64),
@@ -1779,11 +1808,11 @@ DELIMITER ;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
 /*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb3 */ ;
-/*!50003 SET character_set_results = utf8mb3 */ ;
-/*!50003 SET collation_connection  = utf8mb3_general_ci */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_enable_all_triggers`()
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_enable_all_triggers`()
 BEGIN
     BLOCK2: BEGIN
         DECLARE done INT DEFAULT FALSE;
@@ -1911,7 +1940,7 @@ DELIMITER ;
 /*!50003 SET character_set_results = utf8mb4 */ ;
 /*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_fix_merged_work`(IN p_work_id INT)
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_fix_merged_work`(IN p_work_id INT)
 BEGIN
     DECLARE v_publication_id_to_move INT;
     DECLARE v_first_publication_id INT;
@@ -2131,11 +2160,11 @@ DELIMITER ;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
 /*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb3 */ ;
-/*!50003 SET character_set_results = utf8mb3 */ ;
-/*!50003 SET collation_connection  = utf8mb3_general_ci */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_merge_single_organization_pair`(
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_merge_single_organization_pair`(
     IN p_primary_org_id INT,    
     IN p_secondary_org_id INT   
 )
@@ -2215,7 +2244,7 @@ DELIMITER ;
 /*!50003 SET character_set_results = utf8mb4 */ ;
 /*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_normalize_publications_data`()
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_normalize_publications_data`()
 BEGIN
     
     
@@ -2492,6 +2521,96 @@ DELIMITER ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `sp_refresh_summary_publications_for_work` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
+DELIMITER ;;
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_refresh_summary_publications_for_work`(IN p_work_id INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    IF p_work_id IS NULL OR p_work_id <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'p_work_id must be a positive integer';
+    END IF;
+
+    SET SESSION group_concat_max_len = 1000000;
+
+    START TRANSACTION;
+
+    DELETE FROM summary_publications WHERE work_id = p_work_id;
+
+    INSERT INTO summary_publications (
+        publication_id, work_id, venue_id, publisher_id,
+        title_search, abstract_search, authors_search, venue_search, subjects_search,
+        doi, work_type, publication_year, language, open_access, peer_reviewed,
+        has_files, work_citation_count, work_reference_count, publication_download_count,
+        authors_json, subjects_json, files_json
+    )
+    SELECT
+        pub.id,
+        w.id,
+        pub.venue_id,
+        pub.publisher_id,
+        w.title,
+        w.abstract,
+        (SELECT GROUP_CONCAT(p.preferred_name SEPARATOR ' ')
+           FROM authorships a
+           JOIN persons p ON p.id = a.person_id
+           WHERE a.work_id = w.id),
+        v.name,
+        (SELECT GROUP_CONCAT(s.term SEPARATOR ' ')
+           FROM work_subjects ws
+           JOIN subjects s ON s.id = ws.subject_id
+           WHERE ws.work_id = w.id),
+        pub.doi,
+        w.work_type,
+        pub.year,
+        w.language,
+        pub.open_access,
+        pub.peer_reviewed,
+        (SELECT COUNT(*) > 0 FROM files WHERE publication_id = pub.id),
+        w.citation_count,
+        w.reference_count,
+        (SELECT COALESCE(SUM(download_count), 0) FROM files WHERE publication_id = pub.id),
+        (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', p.id, 'name', p.preferred_name, 'role', a.role))
+           FROM authorships a
+           JOIN persons p ON p.id = a.person_id
+           WHERE a.work_id = w.id),
+        (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', s.id, 'term', s.term))
+           FROM work_subjects ws
+           JOIN subjects s ON s.id = ws.subject_id
+           WHERE ws.work_id = w.id),
+        (SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                  'id', f.id,
+                  'format', f.file_format,
+                  'size', f.file_size,
+                  'role', f.file_role,
+                  'md5', f.md5
+                ))
+           FROM files f
+           WHERE f.publication_id = pub.id)
+    FROM works w
+    JOIN publications pub ON pub.work_id = w.id
+    LEFT JOIN venues v ON v.id = pub.venue_id
+    WHERE w.id = p_work_id;
+
+    COMMIT;
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
 /*!50003 DROP PROCEDURE IF EXISTS `sp_reindex_database` */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -2500,7 +2619,7 @@ DELIMITER ;
 /*!50003 SET character_set_results = utf8mb4 */ ;
 /*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_reindex_database`()
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_reindex_database`()
 BEGIN
     
     SET FOREIGN_KEY_CHECKS = 0;
@@ -2532,7 +2651,7 @@ DELIMITER ;
 /*!50003 SET character_set_results = utf8mb4 */ ;
 /*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_repair_work_references_consistency`(IN p_apply TINYINT)
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_repair_work_references_consistency`(IN p_apply TINYINT)
 BEGIN
     DECLARE v_apply TINYINT DEFAULT 1;
     DECLARE v_before_invalid BIGINT DEFAULT 0;
@@ -2601,7 +2720,7 @@ DELIMITER ;
 /*!50003 SET character_set_results = utf8mb4 */ ;
 /*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_resolve_all_pending_existing`(IN p_batch_size INT)
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_resolve_all_pending_existing`(IN p_batch_size INT)
 BEGIN
     DECLARE v_rows_affected INT DEFAULT 1;
     DECLARE v_total_resolved INT DEFAULT 0;
@@ -2641,7 +2760,7 @@ DELIMITER ;
 /*!50003 SET character_set_results = utf8mb4 */ ;
 /*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
 DELIMITER ;;
-CREATE DEFINER=`dev`@`%` PROCEDURE `sp_resolve_pending_references`(IN p_limit INT)
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_resolve_pending_references`(IN p_limit INT)
 BEGIN
     
     

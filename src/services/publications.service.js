@@ -274,12 +274,16 @@ class PublicationsService {
     }
 
     const searchTerm = (filters.q || filters.search || '').trim();
+    const venueFilter = filters.venue_name || filters.venue || null;
+    const authorFilter = filters.author || null;
+    const subjectFilter = filters.subject || null;
+    const useSphinx = Boolean(searchTerm || venueFilter || authorFilter || subjectFilter);
     let sphinxIds = null;
     let sphinxTotal = null;
     let sphinxQueryMs = null;
     let searchEngine = 'MariaDB';
 
-    if (searchTerm) {
+    if (useSphinx) {
       try {
         const spx = await sphinxService.searchPublicationIds(searchTerm, {
           work_type: filters.type || filters.work_type,
@@ -288,9 +292,9 @@ class PublicationsService {
           year_to: filters.year_to,
           peer_reviewed: filters.peer_reviewed,
           open_access: filters.open_access,
-          venue_name: filters.venue_name || filters.venue,
-          author: filters.author,
-          subject: filters.subject,
+          venue_name: venueFilter,
+          author: authorFilter,
+          subject: subjectFilter,
           venue_id: filters.venue_id,
           publisher_id: filters.publisher_id,
           work_id: filters.work_id,

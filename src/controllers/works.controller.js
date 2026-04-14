@@ -56,12 +56,18 @@ class WorksController {
         page: req.query.page,
         limit: req.query.limit,
         offset: req.query.offset,
-        search: req.query.search,
-        type: req.query.type,
+        search: req.query.q || req.query.search,
+        type: req.query.type || req.query.work_type,
         year_from: req.query.year_from,
         year_to: req.query.year_to,
         open_access: req.query.open_access,
-        language: req.query.language
+        peer_reviewed: req.query.peer_reviewed,
+        language: req.query.language,
+        venue_name: req.query.venue_name || req.query.venue,
+        venue_id: req.query.venue_id,
+        author: req.query.author,
+        subject: req.query.subject,
+        has_files: req.query.has_files
       };
 
       const result = await worksService.getWorks(filters);
