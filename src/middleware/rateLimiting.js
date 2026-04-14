@@ -21,7 +21,7 @@ const delayAfter = parseIntSafe(process.env.SLOW_DOWN_AFTER, 1000);
 const delayMs = parseIntSafe(process.env.SLOW_DOWN_DELAY, 50);
 const maxDelayMs = parseIntSafe(process.env.SLOW_DOWN_MAX, 1000);
 
-const disableRateLimiting = (process.env.RATE_LIMIT_DISABLED || 'true').toLowerCase() !== 'false';
+const disableRateLimiting = (process.env.RATE_LIMIT_DISABLED || 'false').toLowerCase() === 'true';
 const noopLimiter = (_req, _res, next) => next();
 const shouldSkipRateLimit = (req) => disableRateLimiting || isLocalRequest(req);
 

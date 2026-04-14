@@ -4,7 +4,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 
 ## Database
 - Database name: `data`. Direct access: `mariadb data` or `mariadb data -e "..."`.
-- 37 base tables, 11 views, 60 stored procedures, 1 function.
+- 38 base tables, 11 views, 72 stored procedures, 12 functions.
 - Schema files:
   - `database/data.schema.sql` — current production schema dump (tables, views, routines, triggers).
   - `database/schema.sql` — reference schema.

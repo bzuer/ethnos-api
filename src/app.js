@@ -33,11 +33,13 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com"],
-      styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+      scriptSrc: ["'self'", "cdnjs.cloudflare.com"],
+      styleSrc: ["'self'", "fonts.googleapis.com"],
       fontSrc: ["'self'", "fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "*.gravatar.com"],
       connectSrc: ["'self'"],
+      formAction: ["'self'"],
+      baseUri: ["'self'"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
       frameSrc: ["'none'"],
@@ -111,13 +113,14 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-const { 
+const {
   generalLimiter,
   searchLimiter,
   speedLimiter,
   metricsLimiter,
   relationalLimiter,
-  honeypotMiddleware
+  honeypotMiddleware,
+  getViolationStats
 } = require('./middleware/rateLimiting');
 
 app.use(honeypotMiddleware);
@@ -141,7 +144,7 @@ const { sanitizationMiddleware } = require('./middleware/sanitization');
 app.use(sanitizationMiddleware);
 
 const { requestTimeout } = require('./middleware/timeout');
-app.use(requestTimeout({ timeoutMs: 0 }));
+app.use(requestTimeout({ timeoutMs: 30000 }));
 
 app.use(performanceMonitoring);
 
@@ -177,7 +180,7 @@ app.get('/', (req, res) => {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
       search_engine: 'Sphinx integrated (18-26ms search performance)',
       cache: 'Redis with 30min TTL',
-      rate_limiting: 'Disabled'
+      rate_limiting: getViolationStats().disabled ? 'Disabled' : 'Enabled'
     },
     main_categories: {
       search_discovery: {
@@ -225,7 +228,7 @@ app.get('/', (req, res) => {
     technical_features: {
       search_performance: 'Sphinx: 18-26ms queries, total endpoint response: 20-2000ms (institutions search disabled for optimal performance)',
       authentication: 'Not required - Public API',
-      rate_limits: 'Disabled',
+      rate_limits: '600 req/min per IP',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
       cache_ttl: '30 minutes',
       security: 'XSS protection, SQL injection prevention, abuse detection'

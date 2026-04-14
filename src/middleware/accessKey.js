@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { logger } = require('./errorHandler');
 
 const DEFAULT_HEADER_NAMES = ['x-access-key', 'x-internal-key', 'x-api-key'];
@@ -24,9 +25,10 @@ const createAccessKeyGuard = (options = {}) => {
     throw new Error('createAccessKeyGuard requires at least one env var name');
   }
 
-  return (req, res, next) => {
-    const { value: accessKey, source } = resolveAccessKey(envVars);
+  const { value: accessKey, source } = resolveAccessKey(envVars);
+  const accessKeyBuffer = accessKey ? Buffer.from(accessKey) : null;
 
+  return (req, res, next) => {
     if (!accessKey) {
       logger.error(`${context} access denied: missing configuration (${source})`);
       return res.status(503).json({
@@ -43,7 +45,11 @@ const createAccessKeyGuard = (options = {}) => {
       found || req.query?.[queryKey]
     ), null);
 
-    if (!providedKey || providedKey !== accessKey) {
+    const keysMatch = typeof providedKey === 'string' &&
+      providedKey.length === accessKey.length &&
+      crypto.timingSafeEqual(Buffer.from(providedKey), accessKeyBuffer);
+
+    if (!keysMatch) {
       logger.warn(`${context} access denied: invalid or missing key`, {
         ip: req.ip,
         path: req.originalUrl,
