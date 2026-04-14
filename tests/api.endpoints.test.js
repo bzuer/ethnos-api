@@ -444,57 +444,80 @@ describe('DTOs structure', () => {
     expect(listItem).toHaveProperty('ror_id', 'ROR123');
   });
 
-  test('Work DTO includes new identifier fields explicitly', () => {
+  test('Work DTO embeds publications array and aggregated identifiers', () => {
     const { formatWorkDetails, formatWorkListItem } = require('../src/dto/work.dto');
     const work = {
       id: 3,
       title: 'Test Work',
       venue_name: 'Journal of Tests',
       venue_abbrev: 'J. Tests',
-      pmid: '123456',
-      pmcid: 'PMC999',
-      arxiv: 'arXiv:2101.00001',
-      wos_id: 'WOS:ABC',
-      handle: '12345/6789',
-      url: 'https://example.org/w',
-      wikidata_id: 'Q42',
-      openalex_id: 'W-1',
-      mag_id: 'MAG-W'
+      publications: [
+        {
+          id: 11,
+          identifiers: {
+            doi: '10.1/a',
+            pmid: '123456',
+            pmcid: 'PMC999',
+            arxiv: 'arXiv:2101.00001',
+            wos_id: 'WOS:ABC',
+            handle: '12345/6789',
+            wikidata_id: 'Q42',
+            openalex_id: 'W-1',
+            mag_id: 'MAG-W'
+          },
+          publication_year: 2024
+        }
+      ],
+      publications_total: 1,
+      publications_has_more: false,
+      identifiers: {
+        doi: ['10.1/a'],
+        pmid: ['123456'],
+        pmcid: ['PMC999'],
+        arxiv: ['arXiv:2101.00001'],
+        wos_id: ['WOS:ABC'],
+        handle: ['12345/6789'],
+        wikidata_id: ['Q42'],
+        openalex_id: ['W-1'],
+        mag_id: ['MAG-W'],
+        isbn: [],
+        openlibrary_id: []
+      }
     };
     const details = formatWorkDetails(work);
-    expect(details).toMatchObject({
-      pmid: '123456',
-      pmcid: 'PMC999',
-      arxiv: 'arXiv:2101.00001',
-      wos_id: 'WOS:ABC',
-      handle: '12345/6789',
-      url: 'https://example.org/w',
-      wikidata_id: 'Q42',
-      openalex_id: 'W-1',
-      mag_id: 'MAG-W'
-    });
+    expect(details).toHaveProperty('publications');
+    expect(Array.isArray(details.publications)).toBe(true);
+    expect(details.publications).toHaveLength(1);
+    expect(details.publications[0].identifiers).toHaveProperty('pmid', '123456');
+    expect(details.publications[0].identifiers).toHaveProperty('openalex_id', 'W-1');
+    expect(details).toHaveProperty('publications_total', 1);
+    expect(details).toHaveProperty('publications_has_more', false);
+    expect(details.identifiers.doi).toContain('10.1/a');
+    expect(details.identifiers.pmid).toContain('123456');
+    expect(details).not.toHaveProperty('publication');
+    expect(details).not.toHaveProperty('venue');
+    expect(details).not.toHaveProperty('files');
+
     const listItem = formatWorkListItem(work);
-    expect(listItem).toHaveProperty('pmid', '123456');
-    expect(listItem).toHaveProperty('openalex_id', 'W-1');
     expect(listItem.venue).toHaveProperty('name', 'Journal of Tests');
     expect(listItem.venue).toHaveProperty('abbreviated_name', 'J. Tests');
   });
 
-  test('Work DTO exposes openaccess identifier while keeping legacy openacess alias', () => {
-    const { formatWorkDetails } = require('../src/dto/work.dto');
-    const work = {
-      id: 99,
-      files: [
-        {
-          file_id: 1,
-          openacess_id: 'OA-999'
-        }
-      ]
+  test('Publication entry exposes openaccess identifier while keeping legacy openacess alias', () => {
+    const { formatPublicationEntry } = require('../src/dto/publication.dto');
+    const row = {
+      publication_id: 99,
+      work_id: 7,
+      files_json: JSON.stringify([
+        { id: 1, file_format: 'PDF', file_role: 'MAIN' }
+      ])
     };
-    const details = formatWorkDetails(work);
-    expect(details.files).toHaveLength(1);
-    expect(details.files[0]).toHaveProperty('openaccess_id', 'OA-999');
-    expect(details.files[0]).toHaveProperty('openacess_id', 'OA-999');
+    const entry = formatPublicationEntry(row);
+    expect(entry.files).toHaveLength(1);
+    expect(entry.files[0]).toHaveProperty('format', 'PDF');
+    expect(entry.files[0]).toHaveProperty('role', 'MAIN');
+    expect(entry).not.toHaveProperty('work');
+    expect(entry).not.toHaveProperty('siblings');
   });
 
   test('Work DTO normalizes open_access in citations and references', () => {

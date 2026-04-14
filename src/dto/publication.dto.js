@@ -232,8 +232,18 @@ function formatPublicationDetails(row = {}, extras = {}) {
   };
 }
 
+function formatPublicationEntry(row = {}) {
+  const detail = formatPublicationDetails(row, {});
+  delete detail.work;
+  delete detail.siblings;
+  delete detail.citations;
+  delete detail.references;
+  return detail;
+}
+
 module.exports = {
   formatPublicationListItem,
   formatPublicationSibling,
-  formatPublicationDetails
+  formatPublicationDetails,
+  formatPublicationEntry
 };

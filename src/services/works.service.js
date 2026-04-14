@@ -5,6 +5,7 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
 const { authorsFromJson, subjectsFromJson: baseSubjectsFromJson } = require('../dto/helpers');
+const { formatPublicationEntry } = require('../dto/publication.dto');
 const { withTimeout } = require('../utils/db');
 
 const subjectsFromJson = (value) =>
@@ -107,16 +108,18 @@ class WorksService {
   }
 
   async getWorkById(id, options = {}) {
-    const cacheKey = `work:complete:${id}`;
-    
+    const includeCitations = options.includeCitations !== false;
+    const includeReferences = options.includeReferences !== false;
+    const cacheKey = `work:v2:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) {
         return cached;
       }
 
-      const work = await this._getCompleteWorkData(id, options);
-      
+      const work = await this._getCompleteWorkData(id, { includeCitations, includeReferences });
+
       if (!work) {
         return null;
       }
@@ -570,9 +573,9 @@ class WorksService {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
     const startTime = process.hrtime.bigint();
-    
+
     const [workData] = await sequelize.query(`
-      SELECT 
+      SELECT
         w.id,
         w.title,
         w.subtitle,
@@ -587,71 +590,10 @@ class WorksService {
         w.social_media_mentions,
         w.news_mentions,
         w.created_at,
-        w.updated_at,
-        
-        -- Latest publication data
-        pub_latest.id as publication_id,
-        pub_latest.year as publication_year,
-        pub_latest.volume,
-        pub_latest.issue,
-        pub_latest.pages,
-        pub_latest.doi as publication_doi,
-        pub_latest.peer_reviewed,
-        pub_latest.publication_date,
-        pub_latest.open_access,
-        pub_latest.source,
-        pub_latest.source_indexed_at,
-
-        -- Canonical identifiers from main publication row (min(id) per work), fallback to latest
-        COALESCE(pub_main.pmid, pub_latest.pmid)            AS pmid,
-        COALESCE(pub_main.pmcid, pub_latest.pmcid)          AS pmcid,
-        COALESCE(pub_main.arxiv, pub_latest.arxiv)          AS arxiv,
-        COALESCE(pub_main.wos_id, pub_latest.wos_id)        AS wos_id,
-        COALESCE(pub_main.handle, pub_latest.handle)        AS handle,
-        COALESCE(pub_main.wikidata_id, pub_latest.wikidata_id) AS wikidata_id,
-        COALESCE(pub_main.openalex_id, pub_latest.openalex_id) AS openalex_id,
-        COALESCE(pub_main.mag_id, pub_latest.mag_id)        AS mag_id,
-        COALESCE(pub_main.isbn, pub_latest.isbn)            AS isbn,
-        COALESCE(pub_main.openlibrary_id, pub_latest.openlibrary_id) AS openlibrary_id,
-        
-        -- Venue data
-        v.id as venue_id,
-        v.name as venue_name,
-        sv.abbrev_search as venue_abbreviated_name,
-        v.type as venue_type,
-        v.issn,
-        v.eissn,
-        v.scopus_id,
-        v.wikidata_id as venue_wikidata_id,
-        v.openalex_id as venue_openalex_id,
-        v.mag_id as venue_mag_id,
-        
-        -- Publisher data
-        publisher.id as publisher_id,
-        publisher.name as publisher_name,
-        publisher.type as publisher_type,
-        publisher.country_code as publisher_country,
-        publisher.ror_id as publisher_ror_id,
-        publisher.wikidata_id as publisher_wikidata_id,
-        publisher.openalex_id as publisher_openalex_id,
-        publisher.mag_id as publisher_mag_id,
-        publisher.url as publisher_url
-        
+        w.updated_at
       FROM works w
-      LEFT JOIN publications pub_latest ON pub_latest.id = (
-        SELECT p1.id
-        FROM publications p1
-        WHERE p1.work_id = w.id
-        ORDER BY p1.year DESC, p1.id DESC
-        LIMIT 1
-      )
-      LEFT JOIN publications pub_main ON pub_main.id = (
-        SELECT MIN(p3.id) FROM publications p3 WHERE p3.work_id = w.id
-      )
-      LEFT JOIN venues v ON pub_latest.venue_id = v.id
-      LEFT JOIN summary_venues sv ON sv.venue_id = v.id
-      LEFT JOIN organizations publisher ON v.publisher_id = publisher.id
       WHERE w.id = ?
+      LIMIT 1
     `, {
       replacements: [id],
       type: sequelize.QueryTypes.SELECT
@@ -722,82 +664,109 @@ class WorksService {
     });
 
 
-    const filesPromise = sequelize.query(`
-      SELECT 
-        f.id as file_id,
-        f.md5,
-        f.sha1,
-        f.sha256,
-        f.crc32,
-        f.edonkey,
-        f.aich,
-        f.tth,
-        f.btih,
-        f.ipfs_cid,
-        f.libgen_id,
-        f.scimag_id,
-        f.openacess_id,
-        f.best_oa_url,
-        f.download_urls,
-        f.torrent_info,
-        f.upload_date,
-        f.download_count,
-        f.last_verified,
-        f.verification_status,
-        f.version,
-        f.file_format as format,
-        f.file_size as size,
-        f.pages,
-        f.language,
-        f.file_role as role,
-        NULL as quality,
-        f.download_count as access_count,
-        f.last_accessed
-      FROM files f
-      WHERE f.publication_id = ?
-      ORDER BY f.file_role, f.download_count DESC
-    `, {
-      replacements: [workData.publication_id || 0],
-      type: sequelize.QueryTypes.SELECT
-    });
-
-    const licensesPromise = sequelize.query(`
-      SELECT 
-        id as publication_id,
-        license_url,
-        license_version,
-        created_at
-      FROM publications
-      WHERE work_id = ?
-        AND license_url IS NOT NULL
-      ORDER BY created_at DESC, id DESC
+    const publicationsPromise = sequelize.query(`
+      SELECT
+        sp.publication_id,
+        sp.work_id,
+        sp.venue_id,
+        sp.publisher_id,
+        sp.title_search,
+        sp.abstract_search,
+        sp.work_type,
+        sp.language,
+        sp.publication_year,
+        sp.open_access,
+        sp.peer_reviewed,
+        sp.has_files,
+        sp.work_citation_count,
+        sp.work_reference_count,
+        sp.publication_download_count,
+        sp.authors_json,
+        sp.subjects_json,
+        sp.files_json,
+        sp.summary_updated_at,
+        pub.publication_date,
+        pub.volume,
+        pub.issue,
+        pub.pages,
+        pub.doi,
+        pub.pmid,
+        pub.pmcid,
+        pub.arxiv,
+        pub.wos_id,
+        pub.handle,
+        pub.wikidata_id,
+        pub.openalex_id,
+        pub.mag_id,
+        pub.isbn,
+        pub.openlibrary_id,
+        pub.scielo_pid,
+        pub.google_book_id,
+        pub.source,
+        pub.source_indexed_at,
+        pub.license_url,
+        pub.license_version,
+        pub.created_at,
+        pub.updated_at,
+        v.id AS venue_v_id,
+        v.name AS venue_name,
+        sv.abbrev_search AS venue_abbreviated_name,
+        v.type AS venue_type,
+        v.issn,
+        v.eissn,
+        v.scopus_id AS venue_scopus_id,
+        v.wikidata_id AS venue_wikidata_id,
+        v.openalex_id AS venue_openalex_id,
+        v.mag_id AS venue_mag_id,
+        publisher.id AS publisher_v_id,
+        publisher.name AS publisher_name,
+        publisher.type AS publisher_type,
+        publisher.country_code AS publisher_country,
+        publisher.ror_id AS publisher_ror_id,
+        publisher.wikidata_id AS publisher_wikidata_id,
+        publisher.openalex_id AS publisher_openalex_id,
+        publisher.mag_id AS publisher_mag_id,
+        publisher.url AS publisher_url
+      FROM summary_publications sp
+      LEFT JOIN publications pub ON pub.id = sp.publication_id
+      LEFT JOIN venues v ON v.id = sp.venue_id
+      LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+      LEFT JOIN organizations publisher ON publisher.id = sp.publisher_id
+      WHERE sp.work_id = ?
+      ORDER BY sp.publication_year DESC, sp.publication_id DESC
+      LIMIT 51
     `, {
       replacements: [id],
       type: sequelize.QueryTypes.SELECT
     });
 
-    const identifiersPromise = sequelize.query(`
-      SELECT DISTINCT 
-        doi, pmid, pmcid, arxiv, wos_id, handle, wikidata_id, openalex_id, mag_id, isbn, openlibrary_id
-      FROM publications
-      WHERE work_id = ?
-    `, { replacements: [id], type: sequelize.QueryTypes.SELECT });
-
     let [
       authorsData,
       subjectsData,
       fundingData,
-      filesData,
-      licensesData,
-      allIdentifiersRows
+      publicationRows
     ] = await Promise.all([
       authorsPromise,
       subjectsPromise,
       fundingPromise,
-      filesPromise,
-      licensesPromise,
-      identifiersPromise
+      publicationsPromise
     ]);
+
+    const publicationsHasMore = publicationRows.length > 50;
+    const cappedPublicationRows = publicationsHasMore
+      ? publicationRows.slice(0, 50)
+      : publicationRows;
+
+    let publicationsTotal = cappedPublicationRows.length;
+    if (publicationsHasMore) {
+      const [countRow] = await sequelize.query(
+        `SELECT COUNT(*) AS total FROM summary_publications WHERE work_id = ?`,
+        { replacements: [id], type: sequelize.QueryTypes.SELECT }
+      );
+      publicationsTotal = parseInt(countRow?.total) || cappedPublicationRows.length;
+    }
+
+    const publicationEntries = cappedPublicationRows.map(formatPublicationEntry);
 
     const metricsData = {
       citation_count: workData.citation_count,
@@ -810,38 +779,13 @@ class WorksService {
     };
 
     if (!subjectsData || subjectsData.length === 0) {
-      try {
-        const [spxRow] = await sequelize.query(
-          `SELECT subjects_json, subjects_search
-             FROM summary_publications
-             WHERE work_id = ?
-             ORDER BY publication_id DESC
-             LIMIT 1`,
-          { replacements: [id], type: sequelize.QueryTypes.SELECT }
-        );
-        if (spxRow) {
-          const fromJson = subjectsFromJson(spxRow.subjects_json);
-          if (fromJson.length > 0) {
-            subjectsData = fromJson;
-          } else {
-            const subjStr = spxRow.subjects_search ? String(spxRow.subjects_search).trim() : '';
-            if (subjStr) {
-              subjectsData = subjStr
-                .split(/[;\s]+/)
-                .map(s => s.trim())
-                .filter(Boolean)
-                .map(term => ({
-                  subject_id: null,
-                  term,
-                  vocabulary: 'KEYWORD',
-                  lang: null,
-                  relevance_score: 1.0,
-                  assigned_by: 'SYSTEM'
-                }));
-            }
-          }
+      const headRow = cappedPublicationRows[0];
+      if (headRow) {
+        const fromJson = subjectsFromJson(headRow.subjects_json);
+        if (fromJson.length > 0) {
+          subjectsData = fromJson;
         }
-      } catch (_) {}
+      }
     }
 
     const identifiersAgg = {
@@ -857,7 +801,7 @@ class WorksService {
       isbn: new Set(),
       openlibrary_id: new Set()
     };
-    for (const row of allIdentifiersRows) {
+    for (const row of cappedPublicationRows) {
       for (const key of Object.keys(identifiersAgg)) {
         const val = row[key];
         if (val && String(val).trim()) identifiersAgg[key].add(String(val).trim());
@@ -1001,58 +945,12 @@ class WorksService {
       abstract: workData.abstract,
       type: workData.work_type,
       language: workData.language,
-      doi: workData.publication_doi || (identifiersAggPlain.doi[0] || null),
-      pmid: workData.pmid || null,
-      pmcid: workData.pmcid || null,
-      arxiv: workData.arxiv || null,
-      wos_id: workData.wos_id || null,
-      handle: workData.handle || null,
-      wikidata_id: workData.wikidata_id || null,
-      openalex_id: workData.openalex_id || null,
-      mag_id: workData.mag_id || null,
-      isbn: workData.isbn || null,
-      openlibrary_id: workData.openlibrary_id || null,
       created_at: workData.created_at,
       updated_at: workData.updated_at,
 
-      publication: {
-        id: workData.publication_id,
-        year: workData.publication_year,
-        volume: workData.volume,
-        issue: workData.issue,
-        pages: workData.pages,
-        publication_date: workData.publication_date,
-        peer_reviewed: workData.peer_reviewed,
-        open_access: workData.open_access,
-        doi: workData.publication_doi,
-        source: workData.source,
-        source_indexed_at: workData.source_indexed_at
-      },
-
-      venue: workData.venue_name ? {
-        id: workData.venue_id,
-        name: workData.venue_name,
-        abbreviated_name: workData.venue_abbreviated_name || null,
-        type: workData.venue_type,
-        issn: workData.issn,
-        eissn: workData.eissn,
-        scopus_id: workData.scopus_id || null,
-        wikidata_id: workData.venue_wikidata_id || null,
-        openalex_id: workData.venue_openalex_id || null,
-        mag_id: workData.venue_mag_id || null
-      } : null,
-
-      publisher: workData.publisher_name ? {
-        id: workData.publisher_id,
-        name: workData.publisher_name,
-        type: workData.publisher_type,
-        country: workData.publisher_country,
-        ror_id: workData.publisher_ror_id || null,
-        wikidata_id: workData.publisher_wikidata_id || null,
-        openalex_id: workData.publisher_openalex_id || null,
-        mag_id: workData.publisher_mag_id || null,
-        url: workData.publisher_url || null
-      } : null,
+      publications: publicationEntries,
+      publications_total: publicationsTotal,
+      publications_has_more: publicationsHasMore,
 
       authors: authorsData.map(author => ({
         person_id: author.person_id,
@@ -1083,10 +981,6 @@ class WorksService {
         unresolved_references: unresolvedReferences,
         unsolved: unresolvedReferences
       },
-
-      files: filesData,
-      
-      licenses: licensesData,
 
       metrics: metricsData,
 

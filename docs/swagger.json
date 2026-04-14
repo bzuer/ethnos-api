@@ -5216,7 +5216,7 @@
     "/works/{id}": {
       "get": {
         "summary": "Get specific academic work by ID",
-        "description": "Retrieve detailed information about a specific academic publication by its unique identifier.",
+        "description": "Returns the detailed payload for a work. The response embeds **all\npublications of the work** as `publications[]` (capped at 50, with\n`publications_total` and `publications_has_more` flags). Each entry\ncarries its own `identifiers`, `venue`, `publisher`, `files`, and\n`_links.self`. The legacy single `publication`/`venue`/`publisher`/`files`/`licenses`\nblocks have been removed (Phase 6 breaking change). Aggregated\n`identifiers` (union of every publication's identifier set) remains\nat the work level for backward reference. The cache key was bumped\nfrom `work:complete:*` to `work:v2:*`.\n",
         "tags": [
           "Works"
         ],
@@ -5255,7 +5255,123 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/WorkDetailsSuccess"
+            "description": "Work retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "subtitle": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "abstract": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "language": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "publications": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "integer"
+                              },
+                              "identifiers": {
+                                "type": "object"
+                              },
+                              "publication_year": {
+                                "type": "integer",
+                                "nullable": true
+                              },
+                              "venue": {
+                                "type": "object",
+                                "nullable": true
+                              },
+                              "publisher": {
+                                "type": "object",
+                                "nullable": true
+                              },
+                              "files": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object"
+                                }
+                              },
+                              "_links": {
+                                "type": "object",
+                                "properties": {
+                                  "self": {
+                                    "type": "string",
+                                    "example": "/publications/123"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "publications_total": {
+                          "type": "integer",
+                          "example": 2
+                        },
+                        "publications_has_more": {
+                          "type": "boolean",
+                          "example": false
+                        },
+                        "identifiers": {
+                          "type": "object",
+                          "description": "Aggregated union of every publication's identifier set"
+                        },
+                        "authors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "subjects": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "citations": {
+                          "type": "object"
+                        },
+                        "metrics": {
+                          "type": "object"
+                        },
+                        "funding": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
