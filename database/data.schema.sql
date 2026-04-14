@@ -3389,7 +3389,7 @@ BEGIN
     CREATE TEMPORARY TABLE IF NOT EXISTS temp_test_table (id INT);
     DROP TEMPORARY TABLE IF EXISTS temp_test_table;
     
-    SET v_message = '✓ Tabelas temporárias funcionando';
+    SET v_message = ' Tabelas temporárias funcionando';
     SELECT v_message AS check_result;
     
     BEGIN
@@ -3401,9 +3401,9 @@ BEGIN
         CALL sp_generate_name_signature('John Doe', @test_sig);
         
         IF @test_sig IS NOT NULL THEN
-            SET v_message = CONCAT('✓ Procedure sp_generate_name_signature nativa: ', @test_sig);
+            SET v_message = CONCAT(' Procedure sp_generate_name_signature nativa: ', @test_sig);
         ELSE
-            SET v_message = '✗ Procedure sp_generate_name_signature falhou';
+            SET v_message = ' Procedure sp_generate_name_signature falhou';
             SET v_error_count = v_error_count + 1;
         END IF;
         
@@ -3416,18 +3416,18 @@ BEGIN
           AND table_name = 'authorships' 
           AND index_name = 'idx_authorships_created_at'
     ) THEN
-        SET v_message = '✓ Índice idx_authorships_created_at validado';
+        SET v_message = ' Índice idx_authorships_created_at validado';
     ELSE
-        SET v_message = '✗ Índice idx_authorships_created_at faltando';
+        SET v_message = ' Índice idx_authorships_created_at faltando';
         SET v_error_count = v_error_count + 1;
     END IF;
     
     SELECT v_message AS check_result;
     
     IF v_error_count = 0 THEN
-        SELECT '✅ TODAS AS CORREÇÕES APLICADAS COM SUCESSO' AS final_status;
+        SELECT ' TODAS AS CORREÇÕES APLICADAS COM SUCESSO' AS final_status;
     ELSE
-        SELECT CONCAT('⚠️ ', v_error_count, ' ERROS ENCONTRADOS. VERIFIQUE OS LOGS.') AS final_status;
+        SELECT CONCAT(' ', v_error_count, ' ERROS ENCONTRADOS. VERIFIQUE OS LOGS.') AS final_status;
     END IF;
     
 END ;;

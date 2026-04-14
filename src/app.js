@@ -431,10 +431,10 @@ const startServer = async () => {
     await sphinxHealthCheck.startMonitoring();
 
     server = app.listen(PORT, () => {
-      logger.info(`🚀 Server running on port ${PORT}`);
-      logger.info(`📚 API Bibliográfica ${process.env.NODE_ENV || 'development'} mode`);
-      logger.info(`🔗 Health check: http://localhost:${PORT}/health`);
-      logger.info(`🔍 Search engine: ${process.env.SEARCH_ENGINE || 'SPHINX'} with health monitoring`);
+      logger.info(`Server running on port ${PORT}`);
+      logger.info(`API Bibliografica ${process.env.NODE_ENV || 'development'} mode`);
+      logger.info(`Health check: http://localhost:${PORT}/health`);
+      logger.info(`Search engine: ${process.env.SEARCH_ENGINE || 'SPHINX'} with health monitoring`);
     });
 
     server.on('error', (error) => {
@@ -460,7 +460,7 @@ const startServer = async () => {
     server.on('listening', () => {
       const addr = server.address();
       const bind = typeof addr === 'string' ? `pipe ${addr}` : `port ${addr.port}`;
-      logger.info(`🎯 Server listening on ${bind}`);
+      logger.info(`Server listening on ${bind}`);
     });
 
   } catch (error) {
@@ -470,8 +470,8 @@ const startServer = async () => {
 };
 
 const gracefulShutdown = async (signal) => {
-  logger.info(`🔄 Received ${signal}. Starting graceful shutdown...`);
-  
+  logger.info(`Received ${signal}. Starting graceful shutdown...`);
+
   if (!server) return process.exit(0);
 
   server.close(async (err) => {
@@ -480,25 +480,25 @@ const gracefulShutdown = async (signal) => {
       process.exit(1);
     }
 
-    logger.info('🔄 HTTP server closed');
+    logger.info('HTTP server closed');
 
     try {
       const sphinxHealthCheck = require('./services/sphinxHealthCheck.service');
       await sphinxHealthCheck.stopMonitoring();
-      logger.info('🔍 Sphinx monitoring stopped');
+      logger.info('Sphinx monitoring stopped');
 
       const { sequelize, closePool } = require('./config/database');
       await sequelize.close();
       await closePool();
-      logger.info('💾 Database connections closed');
+      logger.info('Database connections closed');
 
       const redis = require('./config/redis');
       if (redis && typeof redis.quit === 'function') {
         await redis.quit();
-        logger.info('📝 Redis connections closed');
+        logger.info('Redis connections closed');
       }
 
-      logger.info('✅ Graceful shutdown completed');
+      logger.info('Graceful shutdown completed');
       process.exit(0);
     } catch (error) {
       logger.error('Error during graceful shutdown:', error);

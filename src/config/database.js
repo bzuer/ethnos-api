@@ -43,10 +43,10 @@ const sequelize = new Sequelize(config);
 const testConnection = async () => {
   try {
     await sequelize.authenticate();
-    console.log('✓ Database connection established successfully');
+    console.log('Database connection established successfully');
     return true;
   } catch (error) {
-    console.error('✗ Unable to connect to database:', error.message);
+    console.error('Unable to connect to database:', error.message);
     return false;
   }
 };
@@ -70,10 +70,10 @@ const pool = mysql.createPool({
 const closePool = async () => {
   try {
     await pool.end();
-    console.log('✓ MySQL2 pool closed successfully');
+    console.log('MySQL2 pool closed successfully');
     return true;
   } catch (error) {
-    console.error('✗ Error closing MySQL2 pool:', error.message);
+    console.error('Error closing MySQL2 pool:', error.message);
     return false;
   }
 };

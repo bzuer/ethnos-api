@@ -39,11 +39,11 @@ const createRedisClient = async () => {
     });
 
     instance.on('connect', () => {
-      console.log('✓ Redis connected');
+      console.log('Redis connected');
     });
 
     instance.on('disconnect', () => {
-      console.warn('✗ Redis disconnected');
+      console.warn('Redis disconnected');
       client = null;
     });
 
@@ -56,7 +56,7 @@ const createRedisClient = async () => {
       client = instance;
       return client;
     } catch (error) {
-      console.error('✗ Redis connection failed:', error.message);
+      console.error('Redis connection failed:', error.message);
       try {
         await instance.disconnect();
       } catch (disconnectError) {
@@ -99,10 +99,10 @@ const testRedisConnection = async () => {
 
   try {
     await activeClient.ping();
-    console.log('✓ Redis connection test successful');
+    console.log('Redis connection test successful');
     return true;
   } catch (error) {
-    console.error('✗ Redis connection test failed:', error.message);
+    console.error('Redis connection test failed:', error.message);
     return false;
   }
 };

@@ -73,7 +73,7 @@ for future requests.
 
 ## Request 1 — Populate `has_files`, `files_json`, `publication_download_count` in `summary_publications`
 
-**Status:** ✅ APPLIED (2026-04-14). 4.5 M rows now carry `has_files = 1` and
+**Status:** APPLIED (2026-04-14). 4.5 M rows now carry `has_files = 1` and
 a populated `files_json`. `publication_download_count` populates from
 `SUM(files.download_count)` and is currently 0 across the corpus because the
 underlying `files.download_count` column itself is 0; this is an upstream
@@ -133,7 +133,7 @@ curl -s http://localhost:1211/works/5 | jq '[.data.publications[].files[]] | len
 
 ## Request 2 — Incremental refresh procedure for one work
 
-**Status:** ✅ APPLIED (2026-04-14). `sp_refresh_summary_publications_for_work`
+**Status:** APPLIED (2026-04-14). `sp_refresh_summary_publications_for_work`
 exists in production. The Ethnos_API project never calls it (consumer-only
 rule); the operator pipeline invokes it after publication / work / authorship
 / work_subject / file mutations.
@@ -174,7 +174,7 @@ never calls the procedure; the operator pipeline owns the test.
 
 ## Request 3 — Drop `files.work_id` (last irreversible step)
 
-**Status:** ✅ APPLIED (2026-04-14). Column gone.
+**Status:** APPLIED (2026-04-14). Column gone.
 `information_schema.COLUMNS` no longer lists `files.work_id`. No code path
 references it (Phase 4 already migrated every consumer to
 `files.publication_id`).

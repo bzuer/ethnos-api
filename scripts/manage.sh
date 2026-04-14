@@ -409,29 +409,29 @@ validate_all() {
     fi
 
     if ss -lnt | grep -q ":${port} " 2>/dev/null; then
-      echo -e "  ${GREEN}✓${NC} $label (port $port)"
+      echo -e "  [OK] $label (port $port)"
       ok=$((ok + 1))
     else
-      echo -e "  ${RED}✗${NC} $label (port $port)"
+      echo -e "  [FAIL] $label (port $port)"
       fail=$((fail + 1))
     fi
   done
 
   if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} systemd user service ($SERVICE_NAME)"
+    echo -e "  [OK] systemd user service ($SERVICE_NAME)"
     ok=$((ok + 1))
   else
-    echo -e "  ${RED}✗${NC} systemd user service ($SERVICE_NAME)"
+    echo -e "  [FAIL] systemd user service ($SERVICE_NAME)"
     fail=$((fail + 1))
   fi
 
   local health_status
   health_status=$(curl -sf "http://localhost:${API_PORT}/health/liveness" 2>/dev/null | grep -o '"alive":true' || true)
   if [ -n "$health_status" ]; then
-    echo -e "  ${GREEN}✓${NC} API health check (/health/liveness)"
+    echo -e "  [OK] API health check (/health/liveness)"
     ok=$((ok + 1))
   else
-    echo -e "  ${RED}✗${NC} API health check (/health/liveness)"
+    echo -e "  [FAIL] API health check (/health/liveness)"
     fail=$((fail + 1))
   fi
 

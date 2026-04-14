@@ -16,27 +16,27 @@
 --
 -- STATUS as of 2026-04-14 (applied by operator):
 --
---   Mudança 1 (files_json enrichment) ............. ✅ APPLIED + rebuilt
+--   Mudança 1 (files_json enrichment) ............. APPLIED + rebuilt
 --     summary_publications.files_json now carries libgen_id / scimag_id /
 --     openacess_id / best_oa_url / version / verification / downloads /
 --     pages / language on every row. Consumer side wired in
 --     src/dto/publication.dto.js::mapFiles.
 --
---   Mudança 2 (venue score breakdown) ............. ✅ APPLIED + rebuilt
+--   Mudança 2 (venue score breakdown) ............. APPLIED + rebuilt
 --     summary_venues rebuilt with score_breakdown_json populated for all
 --     30 350 rows, plus sjr / snip / i10_index / two_yr_mean_citedness /
 --     is_in_doaj / is_in_scielo / is_indexed_in_scopus / homepage_url.
 --     Consumer side wired in src/dto/venue.dto.js::buildScoreBreakdown
 --     and src/services/venues.service.js (base query extended).
 --
---   Mudança 3 (signature text in persons) ......... ✅ APPLIED + rebuilt
+--   Mudança 3 (signature text in persons) ......... APPLIED + rebuilt
 --     summary_persons rebuilt with signature_text / family_name /
 --     given_names / normalized_name denormalised on 4 466 008 rows.
 --     Current consumer path already JOINs the base `signatures` table
 --     (src/services/persons.service.js); future endpoints that read
 --     summary_persons directly can now skip the JOIN.
 --
---   Mudança 4 (identifiers_json + bibliographic columns) ... ✅ APPLIED
+--   Mudança 4 (identifiers_json + bibliographic columns) ... APPLIED
 --     Build proc patched (see "Request 1 follow-up" below) and
 --     summary_publications rebuilt. identifiers_json populated on every
 --     row (6 567 062); volume present on 6 012 157 rows; publication_date
@@ -45,7 +45,7 @@
 --     `publications` table — every bibliographic field and identifier
 --     reads from summary_publications directly.
 --
---   Mudança 5 (has_scimag_file / has_libgen_file flags) .... ✅ APPLIED
+--   Mudança 5 (has_scimag_file / has_libgen_file flags) .... APPLIED
 --     Same follow-up rebuild populated both flags: has_scimag_file on
 --     3 419 557 rows (matches base `files` count), has_libgen_file on
 --     16 269 rows. Consumer exposes both as top-level booleans on the
@@ -800,7 +800,7 @@ ALTER TABLE summary_publications
 -- --- Request 1 (follow-up) — Complete Mudanças 4 + 5 in the build procs ---
 -- ============================================================================
 --
--- Status at filing: ⚠️ PENDING. Mudanças 4 and 5 in the first pass landed
+-- Status at filing: PENDING. Mudanças 4 and 5 in the first pass landed
 -- only at the ALTER TABLE level. The build proc and the incremental refresh
 -- proc were not updated, so the new columns
 -- (publication_date, volume, issue, pages_text, source, license_url,
