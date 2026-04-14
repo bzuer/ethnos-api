@@ -7,6 +7,54 @@ const coalesce = (...values) => {
   return null;
 };
 
+const parseJsonMaybe = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+};
+
+const buildScoreBreakdown = (venue = {}) => {
+  const parsed = parseJsonMaybe(venue.score_breakdown_json);
+  const source = parsed && typeof parsed === 'object' ? parsed : {};
+  const pick = (jsonKey, columnKey) => {
+    const v = source[jsonKey] ?? venue[columnKey];
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isNaN(n) ? null : n;
+  };
+  const total = pick('total', 'global_ranking_score');
+  const components = {
+    subject:     pick('subject',     'subject_score'),
+    snip:        pick('snip',        'snip_score'),
+    oa:          pick('oa',          'oa_score'),
+    authorship:  pick('authorship',  'authorship_score'),
+    affiliation: pick('affiliation', 'affiliation_score'),
+    citation:    pick('citation',    'citation_score'),
+    llm:         pick('llm',         'llm_score')
+  };
+  const llmRelevance = source.llm_relevance ?? venue.llm_relevance ?? null;
+  const llmJustification = source.llm_justification ?? venue.llm_justification ?? null;
+  const hasAnyValue =
+    total !== null ||
+    Object.values(components).some(v => v !== null) ||
+    llmRelevance !== null ||
+    llmJustification !== null;
+  if (!hasAnyValue) return null;
+  return {
+    total,
+    components,
+    llm: {
+      relevance:     llmRelevance,
+      justification: llmJustification
+    }
+  };
+};
+
 const toBoolean = (value) => {
   if (value === null || value === undefined) {
     return null;
@@ -190,7 +238,11 @@ const baseVenue = (venue = {}, options = {}) => {
     coverage_end_year: venue.coverage_end_year ?? null,
     country_code: venue.country_code || null,
     is_in_doaj: toBoolean(venue.is_in_doaj),
+    is_in_scielo: toBoolean(venue.is_in_scielo),
     is_indexed_in_scopus: toBoolean(venue.is_indexed_in_scopus),
+    validation_status: venue.validation_status || null,
+    global_ranking_score: toNullableNumber(venue.global_ranking_score),
+    score_breakdown: buildScoreBreakdown(venue),
     cited_by_count: toInteger(
       coalesce(
         venue.cited_by_count,

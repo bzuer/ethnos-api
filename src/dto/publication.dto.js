@@ -41,8 +41,6 @@ function mapFiles(value) {
   return files.map(file => ({
     file_id: toOptionalInteger(file.id || file.file_id),
     md5: file.md5 || null,
-    sha1: file.sha1 || null,
-    sha256: file.sha256 || null,
     format: normalizeType(file.format || file.file_format),
     size:
       file.size === null || file.size === undefined
@@ -50,7 +48,14 @@ function mapFiles(value) {
         : Number(file.size),
     pages: toOptionalInteger(file.pages),
     language: file.language || null,
-    role: normalizeType(file.role || file.file_role) || 'MAIN'
+    version: file.version || null,
+    role: normalizeType(file.role || file.file_role) || 'MAIN',
+    libgen_id: toOptionalInteger(file.libgen_id),
+    scimag_id: toOptionalInteger(file.scimag_id),
+    openacess_id: file.openacess_id || null,
+    best_oa_url: file.best_oa_url || null,
+    verification: normalizeType(file.verification || file.verification_status),
+    download_count: toOptionalInteger(file.downloads || file.download_count) || 0
   }));
 }
 

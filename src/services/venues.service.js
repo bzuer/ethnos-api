@@ -101,8 +101,7 @@ class VenuesService {
       return new Map();
     }
 
-    const baseQuery = `
-      SELECT
+    const venueBaseColumns = `
         v.id,
         v.name,
         v.abbreviated_name,
@@ -134,7 +133,22 @@ class VenuesService {
         v.homepage_url,
         v.country_code,
         v.is_in_doaj,
+        v.is_in_scielo,
         v.is_indexed_in_scopus,
+        v.total_score AS global_ranking_score,
+        v.subject_score,
+        v.snip_score,
+        v.oa_score,
+        v.authorship_score,
+        v.affiliation_score,
+        v.citation_score,
+        v.llm_score,
+        v.llm_relevance,
+        v.llm_justification`;
+
+    const baseQuery = `
+      SELECT
+        ${venueBaseColumns},
         pub.name AS publisher_name,
         pub.type AS publisher_type,
         pub.country_code AS publisher_country
@@ -144,38 +158,7 @@ class VenuesService {
 
     const fallbackBaseQuery = `
       SELECT
-        v.id,
-        v.name,
-        v.abbreviated_name,
-        v.type,
-        v.issn,
-        v.eissn,
-        v.scopus_id AS scopus_source_id,
-        v.wikidata_id,
-        v.openalex_id,
-        v.mag_id,
-        v.publisher_id,
-        v.impact_factor,
-        v.created_at,
-        v.updated_at,
-        v.last_validated_at,
-        v.validation_status,
-        v.citescore,
-        v.sjr,
-        v.snip,
-        v.open_access,
-        v.aggregation_type,
-        v.coverage_start_year,
-        v.coverage_end_year,
-        v.works_count AS works_count_precomputed,
-        v.cited_by_count,
-        v.h_index,
-        v.i10_index,
-        v.\`2yr_mean_citedness\` AS two_year_mean_citedness,
-        v.homepage_url,
-        v.country_code,
-        v.is_in_doaj,
-        v.is_indexed_in_scopus,
+        ${venueBaseColumns},
         NULL AS publisher_name,
         NULL AS publisher_type,
         NULL AS publisher_country
@@ -192,13 +175,25 @@ class VenuesService {
         sv.country_code,
         sv.issn,
         sv.eissn,
+        sv.homepage_url,
         sv.top_subjects_json,
         sv.top_publications_json,
         sv.total_publications_count AS works_count,
         sv.total_cited_by_count AS cited_by_count,
+        sv.global_ranking_score,
+        sv.score_breakdown_json,
         sv.impact_factor,
+        sv.citescore,
+        sv.sjr,
+        sv.snip,
         sv.h_index,
+        sv.i10_index,
+        sv.two_yr_mean_citedness AS two_year_mean_citedness,
+        sv.is_in_doaj,
+        sv.is_in_scielo,
+        sv.is_indexed_in_scopus,
         sv.open_access_percentage,
+        sv.validation_status,
         sv.summary_updated_at AS last_updated
       FROM summary_venues sv
       WHERE sv.venue_id IN (:venueIds)`;
@@ -425,8 +420,19 @@ class VenuesService {
           homepage_url: row.homepage_url,
           country_code: summarySnapshot?.country_code ?? row.country_code,
           is_in_doaj: toNullableBoolean(row.is_in_doaj),
+          is_in_scielo: toNullableBoolean(row.is_in_scielo),
           is_indexed_in_scopus: toNullableBoolean(row.is_indexed_in_scopus),
           two_year_mean_citedness: toNullableFloat(row.two_year_mean_citedness),
+          global_ranking_score: toNullableFloat(row.global_ranking_score),
+          subject_score: toNullableFloat(row.subject_score),
+          snip_score: toNullableFloat(row.snip_score),
+          oa_score: toNullableFloat(row.oa_score),
+          authorship_score: toNullableFloat(row.authorship_score),
+          affiliation_score: toNullableFloat(row.affiliation_score),
+          citation_score: toNullableFloat(row.citation_score),
+          llm_score: toNullableFloat(row.llm_score),
+          llm_relevance: row.llm_relevance ?? null,
+          llm_justification: row.llm_justification ?? null,
           summary_snapshot: summarySnapshot
         },
         metrics: {

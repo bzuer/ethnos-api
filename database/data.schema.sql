@@ -583,7 +583,11 @@ DROP TABLE IF EXISTS `summary_persons`;
 CREATE TABLE `summary_persons` (
   `person_id` int(11) NOT NULL,
   `signature_id` int(10) unsigned DEFAULT NULL,
+  `signature_text` varchar(255) DEFAULT NULL,
   `preferred_name_search` varchar(255) NOT NULL,
+  `family_name` varchar(255) DEFAULT NULL,
+  `given_names` varchar(255) DEFAULT NULL,
+  `normalized_name` varchar(512) DEFAULT NULL,
   `name_variations_search` mediumtext DEFAULT NULL,
   `affiliations_search` mediumtext DEFAULT NULL,
   `orcid` varchar(20) DEFAULT NULL,
@@ -603,6 +607,8 @@ CREATE TABLE `summary_persons` (
   PRIMARY KEY (`person_id`),
   KEY `idx_summary_persons_orcid` (`orcid`),
   KEY `idx_summary_persons_metrics` (`total_citations_count` DESC,`total_publications_count` DESC),
+  KEY `idx_summary_persons_signature_text` (`signature_text`),
+  KEY `idx_summary_persons_family_name` (`family_name`),
   FULLTEXT KEY `ft_summary_persons_text` (`preferred_name_search`,`name_variations_search`,`affiliations_search`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -627,15 +633,25 @@ CREATE TABLE `summary_publications` (
   `doi` varchar(255) DEFAULT NULL,
   `work_type` enum('ARTICLE','BOOK','CHAPTER','THESIS','CONFERENCE','CONFERENCE_PAPER','REPORT','DATASET','PREPRINT','REVIEW','EDITORIAL','OTHER') NOT NULL,
   `publication_year` smallint(6) DEFAULT 0,
+  `publication_date` date DEFAULT NULL,
+  `volume` varchar(50) DEFAULT NULL,
+  `issue` varchar(50) DEFAULT NULL,
+  `pages_text` varchar(255) DEFAULT NULL,
+  `source` varchar(50) DEFAULT NULL,
+  `license_url` varchar(512) DEFAULT NULL,
+  `license_version` varchar(50) DEFAULT NULL,
   `language` char(3) DEFAULT NULL,
   `open_access` tinyint(1) DEFAULT 0,
   `peer_reviewed` tinyint(1) DEFAULT 0,
   `has_files` tinyint(1) DEFAULT 0,
+  `has_scimag_file` tinyint(1) DEFAULT 0,
+  `has_libgen_file` tinyint(1) DEFAULT 0,
   `work_citation_count` int(11) DEFAULT 0,
   `work_reference_count` int(11) DEFAULT 0,
   `publication_download_count` int(11) DEFAULT 0,
   `authors_json` longtext DEFAULT NULL CHECK (json_valid(`authors_json`)),
   `subjects_json` longtext DEFAULT NULL CHECK (json_valid(`subjects_json`)),
+  `identifiers_json` longtext DEFAULT NULL CHECK (json_valid(`identifiers_json`)),
   `files_json` longtext DEFAULT NULL CHECK (json_valid(`files_json`)),
   `summary_updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`publication_id`),
@@ -645,6 +661,7 @@ CREATE TABLE `summary_publications` (
   KEY `idx_summary_pubs_type` (`work_type`),
   KEY `idx_summary_pubs_venue` (`venue_id`),
   KEY `idx_summary_pubs_metrics` (`work_citation_count` DESC,`publication_year` DESC),
+  KEY `idx_summary_pubs_file_sources` (`has_files`,`has_scimag_file`,`has_libgen_file`),
   FULLTEXT KEY `ft_summary_pubs_content` (`title_search`,`abstract_search`),
   FULLTEXT KEY `ft_summary_pubs_metadata` (`authors_search`,`venue_search`,`subjects_search`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
@@ -675,9 +692,18 @@ CREATE TABLE `summary_venues` (
   `coverage_start_year` smallint(6) DEFAULT NULL,
   `coverage_end_year` smallint(6) DEFAULT NULL,
   `global_ranking_score` decimal(10,3) DEFAULT 0.000,
+  `score_breakdown_json` longtext DEFAULT NULL CHECK (json_valid(`score_breakdown_json`)),
   `impact_factor` decimal(6,3) DEFAULT NULL,
   `citescore` decimal(6,2) DEFAULT NULL,
+  `sjr` decimal(6,3) DEFAULT NULL,
+  `snip` decimal(6,3) DEFAULT NULL,
   `h_index` int(11) DEFAULT NULL,
+  `i10_index` int(11) DEFAULT NULL,
+  `two_yr_mean_citedness` decimal(10,5) DEFAULT NULL,
+  `is_in_doaj` tinyint(1) DEFAULT 0,
+  `is_in_scielo` tinyint(1) DEFAULT 0,
+  `is_indexed_in_scopus` tinyint(1) DEFAULT 0,
+  `homepage_url` varchar(512) DEFAULT NULL,
   `top_subjects_json` longtext DEFAULT NULL CHECK (json_valid(`top_subjects_json`)),
   `top_publications_json` longtext DEFAULT NULL CHECK (json_valid(`top_publications_json`)),
   `validation_status` enum('PENDING','VALIDATED','NOT_FOUND','FAILED') NOT NULL DEFAULT 'PENDING',
@@ -685,6 +711,7 @@ CREATE TABLE `summary_venues` (
   PRIMARY KEY (`venue_id`),
   KEY `idx_summary_venues_score` (`global_ranking_score` DESC),
   KEY `idx_summary_venues_type` (`venue_type`),
+  KEY `idx_summary_venues_quality` (`is_in_doaj`,`is_in_scielo`,`is_indexed_in_scopus`),
   FULLTEXT KEY `ft_summary_venues_text` (`name_search`,`abbrev_search`,`publisher_search`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1065,6 +1092,10 @@ BEGIN
     DECLARE v_max_id INT;
     DECLARE v_current_id INT;
 
+    IF p_batch_size IS NULL OR p_batch_size <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'p_batch_size must be a positive integer';
+    END IF;
+
     SET SESSION group_concat_max_len = 1000000;
 
     SELECT MIN(id), MAX(id) INTO v_min_id, v_max_id FROM persons;
@@ -1085,7 +1116,7 @@ BEGIN
         START TRANSACTION;
 
         INSERT INTO tmp_batch_affiliations (person_id, affiliations_search, affiliations_json)
-        SELECT 
+        SELECT
             a.person_id,
             GROUP_CONCAT(DISTINCT o.name SEPARATOR ' '),
             JSON_ARRAYAGG(JSON_OBJECT('id', o.id, 'name', o.name, 'type', o.type))
@@ -1095,22 +1126,29 @@ BEGIN
         GROUP BY a.person_id;
 
         INSERT INTO summary_persons (
-            person_id, signature_id, preferred_name_search, affiliations_search,
-            orcid, scopus_id, lattes_id, is_verified, first_publication_year, latest_publication_year,
-            total_publications_count, total_citations_count, h_index, corresponding_author_count,
-            current_affiliations_json
+            person_id, signature_id, signature_text,
+            preferred_name_search, family_name, given_names, normalized_name,
+            affiliations_search,
+            orcid, scopus_id, lattes_id, is_verified,
+            first_publication_year, latest_publication_year,
+            total_publications_count, total_citations_count, h_index,
+            corresponding_author_count, current_affiliations_json
         )
-        SELECT 
-            p.id, p.signature_id, p.preferred_name, tpa.affiliations_search,
-            p.orcid, p.scopus_id, p.lattes_id, p.is_verified, p.first_publication_year, p.latest_publication_year,
-            p.total_works, p.total_citations, p.h_index, p.corresponding_author_count,
-            tpa.affiliations_json
+        SELECT
+            p.id, p.signature_id, s.signature,
+            p.preferred_name, p.family_name, p.given_names, p.normalized_name,
+            tpa.affiliations_search,
+            p.orcid, p.scopus_id, p.lattes_id, p.is_verified,
+            p.first_publication_year, p.latest_publication_year,
+            p.total_works, p.total_citations, p.h_index,
+            p.corresponding_author_count, tpa.affiliations_json
         FROM persons p
+        LEFT JOIN signatures s ON s.id = p.signature_id
         LEFT JOIN tmp_batch_affiliations tpa ON p.id = tpa.person_id
         WHERE p.id >= v_current_id AND p.id < v_current_id + p_batch_size;
 
         COMMIT;
-        
+
         SET v_current_id = v_current_id + p_batch_size;
     END WHILE;
 
@@ -1201,11 +1239,20 @@ BEGIN
         SELECT
             f.publication_id,
             JSON_ARRAYAGG(JSON_OBJECT(
-                'id', f.id,
-                'format', f.file_format,
-                'size', f.file_size,
-                'role', f.file_role,
-                'md5', f.md5
+                'id',           f.id,
+                'format',       f.file_format,
+                'size',         f.file_size,
+                'role',         f.file_role,
+                'md5',          f.md5,
+                'libgen_id',    f.libgen_id,
+                'scimag_id',    f.scimag_id,
+                'openacess_id', f.openacess_id,
+                'best_oa_url',  f.best_oa_url,
+                'pages',        f.pages,
+                'language',     f.language,
+                'version',      f.version,
+                'verification', f.verification_status,
+                'downloads',    f.download_count
             )),
             COALESCE(SUM(f.download_count), 0)
         FROM files f
@@ -1274,7 +1321,7 @@ BEGIN
     SELECT venue_id, JSON_ARRAYAGG(JSON_OBJECT('id', subject_id, 'term', term, 'score', score))
     FROM (
         SELECT vs.venue_id, s.id AS subject_id, s.term, vs.score,
-               ROW_NUMBER() OVER(PARTITION BY vs.venue_id ORDER BY vs.score DESC) as rn
+               ROW_NUMBER() OVER (PARTITION BY vs.venue_id ORDER BY vs.score DESC) AS rn
         FROM venue_subjects vs
         JOIN subjects s ON vs.subject_id = s.id
     ) ranked
@@ -1287,13 +1334,32 @@ BEGIN
         venue_id, publisher_id, name_search, abbrev_search, publisher_search,
         venue_type, country_code, issn, eissn, scopus_id, open_access_status,
         total_publications_count, total_cited_by_count, coverage_start_year, coverage_end_year,
-        global_ranking_score, impact_factor, citescore, h_index, top_subjects_json
+        global_ranking_score, score_breakdown_json,
+        impact_factor, citescore, sjr, snip, h_index, i10_index, two_yr_mean_citedness,
+        is_in_doaj, is_in_scielo, is_indexed_in_scopus, homepage_url,
+        validation_status, top_subjects_json
     )
-    SELECT 
+    SELECT
         v.id, v.publisher_id, v.name, v.abbreviated_name, o.name,
         v.type, v.country_code, v.issn, v.eissn, v.scopus_id, v.open_access,
         v.works_count, v.cited_by_count, v.coverage_start_year, v.coverage_end_year,
-        v.total_score, v.impact_factor, v.citescore, v.h_index, tvs.top_subjects_json
+        v.total_score,
+        JSON_OBJECT(
+            'total',       v.total_score,
+            'subject',     v.subject_score,
+            'snip',        v.snip_score,
+            'oa',          v.oa_score,
+            'authorship',  v.authorship_score,
+            'affiliation', v.affiliation_score,
+            'citation',    v.citation_score,
+            'llm',         v.llm_score,
+            'llm_relevance',     v.llm_relevance,
+            'llm_justification', v.llm_justification
+        ),
+        v.impact_factor, v.citescore, v.sjr, v.snip,
+        v.h_index, v.i10_index, v.`2yr_mean_citedness`,
+        v.is_in_doaj, v.is_in_scielo, v.is_indexed_in_scopus, v.homepage_url,
+        v.validation_status, tvs.top_subjects_json
     FROM venues v
     LEFT JOIN organizations o ON v.publisher_id = o.id
     LEFT JOIN tmp_venue_subjects tvs ON v.id = tvs.venue_id;
@@ -2589,11 +2655,20 @@ BEGIN
            JOIN subjects s ON s.id = ws.subject_id
            WHERE ws.work_id = w.id),
         (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-                  'id', f.id,
-                  'format', f.file_format,
-                  'size', f.file_size,
-                  'role', f.file_role,
-                  'md5', f.md5
+                  'id',           f.id,
+                  'format',       f.file_format,
+                  'size',         f.file_size,
+                  'role',         f.file_role,
+                  'md5',          f.md5,
+                  'libgen_id',    f.libgen_id,
+                  'scimag_id',    f.scimag_id,
+                  'openacess_id', f.openacess_id,
+                  'best_oa_url',  f.best_oa_url,
+                  'pages',        f.pages,
+                  'language',     f.language,
+                  'version',      f.version,
+                  'verification', f.verification_status,
+                  'downloads',    f.download_count
                 ))
            FROM files f
            WHERE f.publication_id = pub.id)

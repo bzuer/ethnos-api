@@ -14,21 +14,57 @@
 -- columns/JSON fields from `summary_publications`, `summary_venues`, and
 -- `summary_persons` via plain `SELECT`.
 --
--- Live-state baseline at filing time (informational, do not run as part of
--- the change set):
+-- STATUS as of 2026-04-14 (applied by operator):
+--
+--   Mudança 1 (files_json enrichment) ............. ✅ APPLIED + rebuilt
+--     summary_publications.files_json now carries libgen_id / scimag_id /
+--     openacess_id / best_oa_url / version / verification / downloads /
+--     pages / language on every row. Consumer side wired in
+--     src/dto/publication.dto.js::mapFiles.
+--
+--   Mudança 2 (venue score breakdown) ............. ✅ APPLIED + rebuilt
+--     summary_venues rebuilt with score_breakdown_json populated for all
+--     30 350 rows, plus sjr / snip / i10_index / two_yr_mean_citedness /
+--     is_in_doaj / is_in_scielo / is_indexed_in_scopus / homepage_url.
+--     Consumer side wired in src/dto/venue.dto.js::buildScoreBreakdown
+--     and src/services/venues.service.js (base query extended).
+--
+--   Mudança 3 (signature text in persons) ......... ✅ APPLIED + rebuilt
+--     summary_persons rebuilt with signature_text / family_name /
+--     given_names / normalized_name denormalised on 4 466 008 rows.
+--     Current consumer path already JOINs the base `signatures` table
+--     (src/services/persons.service.js); future endpoints that read
+--     summary_persons directly can now skip the JOIN.
+--
+--   Mudança 4 (identifiers_json + bibliographic columns) ... ⚠️ COLUMNS
+--     ONLY. The ALTER TABLE landed, but sp_build_summary_publications /
+--     sp_refresh_summary_publications_for_work still project only the
+--     Mudança-1 columns — the prose description of the Mudança-4 patch
+--     was not transcribed into the procedure bodies. The new columns
+--     (publication_date, volume, issue, pages_text, source, license_url,
+--     license_version, identifiers_json) exist on the table but are all
+--     NULL. See the follow-up section "Request 1 (follow-up)" below for
+--     the full procedure body that includes the Mudança-4 projection.
+--
+--   Mudança 5 (has_scimag_file / has_libgen_file flags) .... ⚠️ COLUMNS
+--     ONLY. Same situation as Mudança 4. The new columns exist but are
+--     all zero because the tmp_batch_files aggregate was not extended.
+--     The follow-up section below folds the Mudança-5 projection into
+--     the same procedure body as Mudança 4.
+--
+-- Live-state baseline at filing time (informational):
 --
 --   summary_publications: 6 567 062 rows
---   summary_venues:          26 437 rows (≈ all 30 350 venues)
+--   summary_venues:          30 350 rows (all)
 --   summary_persons:      4 466 053 rows
 --   files: 3 419 557 with scimag_id, 1 396 317 with best_oa_url,
 --          19 925 with libgen_id  (out of ≈ 4.5 M files total)
 --   persons: 4 466 008 / 4 466 053 carry a signature_id (≈ 100 %)
 --   signatures: 2 883 785 distinct → ≈ 1.55 persons/signature avg
 --
--- The five changes below are independent and may be applied in any order;
--- each one is wrapped in its own DROP/ALTER + CREATE PROCEDURE block. After
--- all of them are applied, run `CALL sp_orchestrate_all_summaries(50000)` so
--- every row picks up the new fields.
+-- The five changes below were independent and applied in any order. The
+-- follow-up section at the bottom of this file closes the gap left by
+-- Mudanças 4 and 5 (ALTER TABLEs landed, procedure bodies did not).
 -- ============================================================================
 
 
@@ -759,3 +795,324 @@ ALTER TABLE summary_publications
 -- the existing summary contracts. The Ethnos_API project will adopt the
 -- new fields in a follow-up commit (DTO + Sphinx attr extension) once the
 -- change set has landed in production.
+
+
+-- ============================================================================
+-- --- Request 1 (follow-up) — Complete Mudanças 4 + 5 in the build procs ---
+-- ============================================================================
+--
+-- Status at filing: ⚠️ PENDING. Mudanças 4 and 5 in the first pass landed
+-- only at the ALTER TABLE level. The build proc and the incremental refresh
+-- proc were not updated, so the new columns
+-- (publication_date, volume, issue, pages_text, source, license_url,
+-- license_version, identifiers_json, has_scimag_file, has_libgen_file) are
+-- present on the table but all NULL / 0.
+--
+-- This block supersedes the prose-only patch notes from Mudanças 4 and 5 by
+-- rewriting the two procedures completely, folding in:
+--
+--   - every field already populated by the current bodies (Mudança 1
+--     files_json shape stays as-is);
+--   - the eight bibliographic / identifier fields from Mudança 4;
+--   - the two file-source flags from Mudança 5.
+--
+-- After applying this block, run `CALL sp_build_summary_publications(50000)`
+-- to rebuild summary_publications so the new columns populate on every row.
+-- The incremental refresh path (`sp_refresh_summary_publications_for_work`)
+-- is ALSO patched here so mutations after the rebuild remain consistent.
+--
+-- Rollback: re-create both procedures from
+-- `git show cedf334:database/data.schema.sql` (the snapshot taken after
+-- Mudanças 1 + 2 + 3 landed and before this follow-up).
+
+DROP PROCEDURE IF EXISTS sp_build_summary_publications;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_build_summary_publications(IN p_batch_size INT)
+BEGIN
+    DECLARE v_min_id INT;
+    DECLARE v_max_id INT;
+    DECLARE v_current_id INT;
+
+    IF p_batch_size IS NULL OR p_batch_size <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'p_batch_size must be a positive integer';
+    END IF;
+
+    SET SESSION group_concat_max_len = 1000000;
+
+    SELECT MIN(id), MAX(id) INTO v_min_id, v_max_id FROM works;
+    SET v_current_id = COALESCE(v_min_id, 0);
+
+    TRUNCATE TABLE summary_publications;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_authors;
+    CREATE TEMPORARY TABLE tmp_batch_authors (
+        work_id INT PRIMARY KEY,
+        authors_search MEDIUMTEXT,
+        authors_json LONGTEXT
+    ) ENGINE=InnoDB;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_subjects;
+    CREATE TEMPORARY TABLE tmp_batch_subjects (
+        work_id INT PRIMARY KEY,
+        subjects_search MEDIUMTEXT,
+        subjects_json LONGTEXT
+    ) ENGINE=InnoDB;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_files;
+    CREATE TEMPORARY TABLE tmp_batch_files (
+        publication_id INT PRIMARY KEY,
+        files_json LONGTEXT,
+        publication_download_count INT,
+        has_scimag_file TINYINT(1),
+        has_libgen_file TINYINT(1)
+    ) ENGINE=InnoDB;
+
+    WHILE v_current_id <= v_max_id DO
+
+        TRUNCATE TABLE tmp_batch_authors;
+        TRUNCATE TABLE tmp_batch_subjects;
+        TRUNCATE TABLE tmp_batch_files;
+
+        START TRANSACTION;
+
+        INSERT INTO tmp_batch_authors (work_id, authors_search, authors_json)
+        SELECT
+            a.work_id,
+            GROUP_CONCAT(p.preferred_name SEPARATOR ' '),
+            JSON_ARRAYAGG(JSON_OBJECT('id', p.id, 'name', p.preferred_name, 'role', a.role))
+        FROM authorships a
+        JOIN persons p ON a.person_id = p.id
+        WHERE a.work_id >= v_current_id AND a.work_id < v_current_id + p_batch_size
+        GROUP BY a.work_id;
+
+        INSERT INTO tmp_batch_subjects (work_id, subjects_search, subjects_json)
+        SELECT
+            ws.work_id,
+            GROUP_CONCAT(s.term SEPARATOR ' '),
+            JSON_ARRAYAGG(JSON_OBJECT('id', s.id, 'term', s.term))
+        FROM work_subjects ws
+        JOIN subjects s ON ws.subject_id = s.id
+        WHERE ws.work_id >= v_current_id AND ws.work_id < v_current_id + p_batch_size
+        GROUP BY ws.work_id;
+
+        INSERT INTO tmp_batch_files (
+            publication_id, files_json, publication_download_count,
+            has_scimag_file, has_libgen_file
+        )
+        SELECT
+            f.publication_id,
+            JSON_ARRAYAGG(JSON_OBJECT(
+                'id',           f.id,
+                'format',       f.file_format,
+                'size',         f.file_size,
+                'role',         f.file_role,
+                'md5',          f.md5,
+                'libgen_id',    f.libgen_id,
+                'scimag_id',    f.scimag_id,
+                'openacess_id', f.openacess_id,
+                'best_oa_url',  f.best_oa_url,
+                'pages',        f.pages,
+                'language',     f.language,
+                'version',      f.version,
+                'verification', f.verification_status,
+                'downloads',    f.download_count
+            )),
+            COALESCE(SUM(f.download_count), 0),
+            MAX(CASE WHEN f.scimag_id IS NOT NULL THEN 1 ELSE 0 END),
+            MAX(CASE WHEN f.libgen_id IS NOT NULL THEN 1 ELSE 0 END)
+        FROM files f
+        JOIN publications pub ON pub.id = f.publication_id
+        WHERE pub.work_id >= v_current_id AND pub.work_id < v_current_id + p_batch_size
+        GROUP BY f.publication_id;
+
+        INSERT INTO summary_publications (
+            publication_id, work_id, venue_id, publisher_id,
+            title_search, abstract_search, authors_search, venue_search, subjects_search,
+            doi, work_type, publication_year,
+            publication_date, volume, issue, pages_text, source,
+            license_url, license_version,
+            language, open_access, peer_reviewed,
+            has_files, has_scimag_file, has_libgen_file,
+            work_citation_count, work_reference_count, publication_download_count,
+            authors_json, subjects_json, files_json, identifiers_json
+        )
+        SELECT
+            pub.id, w.id, pub.venue_id, pub.publisher_id,
+            w.title, w.abstract, tpa.authors_search, v.name, tps.subjects_search,
+            pub.doi, w.work_type, pub.year,
+            pub.publication_date, pub.volume, pub.issue, pub.pages, pub.source,
+            pub.license_url, pub.license_version,
+            w.language, pub.open_access, pub.peer_reviewed,
+            CASE WHEN tpf.publication_id IS NULL THEN 0 ELSE 1 END,
+            COALESCE(tpf.has_scimag_file, 0),
+            COALESCE(tpf.has_libgen_file, 0),
+            w.citation_count, w.reference_count,
+            COALESCE(tpf.publication_download_count, 0),
+            tpa.authors_json, tps.subjects_json, tpf.files_json,
+            JSON_OBJECT(
+                'pmid',           pub.pmid,
+                'pmcid',          pub.pmcid,
+                'arxiv',          pub.arxiv,
+                'wos_id',         pub.wos_id,
+                'handle',         pub.handle,
+                'scielo_pid',     pub.scielo_pid,
+                'isbn',           pub.isbn,
+                'wikidata_id',    pub.wikidata_id,
+                'openalex_id',    pub.openalex_id,
+                'mag_id',         pub.mag_id,
+                'openlibrary_id', pub.openlibrary_id,
+                'google_book_id', pub.google_book_id
+            )
+        FROM works w
+        JOIN publications pub ON pub.work_id = w.id
+        LEFT JOIN venues v ON pub.venue_id = v.id
+        LEFT JOIN tmp_batch_authors tpa ON w.id = tpa.work_id
+        LEFT JOIN tmp_batch_subjects tps ON w.id = tps.work_id
+        LEFT JOIN tmp_batch_files tpf ON pub.id = tpf.publication_id
+        WHERE w.id >= v_current_id AND w.id < v_current_id + p_batch_size;
+
+        COMMIT;
+
+        SET v_current_id = v_current_id + p_batch_size;
+    END WHILE;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_authors;
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_subjects;
+    DROP TEMPORARY TABLE IF EXISTS tmp_batch_files;
+END$$
+
+DELIMITER ;
+
+
+DROP PROCEDURE IF EXISTS sp_refresh_summary_publications_for_work;
+
+DELIMITER $$
+
+CREATE PROCEDURE sp_refresh_summary_publications_for_work(IN p_work_id INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    IF p_work_id IS NULL OR p_work_id <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'p_work_id must be a positive integer';
+    END IF;
+
+    SET SESSION group_concat_max_len = 1000000;
+
+    START TRANSACTION;
+
+    DELETE FROM summary_publications WHERE work_id = p_work_id;
+
+    INSERT INTO summary_publications (
+        publication_id, work_id, venue_id, publisher_id,
+        title_search, abstract_search, authors_search, venue_search, subjects_search,
+        doi, work_type, publication_year,
+        publication_date, volume, issue, pages_text, source,
+        license_url, license_version,
+        language, open_access, peer_reviewed,
+        has_files, has_scimag_file, has_libgen_file,
+        work_citation_count, work_reference_count, publication_download_count,
+        authors_json, subjects_json, files_json, identifiers_json
+    )
+    SELECT
+        pub.id,
+        w.id,
+        pub.venue_id,
+        pub.publisher_id,
+        w.title,
+        w.abstract,
+        (SELECT GROUP_CONCAT(p.preferred_name SEPARATOR ' ')
+           FROM authorships a
+           JOIN persons p ON p.id = a.person_id
+           WHERE a.work_id = w.id),
+        v.name,
+        (SELECT GROUP_CONCAT(s.term SEPARATOR ' ')
+           FROM work_subjects ws
+           JOIN subjects s ON s.id = ws.subject_id
+           WHERE ws.work_id = w.id),
+        pub.doi,
+        w.work_type,
+        pub.year,
+        pub.publication_date,
+        pub.volume,
+        pub.issue,
+        pub.pages,
+        pub.source,
+        pub.license_url,
+        pub.license_version,
+        w.language,
+        pub.open_access,
+        pub.peer_reviewed,
+        (SELECT COUNT(*) > 0 FROM files WHERE publication_id = pub.id),
+        (SELECT COALESCE(MAX(CASE WHEN scimag_id IS NOT NULL THEN 1 ELSE 0 END), 0)
+           FROM files WHERE publication_id = pub.id),
+        (SELECT COALESCE(MAX(CASE WHEN libgen_id IS NOT NULL THEN 1 ELSE 0 END), 0)
+           FROM files WHERE publication_id = pub.id),
+        w.citation_count,
+        w.reference_count,
+        (SELECT COALESCE(SUM(download_count), 0) FROM files WHERE publication_id = pub.id),
+        (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', p.id, 'name', p.preferred_name, 'role', a.role))
+           FROM authorships a
+           JOIN persons p ON p.id = a.person_id
+           WHERE a.work_id = w.id),
+        (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', s.id, 'term', s.term))
+           FROM work_subjects ws
+           JOIN subjects s ON s.id = ws.subject_id
+           WHERE ws.work_id = w.id),
+        (SELECT JSON_ARRAYAGG(JSON_OBJECT(
+                  'id',           f.id,
+                  'format',       f.file_format,
+                  'size',         f.file_size,
+                  'role',         f.file_role,
+                  'md5',          f.md5,
+                  'libgen_id',    f.libgen_id,
+                  'scimag_id',    f.scimag_id,
+                  'openacess_id', f.openacess_id,
+                  'best_oa_url',  f.best_oa_url,
+                  'pages',        f.pages,
+                  'language',     f.language,
+                  'version',      f.version,
+                  'verification', f.verification_status,
+                  'downloads',    f.download_count
+                ))
+           FROM files f
+           WHERE f.publication_id = pub.id),
+        JSON_OBJECT(
+            'pmid',           pub.pmid,
+            'pmcid',          pub.pmcid,
+            'arxiv',          pub.arxiv,
+            'wos_id',         pub.wos_id,
+            'handle',         pub.handle,
+            'scielo_pid',     pub.scielo_pid,
+            'isbn',           pub.isbn,
+            'wikidata_id',    pub.wikidata_id,
+            'openalex_id',    pub.openalex_id,
+            'mag_id',         pub.mag_id,
+            'openlibrary_id', pub.openlibrary_id,
+            'google_book_id', pub.google_book_id
+        )
+    FROM works w
+    JOIN publications pub ON pub.work_id = w.id
+    LEFT JOIN venues v ON v.id = pub.venue_id
+    WHERE w.id = p_work_id;
+
+    COMMIT;
+END$$
+
+DELIMITER ;
+
+
+-- Verification after the follow-up rebuild:
+--
+--   SELECT
+--     SUM(has_scimag_file) AS ws,
+--     SUM(has_libgen_file) AS wl,
+--     SUM(CASE WHEN identifiers_json IS NOT NULL THEN 1 ELSE 0 END) AS wi,
+--     SUM(CASE WHEN volume IS NOT NULL THEN 1 ELSE 0 END) AS wv
+--   FROM summary_publications;
+--   -- Expected: ws ≈ 3.4 M, wl ≈ 20 k, wi ≈ 6.57 M, wv > 0
