@@ -4,7 +4,7 @@ const SphinxService = require('./sphinx.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
-const { authorsFromJson, subjectsFromJson: baseSubjectsFromJson } = require('../dto/helpers');
+const { authorsFromJson, subjectsFromJson: baseSubjectsFromJson, parseJsonColumn } = require('../dto/helpers');
 const { formatPublicationEntry } = require('../dto/publication.dto');
 const { withTimeout } = require('../utils/db');
 
@@ -786,11 +786,19 @@ class WorksService {
       openalex_id: new Set(),
       mag_id: new Set(),
       isbn: new Set(),
-      openlibrary_id: new Set()
+      openlibrary_id: new Set(),
+      scielo_pid: new Set(),
+      google_book_id: new Set()
     };
     for (const row of cappedPublicationRows) {
+      if (row.doi && String(row.doi).trim()) {
+        identifiersAgg.doi.add(String(row.doi).trim());
+      }
+      const parsedIds = parseJsonColumn(row.identifiers_json);
+      const idsSource = parsedIds && typeof parsedIds === 'object' ? parsedIds : {};
       for (const key of Object.keys(identifiersAgg)) {
-        const val = row[key];
+        if (key === 'doi') continue;
+        const val = idsSource[key];
         if (val && String(val).trim()) identifiersAgg[key].add(String(val).trim());
       }
     }
