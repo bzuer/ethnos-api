@@ -1,4 +1,4 @@
-# Ethnos API - Release v1.0.0
+# Ethnos API - Release v1.9.0
 
 **Release Date:** 2026-04-14
 **API Version:** 2.0.0
