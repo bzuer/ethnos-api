@@ -1140,10 +1140,6 @@ BEGIN
     DECLARE v_max_id INT;
     DECLARE v_current_id INT;
 
-    IF p_batch_size IS NULL OR p_batch_size <= 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'p_batch_size must be a positive integer';
-    END IF;
-
     SET SESSION group_concat_max_len = 1000000;
 
     SELECT MIN(id), MAX(id) INTO v_min_id, v_max_id FROM works;
@@ -1165,18 +1161,10 @@ BEGIN
         subjects_json LONGTEXT
     ) ENGINE=InnoDB;
 
-    DROP TEMPORARY TABLE IF EXISTS tmp_batch_files;
-    CREATE TEMPORARY TABLE tmp_batch_files (
-        publication_id INT PRIMARY KEY,
-        files_json LONGTEXT,
-        publication_download_count INT
-    ) ENGINE=InnoDB;
-
     WHILE v_current_id <= v_max_id DO
 
         TRUNCATE TABLE tmp_batch_authors;
         TRUNCATE TABLE tmp_batch_subjects;
-        TRUNCATE TABLE tmp_batch_files;
 
         START TRANSACTION;
 
@@ -1200,43 +1188,24 @@ BEGIN
         WHERE ws.work_id >= v_current_id AND ws.work_id < v_current_id + p_batch_size
         GROUP BY ws.work_id;
 
-        INSERT INTO tmp_batch_files (publication_id, files_json, publication_download_count)
-        SELECT
-            f.publication_id,
-            JSON_ARRAYAGG(JSON_OBJECT(
-                'id', f.id,
-                'format', f.file_format,
-                'size', f.file_size,
-                'role', f.file_role,
-                'md5', f.md5
-            )),
-            COALESCE(SUM(f.download_count), 0)
-        FROM files f
-        JOIN publications pub ON pub.id = f.publication_id
-        WHERE pub.work_id >= v_current_id AND pub.work_id < v_current_id + p_batch_size
-        GROUP BY f.publication_id;
-
         INSERT INTO summary_publications (
             publication_id, work_id, venue_id, publisher_id,
             title_search, abstract_search, authors_search, venue_search, subjects_search,
             doi, work_type, publication_year, language, open_access, peer_reviewed,
-            has_files, work_citation_count, work_reference_count, publication_download_count,
-            authors_json, subjects_json, files_json
+            work_citation_count, work_reference_count,
+            authors_json, subjects_json
         )
         SELECT
             pub.id, w.id, pub.venue_id, pub.publisher_id,
             w.title, w.abstract, tpa.authors_search, v.name, tps.subjects_search,
             pub.doi, w.work_type, pub.year, w.language, pub.open_access, pub.peer_reviewed,
-            CASE WHEN tpf.publication_id IS NULL THEN 0 ELSE 1 END,
             w.citation_count, w.reference_count,
-            COALESCE(tpf.publication_download_count, 0),
-            tpa.authors_json, tps.subjects_json, tpf.files_json
+            tpa.authors_json, tps.subjects_json
         FROM works w
         JOIN publications pub ON pub.work_id = w.id
         LEFT JOIN venues v ON pub.venue_id = v.id
         LEFT JOIN tmp_batch_authors tpa ON w.id = tpa.work_id
         LEFT JOIN tmp_batch_subjects tps ON w.id = tps.work_id
-        LEFT JOIN tmp_batch_files tpf ON pub.id = tpf.publication_id
         WHERE w.id >= v_current_id AND w.id < v_current_id + p_batch_size;
 
         COMMIT;
@@ -1246,7 +1215,6 @@ BEGIN
 
     DROP TEMPORARY TABLE IF EXISTS tmp_batch_authors;
     DROP TEMPORARY TABLE IF EXISTS tmp_batch_subjects;
-    DROP TEMPORARY TABLE IF EXISTS tmp_batch_files;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -2516,96 +2484,6 @@ BEGIN
     SET p.signature_id = s.id;
 
     DROP TEMPORARY TABLE tmp_signatures;
-END ;;
-DELIMITER ;
-/*!50003 SET sql_mode              = @saved_sql_mode */ ;
-/*!50003 SET character_set_client  = @saved_cs_client */ ;
-/*!50003 SET character_set_results = @saved_cs_results */ ;
-/*!50003 SET collation_connection  = @saved_col_connection */ ;
-/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
-/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
-/*!50003 DROP PROCEDURE IF EXISTS `sp_refresh_summary_publications_for_work` */;
-/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
-/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
-/*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb4 */ ;
-/*!50003 SET character_set_results = utf8mb4 */ ;
-/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
-DELIMITER ;;
-CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_refresh_summary_publications_for_work`(IN p_work_id INT)
-BEGIN
-    DECLARE EXIT HANDLER FOR SQLEXCEPTION
-    BEGIN
-        ROLLBACK;
-        RESIGNAL;
-    END;
-
-    IF p_work_id IS NULL OR p_work_id <= 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'p_work_id must be a positive integer';
-    END IF;
-
-    SET SESSION group_concat_max_len = 1000000;
-
-    START TRANSACTION;
-
-    DELETE FROM summary_publications WHERE work_id = p_work_id;
-
-    INSERT INTO summary_publications (
-        publication_id, work_id, venue_id, publisher_id,
-        title_search, abstract_search, authors_search, venue_search, subjects_search,
-        doi, work_type, publication_year, language, open_access, peer_reviewed,
-        has_files, work_citation_count, work_reference_count, publication_download_count,
-        authors_json, subjects_json, files_json
-    )
-    SELECT
-        pub.id,
-        w.id,
-        pub.venue_id,
-        pub.publisher_id,
-        w.title,
-        w.abstract,
-        (SELECT GROUP_CONCAT(p.preferred_name SEPARATOR ' ')
-           FROM authorships a
-           JOIN persons p ON p.id = a.person_id
-           WHERE a.work_id = w.id),
-        v.name,
-        (SELECT GROUP_CONCAT(s.term SEPARATOR ' ')
-           FROM work_subjects ws
-           JOIN subjects s ON s.id = ws.subject_id
-           WHERE ws.work_id = w.id),
-        pub.doi,
-        w.work_type,
-        pub.year,
-        w.language,
-        pub.open_access,
-        pub.peer_reviewed,
-        (SELECT COUNT(*) > 0 FROM files WHERE publication_id = pub.id),
-        w.citation_count,
-        w.reference_count,
-        (SELECT COALESCE(SUM(download_count), 0) FROM files WHERE publication_id = pub.id),
-        (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', p.id, 'name', p.preferred_name, 'role', a.role))
-           FROM authorships a
-           JOIN persons p ON p.id = a.person_id
-           WHERE a.work_id = w.id),
-        (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', s.id, 'term', s.term))
-           FROM work_subjects ws
-           JOIN subjects s ON s.id = ws.subject_id
-           WHERE ws.work_id = w.id),
-        (SELECT JSON_ARRAYAGG(JSON_OBJECT(
-                  'id', f.id,
-                  'format', f.file_format,
-                  'size', f.file_size,
-                  'role', f.file_role,
-                  'md5', f.md5
-                ))
-           FROM files f
-           WHERE f.publication_id = pub.id)
-    FROM works w
-    JOIN publications pub ON pub.work_id = w.id
-    LEFT JOIN venues v ON v.id = pub.venue_id
-    WHERE w.id = p_work_id;
-
-    COMMIT;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;

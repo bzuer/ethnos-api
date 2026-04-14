@@ -3,6 +3,7 @@
 Academic bibliographic system API built with Node.js/Express, backed by MariaDB and Sphinx full-text search.
 
 ## Database
+- **Strict consumer-only**: this project NEVER creates, executes, or alters database procedures, events, triggers, indexes, table structures, or row data. It only issues read-side `SELECT` / `EXISTS` queries against the schema the database provides. Any structural change (DDL, `CREATE`/`ALTER`/`DROP PROCEDURE`/`EVENT`/`TRIGGER`/`TABLE`/`INDEX`, `INSERT`/`UPDATE`/`DELETE`, `CALL`, `TRUNCATE`) must be **requested from the user** and applied via a separate operations pipeline. Read-only utilities (`mariadb-dump --no-data`, `SELECT … FROM information_schema.*`, baseline asserts) are allowed.
 - Database name: `data`. Direct access: `mariadb data` or `mariadb data -e "..."`.
 - 23 base tables, 0 views, 36 stored procedures, 1 function, 5 triggers.
 - Schema files:
@@ -13,8 +14,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
   - `summary_publications` — one row per publication, joined to `works`/`publications` by PK. Carries text corpus (`title_search`, `abstract_search`, `authors_search`, `venue_search`, `subjects_search`), unique key `uq_summary_pubs_doi`, fulltext indexes `ft_summary_pubs_content` and `ft_summary_pubs_metadata`, and embedded JSON columns `authors_json`, `subjects_json`, `files_json`.
   - `summary_venues` — one row per venue with text corpus (`name_search`, `abbrev_search`, `publisher_search`), fulltext `ft_summary_venues_text`, and embedded `top_subjects_json`, `top_publications_json`.
   - `summary_persons` — one row per person with text corpus (`preferred_name_search`, `name_variations_search`, `affiliations_search`), fulltext `ft_summary_persons_text`, and embedded `current_affiliations_json`, `top_collaborators_json`, `research_subjects_json`.
-- Summary builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches. The `publications` build also populates `has_files`, `files_json` and `publication_download_count` via a per-batch `tmp_batch_files` temp table.
-- Incremental refresh: `sp_refresh_summary_publications_for_work(work_id)` deletes and re-inserts the `summary_publications` rows for one work, including the file-related columns. Called by `realTimeIndexing.service.js` after every publication mutation; safe to invoke ad-hoc.
+- Summary builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches.
 - Legacy artefacts explicitly absent (do not reintroduce): `sphinx_works_summary`, `sphinx_venues_summary`, `sphinx_persons_summary`, `work_author_summary`, `work_subjects_summary`, `sphinx_queue`, `processing_log`, `person_match_log`, `staging_*`, `temp_*`, and the four dormant `v_*` views.
 
 ## Project Structure
