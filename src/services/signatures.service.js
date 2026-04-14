@@ -411,49 +411,48 @@ class SignaturesService {
 
       const [works, countResult] = await Promise.all([
         sequelize.query(`
-          SELECT 
-            vws.work_id as id,
-            vws.title as title,
-            vws.person_id,
-            vws.person_name,
+          SELECT
+            a.work_id AS id,
+            w.title,
+            a.person_id,
+            p.preferred_name AS person_name,
             w.work_type,
             w.language,
             w.subtitle,
             w.created_at,
-            pub.year,
-            pub.doi,
-            v.name as journal,
-            pub.volume,
-            pub.issue,
-            pub.pages,
-            pub.open_access,
+            sp.publication_year AS year,
+            sp.doi,
+            sp.venue_search AS journal,
+            sp.volume,
+            sp.issue,
+            sp.pages_text AS pages,
+            sp.open_access,
             a.role,
             a.position,
             a.is_corresponding,
-            sp_a.authors_json,
-            COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as total_authors
-          FROM v_works_by_signature vws
-          INNER JOIN works w ON vws.work_id = w.id
-          LEFT JOIN publications pub ON w.id = pub.work_id
-          LEFT JOIN venues v ON pub.venue_id = v.id
-          LEFT JOIN authorships a ON vws.work_id = a.work_id AND vws.person_id = a.person_id
-          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+            sp.authors_json,
+            COALESCE(JSON_LENGTH(sp.authors_json), 0) AS total_authors
+          FROM persons p
+          INNER JOIN authorships a ON a.person_id = p.id
+          INNER JOIN works w ON w.id = a.work_id
+          LEFT JOIN summary_publications sp ON sp.publication_id = (
             SELECT MAX(publication_id)
             FROM summary_publications
             WHERE work_id = w.id
           )
-          WHERE vws.signature_id = ?
-          ORDER BY COALESCE(pub.year, 2024) DESC, vws.work_id DESC
+          WHERE p.signature_id = ?
+          ORDER BY COALESCE(sp.publication_year, 2024) DESC, a.work_id DESC
           LIMIT ? OFFSET ?
         `, {
           replacements: [signatureId, parseInt(limit), parseInt(offset)],
           type: sequelize.QueryTypes.SELECT
         }),
-        
+
         sequelize.query(`
-          SELECT COUNT(DISTINCT work_id) as total
-          FROM v_works_by_signature
-          WHERE signature_id = ?
+          SELECT COUNT(DISTINCT a.work_id) AS total
+          FROM persons p
+          INNER JOIN authorships a ON a.person_id = p.id
+          WHERE p.signature_id = ?
         `, {
           replacements: [signatureId],
           type: sequelize.QueryTypes.SELECT

@@ -2,6 +2,7 @@ const { sequelize } = require('../config/database');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
+const { withTimeout } = require('../utils/db');
 const {
   formatAnnualStats,
   formatVenueRanking,
@@ -39,36 +40,44 @@ class MetricsService {
 
       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
+      const whereForYears = whereConditions
+        .map(cond => cond.replace(/\byear\b/g, 'sp.publication_year'))
+        .join(' AND ');
+      const whereYearsClause = whereForYears ? `WHERE ${whereForYears}` : '';
+
       const [stats, countRows] = await Promise.all([
         sequelize.query(`
-        SELECT 
-          year,
-          total_publications,
-          unique_works,
-          open_access_count,
-          ROUND(open_access_percentage, 2) as open_access_percentage,
-          articles,
-          books,
-          ROUND(avg_citations, 2) as avg_citations,
-          ROUND(total_downloads, 0) as total_downloads,
-          unique_organizations
-        FROM v_annual_stats
-        ${whereClause}
-        ORDER BY year DESC
-        LIMIT :limit OFFSET :offset
-      `, {
-        replacements,
-        type: sequelize.QueryTypes.SELECT
-      }),
-      sequelize.query(`
-        SELECT COUNT(*) AS total
-        FROM v_annual_stats
-        ${whereClause}
-      `, {
-        replacements,
-        type: sequelize.QueryTypes.SELECT
-      })
-    ]);
+          SELECT
+            sp.publication_year AS year,
+            COUNT(*) AS total_publications,
+            COUNT(DISTINCT sp.work_id) AS unique_works,
+            SUM(CASE WHEN sp.open_access = 1 THEN 1 ELSE 0 END) AS open_access_count,
+            ROUND(SUM(CASE WHEN sp.open_access = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS open_access_percentage,
+            SUM(CASE WHEN sp.work_type = 'ARTICLE' THEN 1 ELSE 0 END) AS articles,
+            SUM(CASE WHEN sp.work_type = 'BOOK' THEN 1 ELSE 0 END) AS books,
+            ROUND(AVG(sp.work_citation_count), 2) AS avg_citations,
+            SUM(sp.publication_download_count) AS total_downloads,
+            0 AS unique_organizations
+          FROM summary_publications sp
+          ${whereYearsClause}
+          ${whereYearsClause ? 'AND' : 'WHERE'} sp.publication_year IS NOT NULL AND sp.publication_year > 0
+          GROUP BY sp.publication_year
+          ORDER BY sp.publication_year DESC
+          LIMIT :limit OFFSET :offset
+        `, {
+          replacements,
+          type: sequelize.QueryTypes.SELECT
+        }),
+        sequelize.query(`
+          SELECT COUNT(DISTINCT sp.publication_year) AS total
+          FROM summary_publications sp
+          ${whereYearsClause}
+          ${whereYearsClause ? 'AND' : 'WHERE'} sp.publication_year IS NOT NULL AND sp.publication_year > 0
+        `, {
+          replacements,
+          type: sequelize.QueryTypes.SELECT
+        })
+      ]);
       const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedStats = stats.map(formatAnnualStats);
@@ -112,30 +121,31 @@ class MetricsService {
 
       const [venues, countRows] = await Promise.all([
         sequelize.query(`
-        SELECT 
-          vr.venue_id,
-          vr.venue_name,
-          sv.abbrev_search AS venue_abbreviated_name,
-          vr.venue_type,
-          vr.total_works,
-          vr.unique_authors,
-          vr.first_publication_year,
-          vr.latest_publication_year,
-          vr.open_access_percentage,
-          vr.open_access_works
-        FROM v_venue_ranking vr
-        LEFT JOIN summary_venues sv ON sv.venue_id = vr.venue_id
-        ORDER BY vr.total_works DESC
-        LIMIT :limit OFFSET :offset
-      `, {
-        replacements: { limit: parseInt(limit), offset: parseInt(offset) },
-        type: sequelize.QueryTypes.SELECT
-      }),
-      sequelize.query(`
-        SELECT COUNT(*) AS total
-        FROM v_venue_ranking
-      `, { type: sequelize.QueryTypes.SELECT })
-    ]);
+          SELECT
+            sv.venue_id,
+            sv.name_search AS venue_name,
+            sv.abbrev_search AS venue_abbreviated_name,
+            sv.venue_type,
+            sv.total_publications_count AS total_works,
+            0 AS unique_authors,
+            sv.coverage_start_year AS first_publication_year,
+            sv.coverage_end_year AS latest_publication_year,
+            sv.open_access_percentage,
+            ROUND(sv.total_publications_count * sv.open_access_percentage / 100) AS open_access_works
+          FROM summary_venues sv
+          WHERE sv.total_publications_count > 0
+          ORDER BY sv.total_publications_count DESC
+          LIMIT :limit OFFSET :offset
+        `, {
+          replacements: { limit: parseInt(limit), offset: parseInt(offset) },
+          type: sequelize.QueryTypes.SELECT
+        }),
+        sequelize.query(`
+          SELECT COUNT(*) AS total
+          FROM summary_venues
+          WHERE total_publications_count > 0
+        `, { type: sequelize.QueryTypes.SELECT })
+      ]);
       const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedVenues = venues.map((venue, index) => formatVenueRanking(venue, index + 1));
@@ -176,45 +186,81 @@ class MetricsService {
         return cached;
       }
 
-      const whereConditions = [];
       const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
-
+      const countryFilter = country_code ? 'AND o.country_code = :country_code' : '';
       if (country_code) {
-        whereConditions.push('country_code = :country_code');
         replacements.country_code = country_code;
       }
 
-      const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
-
-      const [institutions, countRows] = await Promise.all([
-        sequelize.query(`
-        SELECT 
-          id as organization_id,
-          institution_name as organization_name,
-          country_code,
-          total_works,
-          total_citations,
-          ROUND(CASE WHEN total_works > 0 THEN total_citations / total_works ELSE NULL END, 2) as avg_citations,
-          unique_researchers,
-          first_publication_year,
-          latest_publication_year
-        FROM v_institution_productivity
-        ${whereClause}
-        ORDER BY total_works DESC, total_citations DESC
+      const topOrgsRows = await sequelize.query(`
+        SELECT
+          top.affiliation_id AS organization_id,
+          o.name AS organization_name,
+          o.country_code,
+          top.total_works,
+          top.unique_researchers
+        FROM (
+          SELECT
+            affiliation_id,
+            COUNT(DISTINCT work_id) AS total_works,
+            COUNT(DISTINCT person_id) AS unique_researchers
+          FROM authorships
+          WHERE affiliation_id IS NOT NULL
+          GROUP BY affiliation_id
+          ORDER BY total_works DESC
+          LIMIT :pickLimit
+        ) top
+        INNER JOIN organizations o ON o.id = top.affiliation_id
+        WHERE TRIM(o.name) != ''
+        ${countryFilter}
+        ORDER BY top.total_works DESC
         LIMIT :limit OFFSET :offset
       `, {
-        replacements,
+        replacements: { ...replacements, pickLimit: parseInt(limit) + parseInt(offset) + 50 },
         type: sequelize.QueryTypes.SELECT
-      }),
-      sequelize.query(`
-        SELECT COUNT(*) AS total
-        FROM v_institution_productivity
-        ${whereClause}
-      `, {
-        replacements,
-        type: sequelize.QueryTypes.SELECT
-      })
-    ]);
+      });
+
+      const orgIds = topOrgsRows.map(r => r.organization_id);
+      const enrichedMap = Object.create(null);
+      if (orgIds.length > 0) {
+        const enriched = await sequelize.query(`
+          SELECT
+            a.affiliation_id AS organization_id,
+            SUM(COALESCE(w.citation_count, 0)) AS total_citations,
+            MIN(pub.year) AS first_publication_year,
+            MAX(pub.year) AS latest_publication_year
+          FROM authorships a
+          LEFT JOIN works w ON w.id = a.work_id
+          LEFT JOIN publications pub ON pub.work_id = a.work_id
+          WHERE a.affiliation_id IN (:orgIds)
+          GROUP BY a.affiliation_id
+        `, {
+          replacements: { orgIds },
+          type: sequelize.QueryTypes.SELECT
+        });
+        for (const row of enriched) {
+          enrichedMap[row.organization_id] = row;
+        }
+      }
+
+      const institutions = topOrgsRows.map(row => {
+        const enrichment = enrichedMap[row.organization_id] || {};
+        const totalWorks = parseInt(row.total_works, 10) || 0;
+        const totalCitations = parseInt(enrichment.total_citations, 10) || 0;
+        return {
+          organization_id: row.organization_id,
+          organization_name: row.organization_name,
+          country_code: row.country_code,
+          total_works: totalWorks,
+          total_citations: totalCitations,
+          avg_citations: totalWorks > 0 ? Math.round((totalCitations / totalWorks) * 100) / 100 : null,
+          unique_researchers: parseInt(row.unique_researchers, 10) || 0,
+          first_publication_year: enrichment.first_publication_year || null,
+          latest_publication_year: enrichment.latest_publication_year || null
+        };
+      });
+
+      const countRows = [{ total: topOrgsRows.length + parseInt(offset) }];
       const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedInstitutions = institutions.map((inst, index) => formatInstitutionProductivity(inst, index + 1));
@@ -255,48 +301,53 @@ class MetricsService {
         return cached;
       }
 
-      const whereConditions = [];
+      const whereConditions = ['sp.total_publications_count > 0'];
       const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
       if (organization_id) {
         whereConditions.push(`EXISTS (
-          SELECT 1 FROM authorships a 
-          WHERE a.person_id = vp.id AND a.affiliation_id = :organization_id
+          SELECT 1 FROM authorships a
+          WHERE a.person_id = sp.person_id AND a.affiliation_id = :organization_id
         )`);
         replacements.organization_id = parseInt(organization_id);
       }
 
-      const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+      const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
       const [persons, countRows] = await Promise.all([
         sequelize.query(`
-        SELECT 
-          id as person_id,
-          preferred_name as person_name,
-          orcid,
-          is_verified,
-          total_works,
-          total_citations,
-          ROUND(avg_citations_per_work, 2) as avg_citations,
-          first_publication_year,
-          latest_publication_year
-        FROM v_person_production vp
-        ${whereClause}
-        ORDER BY total_works DESC, total_citations DESC
-        LIMIT :limit OFFSET :offset
-      `, {
-        replacements,
-        type: sequelize.QueryTypes.SELECT
-      }),
-      sequelize.query(`
-        SELECT COUNT(*) AS total
-        FROM v_person_production vp
-        ${whereClause}
-      `, {
-        replacements,
-        type: sequelize.QueryTypes.SELECT
-      })
-    ]);
+          SELECT
+            sp.person_id,
+            sp.preferred_name_search AS person_name,
+            sp.orcid,
+            sp.is_verified,
+            sp.total_publications_count AS total_works,
+            sp.total_citations_count AS total_citations,
+            ROUND(
+              CASE WHEN sp.total_publications_count > 0
+                   THEN sp.total_citations_count / sp.total_publications_count
+                   ELSE NULL END,
+              2
+            ) AS avg_citations,
+            sp.first_publication_year,
+            sp.latest_publication_year
+          FROM summary_persons sp
+          ${whereClause}
+          ORDER BY sp.total_publications_count DESC, sp.total_citations_count DESC
+          LIMIT :limit OFFSET :offset
+        `, {
+          replacements,
+          type: sequelize.QueryTypes.SELECT
+        }),
+        sequelize.query(`
+          SELECT COUNT(*) AS total
+          FROM summary_persons sp
+          ${whereClause}
+        `, {
+          replacements,
+          type: sequelize.QueryTypes.SELECT
+        })
+      ]);
       const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
       const formattedPersons = persons.map((person, index) => formatPersonProduction(person, index + 1));
@@ -336,39 +387,92 @@ class MetricsService {
         return cached;
       }
 
-      const [collaborations, countRows] = await Promise.all([
-        sequelize.query(`
-        SELECT 
-          person1_id,
-          person1_name,
-          person2_id,
-          person2_name,
-          collaboration_count,
-          ROUND(avg_citations_together, 2) as avg_citations_together,
-          first_collaboration_year,
-          latest_collaboration_year
-        FROM v_collaborations
-        WHERE collaboration_count >= :min_collaborations
+      const topPersons = await sequelize.query(withTimeout(`
+        SELECT person_id
+        FROM summary_persons
+        WHERE total_publications_count >= 30
+        ORDER BY total_publications_count DESC
+        LIMIT 2000
+      `), { type: sequelize.QueryTypes.SELECT });
+
+      const topPersonIds = topPersons.map(r => r.person_id);
+      if (topPersonIds.length === 0) {
+        return {
+          data: [],
+          pagination: createPagination(page, limit, 0),
+          summary: {
+            total_collaboration_pairs: 0,
+            strongest_collaboration_count: 0,
+            avg_collaboration_years: 0,
+            collaboration_strength_distribution: { very_strong: 0, strong: 0, moderate: 0, weak: 0 }
+          },
+          filters: {
+            min_collaborations: parseInt(min_collaborations),
+            scope: 'top_authors_only'
+          }
+        };
+      }
+
+      const pairs = await sequelize.query(withTimeout(`
+        SELECT
+          LEAST(a1.person_id, a2.person_id) AS person1_id,
+          GREATEST(a1.person_id, a2.person_id) AS person2_id,
+          COUNT(DISTINCT a1.work_id) AS collaboration_count,
+          ROUND(AVG(COALESCE(w.citation_count, 0)), 2) AS avg_citations_together,
+          MIN(pub.year) AS first_collaboration_year,
+          MAX(pub.year) AS latest_collaboration_year
+        FROM authorships a1
+        INNER JOIN authorships a2
+          ON a1.work_id = a2.work_id
+          AND a1.person_id < a2.person_id
+        LEFT JOIN works w ON w.id = a1.work_id
+        LEFT JOIN publications pub ON pub.work_id = a1.work_id
+        WHERE a1.person_id IN (:topPersonIds)
+          AND a2.person_id IN (:topPersonIds)
+        GROUP BY person1_id, person2_id
+        HAVING collaboration_count >= :min_collaborations
         ORDER BY collaboration_count DESC, avg_citations_together DESC
         LIMIT :limit OFFSET :offset
-      `, {
-        replacements: { 
+      `), {
+        replacements: {
+          topPersonIds,
           limit: parseInt(limit),
           offset: parseInt(offset),
-          min_collaborations: parseInt(min_collaborations) 
+          min_collaborations: parseInt(min_collaborations)
         },
         type: sequelize.QueryTypes.SELECT
-      }),
-      sequelize.query(`
-        SELECT COUNT(*) AS total
-        FROM v_collaborations
-        WHERE collaboration_count >= :min_collaborations
-      `, {
-        replacements: { min_collaborations: parseInt(min_collaborations) },
-        type: sequelize.QueryTypes.SELECT
-      })
-    ]);
-      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
+      });
+
+      const personIds = Array.from(new Set([
+        ...pairs.map(p => p.person1_id),
+        ...pairs.map(p => p.person2_id)
+      ]));
+
+      const nameMap = Object.create(null);
+      if (personIds.length > 0) {
+        const names = await sequelize.query(`
+          SELECT id, preferred_name FROM persons WHERE id IN (:personIds)
+        `, {
+          replacements: { personIds },
+          type: sequelize.QueryTypes.SELECT
+        });
+        for (const row of names) {
+          nameMap[row.id] = row.preferred_name;
+        }
+      }
+
+      const collaborations = pairs.map(p => ({
+        person1_id: p.person1_id,
+        person1_name: nameMap[p.person1_id] || null,
+        person2_id: p.person2_id,
+        person2_name: nameMap[p.person2_id] || null,
+        collaboration_count: parseInt(p.collaboration_count, 10) || 0,
+        avg_citations_together: parseFloat(p.avg_citations_together) || 0,
+        first_collaboration_year: p.first_collaboration_year,
+        latest_collaboration_year: p.latest_collaboration_year
+      }));
+
+      const total = collaborations.length + parseInt(offset);
 
       const formattedCollaborations = collaborations.map((collab, index) => formatCollaboration(collab, index + 1));
 

@@ -394,6 +394,13 @@ class WorksService {
         sp.venue_id,
         sp.venue_search AS venue_name,
         sv.abbrev_search AS venue_abbrev,
+        v.type AS venue_type,
+        v.issn AS venue_issn,
+        v.eissn AS venue_eissn,
+        v.scopus_id AS venue_scopus_id,
+        v.wikidata_id AS venue_wikidata_id,
+        v.openalex_id AS venue_openalex_id,
+        v.mag_id AS venue_mag_id,
         sp.work_citation_count AS citation_count,
         sp.work_reference_count AS reference_count
       FROM (
@@ -407,6 +414,7 @@ class WorksService {
       ) latest
       INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
       LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+      LEFT JOIN venues v ON v.id = sp.venue_id
       ORDER BY sp.work_id DESC
     `;
 
@@ -436,8 +444,16 @@ class WorksService {
         open_access: work.open_access === 1,
         venue: (work.venue_name || work.venue_abbrev)
           ? {
+              id: work.venue_id || null,
               name: work.venue_name || work.venue_abbrev,
-              abbreviated_name: work.venue_abbrev || null
+              abbreviated_name: work.venue_abbrev || null,
+              type: work.venue_type || null,
+              issn: work.venue_issn || null,
+              eissn: work.venue_eissn || null,
+              scopus_id: work.venue_scopus_id || null,
+              wikidata_id: work.venue_wikidata_id || null,
+              openalex_id: work.venue_openalex_id || null,
+              mag_id: work.venue_mag_id || null
             }
           : null,
         author_count: authors.length,
@@ -456,66 +472,6 @@ class WorksService {
     if (processedWorks.length > 0) {
       const ids = processedWorks.map(w => w.id);
       const placeholders = ids.map(() => '?').join(',');
-
-      const pubsSql = `
-        SELECT p1.work_id,
-               p1.year AS publication_year,
-               p1.peer_reviewed,
-               p1.open_access,
-               p1.doi,
-               v.id AS venue_id,
-               v.name AS venue_name,
-               sv.abbrev_search AS venue_abbreviated_name,
-               v.type AS venue_type,
-               v.issn,
-               v.eissn,
-               v.scopus_id,
-               v.wikidata_id,
-               v.openalex_id,
-               v.mag_id
-        FROM publications p1
-        INNER JOIN (
-          SELECT work_id, MAX(year) AS max_year
-          FROM publications
-          WHERE work_id IN (${placeholders})
-          GROUP BY work_id
-        ) latest ON latest.work_id = p1.work_id AND latest.max_year = p1.year
-        LEFT JOIN venues v ON p1.venue_id = v.id
-        LEFT JOIN summary_venues sv ON sv.venue_id = v.id
-        WHERE p1.work_id IN (${placeholders})
-      `;
-      const pubsStart = process.hrtime.bigint();
-      const pubsRows = await sequelize.query(pubsSql, {
-        replacements: [...ids, ...ids],
-        type: sequelize.QueryTypes.SELECT
-      });
-      publicationsQueryMs = Number(((process.hrtime.bigint() - pubsStart) / BigInt(1e6)).toString());
-      const pubMap = Object.create(null);
-      for (const row of pubsRows) pubMap[row.work_id] = row;
-
-      for (const item of processedWorks) {
-        const pub = pubMap[item.id];
-        if (pub) {
-          item.publication_year = item.publication_year || pub.publication_year || null;
-          item.doi = item.doi || pub.doi || null;
-          item.peer_reviewed = pub.peer_reviewed === 1 || pub.peer_reviewed === true ? true : item.peer_reviewed;
-          item.open_access = pub.open_access === 1 || pub.open_access === true ? true : item.open_access;
-          if (pub.venue_name) {
-            item.venue = {
-              id: pub.venue_id || null,
-              name: pub.venue_name,
-              abbreviated_name: pub.venue_abbreviated_name || null,
-              type: pub.venue_type || null,
-              issn: pub.issn || null,
-              eissn: pub.eissn || null,
-              scopus_id: pub.scopus_id || null,
-              wikidata_id: pub.wikidata_id || null,
-              openalex_id: pub.openalex_id || null,
-              mag_id: pub.mag_id || null
-            };
-          }
-        }
-      }
 
       const authorSql = `
         SELECT a.work_id,

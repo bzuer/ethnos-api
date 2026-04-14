@@ -31,53 +31,30 @@ class CollaborationsService {
         return cached;
       }
 
-      let collaborators = [];
-      try {
-        collaborators = await sequelize.query(withTimeout(`
-          SELECT 
-            CASE WHEN person1_id = :id THEN person2_id ELSE person1_id END AS collaborator_id,
-            CASE WHEN person1_id = :id THEN person2_name ELSE person1_name END AS collaborator_name,
-            collaboration_count
-          FROM v_collaborations
-          WHERE (person1_id = :id OR person2_id = :id)
-            AND collaboration_count >= :min
-          ORDER BY collaboration_count DESC
-          LIMIT :limit OFFSET :offset
-        `), {
-          replacements: {
-            id: parseInt(personId),
-            min: parseInt(min_collaborations),
-            limit: parseInt(limit),
-            offset: parseInt(offset)
-          },
-          type: sequelize.QueryTypes.SELECT
-        });
-      } catch (_) {
-        collaborators = await sequelize.query(withTimeout(`
-          SELECT 
-            p2.id as collaborator_id,
-            p2.preferred_name as collaborator_name,
-            COUNT(DISTINCT a1.work_id) as collaboration_count
-          FROM authorships a1
-          INNER JOIN authorships a2 ON a1.work_id = a2.work_id 
-          INNER JOIN persons p2 ON a2.person_id = p2.id
-          WHERE a1.person_id = :id 
-            AND a2.person_id != :id
-            AND a2.person_id IS NOT NULL
-          GROUP BY p2.id, p2.preferred_name
-          HAVING COUNT(DISTINCT a1.work_id) >= :min
-          ORDER BY collaboration_count DESC
-          LIMIT :limit OFFSET :offset
-        `), {
-          replacements: {
-            id: parseInt(personId),
-            min: parseInt(min_collaborations),
-            limit: parseInt(limit),
-            offset: parseInt(offset)
-          },
-          type: sequelize.QueryTypes.SELECT
-        });
-      }
+      const collaborators = await sequelize.query(withTimeout(`
+        SELECT
+          p2.id AS collaborator_id,
+          p2.preferred_name AS collaborator_name,
+          COUNT(DISTINCT a1.work_id) AS collaboration_count
+        FROM authorships a1
+        INNER JOIN authorships a2 ON a1.work_id = a2.work_id
+        INNER JOIN persons p2 ON a2.person_id = p2.id
+        WHERE a1.person_id = :id
+          AND a2.person_id != :id
+          AND a2.person_id IS NOT NULL
+        GROUP BY p2.id, p2.preferred_name
+        HAVING COUNT(DISTINCT a1.work_id) >= :min
+        ORDER BY collaboration_count DESC
+        LIMIT :limit OFFSET :offset
+      `), {
+        replacements: {
+          id: parseInt(personId),
+          min: parseInt(min_collaborations),
+          limit: parseInt(limit),
+          offset: parseInt(offset)
+        },
+        type: sequelize.QueryTypes.SELECT
+      });
 
       const collaboratorsList = Array.isArray(collaborators) ? collaborators : [];
 
@@ -121,20 +98,27 @@ class CollaborationsService {
 
       let totalCount = collaboratorsList.length;
       try {
-        const [countRows] = await sequelize.query(`
+        const [countRow] = await sequelize.query(withTimeout(`
           SELECT COUNT(*) AS total
-          FROM v_collaborations
-          WHERE (person1_id = :id OR person2_id = :id)
-            AND collaboration_count >= :min
-        `, {
+          FROM (
+            SELECT a2.person_id
+            FROM authorships a1
+            INNER JOIN authorships a2 ON a1.work_id = a2.work_id
+            WHERE a1.person_id = :id
+              AND a2.person_id != :id
+              AND a2.person_id IS NOT NULL
+            GROUP BY a2.person_id
+            HAVING COUNT(DISTINCT a1.work_id) >= :min
+          ) distinct_collaborators
+        `), {
           replacements: {
             id: parseInt(personId),
             min: parseInt(min_collaborations)
           },
           type: sequelize.QueryTypes.SELECT
         });
-        if (countRows && countRows.total !== undefined) {
-          totalCount = parseInt(countRows.total, 10);
+        if (countRow && countRow.total !== undefined) {
+          totalCount = parseInt(countRow.total, 10);
         }
       } catch (error) {
         logger.warn('Collaborators count fallback used', { error: error.message });

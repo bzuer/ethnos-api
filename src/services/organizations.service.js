@@ -41,62 +41,32 @@ class OrganizationsService {
         total_citations: organization.total_citations || null,
         open_access_works_count: organization.open_access_works_count || null
       };
-      let usedView = false;
       try {
-        const [row] = await sequelize.query(withTimeout(`
-          SELECT 
-            unique_researchers,
-            total_works,
-            open_access_works,
-            total_citations,
-            first_publication_year,
-            latest_publication_year
-          FROM v_institution_productivity
-          WHERE id = :id
-          LIMIT 1
+        const [agg] = await sequelize.query(withTimeout(`
+          SELECT
+            COUNT(DISTINCT a.person_id) AS affiliated_authors_count,
+            COUNT(DISTINCT a.work_id) AS works_count,
+            MIN(pub.year) AS first_publication_year,
+            MAX(pub.year) AS latest_publication_year,
+            SUM(CASE WHEN pub.open_access = 1 THEN 1 ELSE 0 END) AS open_access_works_count
+          FROM authorships a
+          LEFT JOIN publications pub ON pub.work_id = a.work_id
+          WHERE a.affiliation_id = :id
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
-        if (row) {
-          usedView = true;
+        if (agg) {
           metrics = {
-            affiliated_authors_count: parseInt(row.unique_researchers || 0, 10) || 0,
-            works_count: parseInt(row.total_works || 0, 10) || 0,
-            first_publication_year: row.first_publication_year || null,
-            latest_publication_year: row.latest_publication_year || null,
-            total_citations: row.total_citations !== undefined ? parseInt(row.total_citations, 10) : null,
-            open_access_works_count: row.open_access_works !== undefined ? parseInt(row.open_access_works, 10) : null
+            affiliated_authors_count: parseInt(agg.affiliated_authors_count ?? metrics.affiliated_authors_count, 10) || 0,
+            works_count: parseInt(agg.works_count ?? metrics.works_count, 10) || 0,
+            first_publication_year: agg.first_publication_year || metrics.first_publication_year,
+            latest_publication_year: agg.latest_publication_year || metrics.latest_publication_year,
+            total_citations: metrics.total_citations || null,
+            open_access_works_count: agg.open_access_works_count !== undefined && agg.open_access_works_count !== null
+              ? parseInt(agg.open_access_works_count, 10) || 0
+              : metrics.open_access_works_count || null
           };
         }
-      } catch (_) {
-        usedView = false;
-      }
-      if (!usedView) {
-        try {
-          const [agg] = await sequelize.query(`
-            SELECT 
-              COUNT(DISTINCT a.person_id) AS affiliated_authors_count,
-              COUNT(DISTINCT a.work_id) AS works_count,
-              MIN(pub.year) AS first_publication_year,
-              MAX(pub.year) AS latest_publication_year,
-              SUM(CASE WHEN pub.open_access = 1 THEN 1 ELSE 0 END) AS open_access_works_count
-            FROM authorships a
-            LEFT JOIN publications pub ON pub.work_id = a.work_id
-            WHERE a.affiliation_id = :id
-          `, { replacements: { id }, type: sequelize.QueryTypes.SELECT });
-          if (agg) {
-            metrics = {
-              affiliated_authors_count: parseInt(agg.affiliated_authors_count ?? metrics.affiliated_authors_count, 10) || 0,
-              works_count: parseInt(agg.works_count ?? metrics.works_count, 10) || 0,
-              first_publication_year: agg.first_publication_year || metrics.first_publication_year,
-              latest_publication_year: agg.latest_publication_year || metrics.latest_publication_year,
-              total_citations: metrics.total_citations || null,
-              open_access_works_count: agg.open_access_works_count !== undefined && agg.open_access_works_count !== null
-                ? parseInt(agg.open_access_works_count, 10) || 0
-                : metrics.open_access_works_count || null
-            };
-          }
-        } catch (e) {
-          logger.warn(`Org ${id} metrics aggregation fallback to table fields`, { error: e.message });
-        }
+      } catch (e) {
+        logger.warn(`Org ${id} metrics aggregation failed`, { error: e.message });
       }
 
       const recentWorks = await sequelize.query(withTimeout(`
@@ -275,8 +245,6 @@ class OrganizationsService {
       const limitValue = Math.min(100, parseInt(limit, 10) || 20);
       const offsetValue = Math.max(0, parseInt(offset, 10) || 0);
 
-      const preferByResearchers = process.env.NODE_ENV !== 'test' && process.env.DISABLE_ORG_RESEARCHER_SORT !== 'true';
-
       const [baseOrganizations, countResult] = await Promise.all([
         sequelize.query(`
           SELECT
@@ -287,9 +255,8 @@ class OrganizationsService {
             o.city,
             o.ror_id
           FROM organizations o
-          ${preferByResearchers ? 'LEFT JOIN v_institution_productivity ip ON o.id = ip.id' : ''}
           ${whereClause}
-          ORDER BY ${preferByResearchers ? 'COALESCE(ip.unique_researchers, 0) DESC, o.name ASC' : 'o.name ASC'}
+          ORDER BY o.name ASC
           LIMIT :limit OFFSET :offset
         `, {
           replacements: { ...countReplacements, limit: limitValue, offset: offsetValue },

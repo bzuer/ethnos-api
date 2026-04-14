@@ -34,55 +34,32 @@ class PersonsService {
         return null;
       }
 
-      let agg = null;
-      try {
-        const [row] = await sequelize.query(withTimeout(`
-          SELECT 
-            total_works,
-            works_as_author,
-            works_as_editor,
-            corresponding_author_count,
-            total_citations,
-            open_access_papers,
-            first_publication_year,
-            latest_publication_year
-          FROM v_person_production
-          WHERE id = :id
-          LIMIT 1
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
-        agg = row || null;
-      } catch (_) {
-        agg = null;
-      }
+      const [workCounts] = await sequelize.query(withTimeout(`
+        SELECT
+          COUNT(DISTINCT a.work_id) AS total_works,
+          COUNT(DISTINCT CASE WHEN a.role = 'AUTHOR' THEN a.work_id END) AS works_as_author,
+          COUNT(DISTINCT CASE WHEN a.role = 'EDITOR' THEN a.work_id END) AS works_as_editor,
+          COUNT(DISTINCT CASE WHEN a.is_corresponding = 1 THEN a.work_id END) AS corresponding_author_count
+        FROM authorships a
+        WHERE a.person_id = :id
+      `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
 
-      if (!agg) {
-        const [workCounts] = await sequelize.query(withTimeout(`
-          SELECT 
-            COUNT(DISTINCT a.work_id) as total_works,
-            COUNT(DISTINCT CASE WHEN a.role = 'AUTHOR' THEN a.work_id END) as works_as_author,
-            COUNT(DISTINCT CASE WHEN a.role = 'EDITOR' THEN a.work_id END) as works_as_editor,
-            COUNT(DISTINCT CASE WHEN a.is_corresponding = 1 THEN a.work_id END) as corresponding_author_count
-          FROM authorships a
-          WHERE a.person_id = :id
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
+      const [publicationWindow] = await sequelize.query(withTimeout(`
+        SELECT
+          MIN(pub.year) AS first_publication_year,
+          MAX(pub.year) AS latest_publication_year
+        FROM publications pub
+        INNER JOIN authorships a ON pub.work_id = a.work_id
+        WHERE a.person_id = :id AND pub.year IS NOT NULL
+      `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
 
-        const [publicationWindow] = await sequelize.query(withTimeout(`
-          SELECT 
-            MIN(pub.year) as first_publication_year,
-            MAX(pub.year) as latest_publication_year
-          FROM publications pub
-          INNER JOIN authorships a ON pub.work_id = a.work_id
-          WHERE a.person_id = :id AND pub.year IS NOT NULL
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
-
-        agg = {
-          ...(workCounts || {}),
-          first_publication_year: publicationWindow?.first_publication_year || null,
-          latest_publication_year: publicationWindow?.latest_publication_year || null,
-          total_citations: null,
-          open_access_papers: null,
-        };
-      }
+      const agg = {
+        ...(workCounts || {}),
+        first_publication_year: publicationWindow?.first_publication_year || null,
+        latest_publication_year: publicationWindow?.latest_publication_year || null,
+        total_citations: null,
+        open_access_papers: null
+      };
 
       const personData = {
         ...person[0],

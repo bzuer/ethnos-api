@@ -7,22 +7,24 @@ const isPlainObject = (value) => {
 };
 
 const BOOLEAN_KEY_PATTERNS = [
-  /(^is[_A-Z])/i,
-  /(^has[_A-Z])/i,
-  /(_flag$)/i,
-  /(_enabled$)/i,
-  /(_available$)/i,
-  /(_visible$)/i,
-  /(^include[_A-Z])/i,
-  /(^allow[_A-Z])/i,
-  /(_present$)/i,
-  /^open_access$/i,
-  /^peer_reviewed$/i,
-  /^is_in_doaj$/i,
-  /^active$/i,
-  /^enabled$/i,
-  /^deprecated$/i,
-  /^private$/i
+  /^is_[a-z]/,
+  /^has_[a-z]/,
+  /_flag$/,
+  /_enabled$/,
+  /_available$/,
+  /_visible$/,
+  /^include_[a-z]/,
+  /^allow_[a-z]/,
+  /_present$/,
+  /^open_access$/,
+  /^peer_reviewed$/,
+  /^is_in_doaj$/,
+  /^is_in_scielo$/,
+  /^is_indexed_in_scopus$/,
+  /^active$/,
+  /^enabled$/,
+  /^deprecated$/,
+  /^private$/
 ];
 
 const BOOLEAN_EXCEPTIONS = new Set([

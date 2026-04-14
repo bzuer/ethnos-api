@@ -199,39 +199,25 @@ class VenuesService {
       WHERE sv.venue_id IN (:venueIds)`;
 
     const venueRankingQuery = `
-      SELECT 
-        venue_id,
-        total_works AS publications_count,
-        open_access_works AS open_access_publications,
-        open_access_percentage,
-        first_publication_year,
-        latest_publication_year,
-        unique_authors
-      FROM v_venue_ranking
-      WHERE venue_id IN (:venueIds)`;
-
-    const statsFallbackQuery = `
-      SELECT venue_id,
-             SUM(works_count) AS publications_count,
-             SUM(oa_works_count) AS open_access_publications,
-             CASE WHEN SUM(works_count) = 0 THEN NULL
-                  ELSE ROUND(SUM(oa_works_count) * 100.0 / SUM(works_count), 2)
-             END AS open_access_percentage,
-             MIN(CASE WHEN works_count > 0 THEN year END) AS first_publication_year,
-             MAX(CASE WHEN works_count > 0 THEN year END) AS latest_publication_year
-      FROM venue_yearly_stats
-      WHERE venue_id IN (:venueIds)
-      GROUP BY venue_id`;
-
+      SELECT
+        pub.venue_id,
+        COUNT(*) AS publications_count,
+        SUM(CASE WHEN pub.open_access = 1 THEN 1 ELSE 0 END) AS open_access_publications,
+        ROUND(SUM(CASE WHEN pub.open_access = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS open_access_percentage,
+        MIN(pub.year) AS first_publication_year,
+        MAX(pub.year) AS latest_publication_year,
+        COUNT(DISTINCT a.person_id) AS unique_authors
+      FROM publications pub
+      LEFT JOIN authorships a ON a.work_id = pub.work_id
+      WHERE pub.venue_id IN (:venueIds)
+      GROUP BY pub.venue_id`;
 
     const uniqueAuthorsFromView = `
-      SELECT venue_id, unique_authors FROM v_venue_ranking WHERE venue_id IN (:venueIds)`;
-    const uniqueAuthorsFallbackQuery = `
       SELECT
         pub.venue_id,
         COUNT(DISTINCT a.person_id) AS unique_authors
       FROM publications pub
-      JOIN authorships a ON a.work_id = pub.work_id
+      INNER JOIN authorships a ON a.work_id = pub.work_id
       WHERE pub.venue_id IN (:venueIds)
       GROUP BY pub.venue_id`;
 
@@ -243,10 +229,17 @@ class VenuesService {
       ORDER BY vs.venue_id, vs.score DESC`;
 
     const yearlyStatsQuery = `
-      SELECT venue_id, year, works_count, oa_works_count, cited_by_count
-      FROM venue_yearly_stats
-      WHERE venue_id IN (:venueIds)
-      ORDER BY venue_id, year DESC`;
+      SELECT
+        pub.venue_id,
+        pub.year,
+        COUNT(*) AS works_count,
+        SUM(CASE WHEN pub.open_access = 1 THEN 1 ELSE 0 END) AS oa_works_count,
+        SUM(COALESCE(w.citation_count, 0)) AS cited_by_count
+      FROM publications pub
+      LEFT JOIN works w ON w.id = pub.work_id
+      WHERE pub.venue_id IN (:venueIds) AND pub.year IS NOT NULL
+      GROUP BY pub.venue_id, pub.year
+      ORDER BY pub.venue_id, pub.year DESC`;
 
     const topAuthorsQuery = `
       SELECT 
@@ -296,8 +289,8 @@ class VenuesService {
 
     const [baseRows, statsRows, uniqueAuthorsRows, subjectsRows, yearlyRows, topAuthorsRows, summaryRows] = await Promise.all([
       safeQuery('base', baseQuery, { venueIds: uniqueIds }, fallbackBaseQuery),
-      safeQuery('stats', venueRankingQuery, { venueIds: uniqueIds }, statsFallbackQuery),
-      options.includeUniqueAuthors ? safeQuery('unique_authors', uniqueAuthorsFromView, { venueIds: uniqueIds }, uniqueAuthorsFallbackQuery) : Promise.resolve([]),
+      safeQuery('stats', venueRankingQuery, { venueIds: uniqueIds }),
+      options.includeUniqueAuthors ? safeQuery('unique_authors', uniqueAuthorsFromView, { venueIds: uniqueIds }) : Promise.resolve([]),
       options.includeSubjects ? safeQuery('subjects', subjectsQuery, { venueIds: uniqueIds }) : Promise.resolve([]),
       options.includeYearly ? safeQuery('yearly_stats', yearlyStatsQuery, { venueIds: uniqueIds }) : Promise.resolve([]),
       options.includeTopAuthors ? safeQuery('top_authors', topAuthorsQuery, { venueIds: uniqueIds }) : Promise.resolve([]),

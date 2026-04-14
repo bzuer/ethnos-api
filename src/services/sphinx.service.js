@@ -760,21 +760,20 @@ class SphinxService {
     }
 
     async indexWork(workData) {
-        if (!workData || (!workData.publication_id && !workData.id)) {
-            logger.warn('indexWork called without publication_id; RT update skipped');
-            return { affectedRows: 0, skipped: true };
-        }
-        return this.indexPublication(workData);
+        logger.warn('sphinx.service.indexWork is deprecated (operator pipeline owns real-time indexing)', {
+            work_id: workData?.id || workData?.publication_id
+        });
+        return { affectedRows: 0, skipped: true, reason: 'operator_pipeline_owned' };
     }
 
-    async updateWork(workId, updates) {
-        logger.warn('updateWork called on sphinx.service; use updatePublication', { work_id: workId });
-        return { affectedRows: 0, skipped: true };
+    async updateWork(workId) {
+        logger.warn('sphinx.service.updateWork is deprecated (operator pipeline owns real-time indexing)', { work_id: workId });
+        return { affectedRows: 0, skipped: true, reason: 'operator_pipeline_owned' };
     }
 
     async deleteWork(workId) {
-        logger.warn('deleteWork called on sphinx.service; use deletePublication', { work_id: workId });
-        return { affectedRows: 0, skipped: true };
+        logger.warn('sphinx.service.deleteWork is deprecated (operator pipeline owns real-time indexing)', { work_id: workId });
+        return { affectedRows: 0, skipped: true, reason: 'operator_pipeline_owned' };
     }
 
     async searchPersonIds(searchTerm, options = {}) {

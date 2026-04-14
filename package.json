@@ -12,6 +12,7 @@
     "test": "cross-env NODE_ENV=test TEST_FAST=1 node --test --test-concurrency=1 -r ./tests/bootstrap.js ./tests/api.endpoints.test.js",
     "test:watch": "cross-env NODE_ENV=test TEST_FAST=1 node --test --watch --test-concurrency=1 -r ./tests/bootstrap.js ./tests/api.endpoints.test.js",
     "test:coverage": "cross-env NODE_ENV=test TEST_FAST=1 node --test --experimental-test-coverage --test-concurrency=1 -r ./tests/bootstrap.js ./tests/api.endpoints.test.js",
+    "test:integration": "node --test ./tests/integration.smoke.test.js",
     "test:load": "echo 'Load testing with artillery removed due to security vulnerabilities. Consider using autocannon or wrk for load testing.'",
     "docs:generate": "node scripts/generate-swagger.js",
     "docs:generate:yaml": "node scripts/generate-swagger.js --yaml-only"

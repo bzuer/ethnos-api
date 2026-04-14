@@ -17,6 +17,7 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
   - `summary_persons` — one row per person with text corpus (`preferred_name_search`, `name_variations_search`, `affiliations_search`), fulltext `ft_summary_persons_text`, embedded `current_affiliations_json`, `top_collaborators_json`, `research_subjects_json`, plus denormalised name fields (`signature_id`, `signature_text`, `family_name`, `given_names`, `normalized_name`).
 - Summary builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches. `sp_build_summary_publications` populates `has_files` / `files_json` / `publication_download_count` from the base `files` table during the build.
 - Incremental refresh: `sp_refresh_summary_publications_for_work(p_work_id)` deletes and reinserts every `summary_publications` row for a single work, including the file aggregates. The Ethnos_API project never calls this procedure (consumer-only rule); it is invoked by the operator's mutation pipeline after `publications` / `works` / `authorships` / `work_subjects` / `files` writes.
+- **Real-time Sphinx indexing is operator-owned.** The project's `src/services/realTimeIndexing.service.js` and the `indexWork` / `updateWork` / `deleteWork` methods on `sphinx.service.js` are deliberate no-ops (they return `{ skipped: true, reason: 'operator_pipeline_owned' }`). Mutations to `publications` / `works` propagate into `publications_rt` only after the operator pipeline calls `sp_refresh_summary_publications_for_work` and re-indexes. The API read path always queries `publications_poc` (batch-built on orchestrate) plus `publications_rt` (operator-maintained delta) together.
 - Legacy artefacts explicitly absent (do not reintroduce): `sphinx_works_summary`, `sphinx_venues_summary`, `sphinx_persons_summary`, `work_author_summary`, `work_subjects_summary`, `sphinx_queue`, `processing_log`, `person_match_log`, `staging_*`, `temp_*`, and the four dormant `v_*` views.
 
 ## Project Structure
@@ -142,11 +143,14 @@ Academic bibliographic system API built with Node.js/Express, backed by MariaDB 
 - Controller must normalize empty-string params to `undefined` before passing to services (avoid treating `""` as `false` for booleans).
 
 ## Tests
-- Framework: Node test runner (`node --test`) + Supertest.
-- Commands: `npm test`, `npm run test:watch`, `npm run test:coverage`.
+- Framework: Node test runner (`node --test`).
+- Commands:
+  - `npm test` — fast unit suite (`tests/api.endpoints.test.js`). Mocks service layer via `stubResolved`/`stubMethod`, validates route wiring + DTO shape. 31 tests, runs in <1 s.
+  - `npm run test:integration` — integration smoke (`tests/integration.smoke.test.js`). Hits the running API at `INTEGRATION_BASE_URL` (default `http://localhost:1210`) through the full HTTP stack + real MariaDB + Sphinx. Requires the API to be up. Metrics endpoints are covered only when `INTEGRATION_ACCESS_KEY` is set (skipped otherwise). Catches SQL regressions that the mock-based unit suite cannot see (e.g. legacy view references, broken fallbacks, DB column drift).
+  - `npm run test:watch`, `npm run test:coverage` — variants of the unit suite.
 - Test helpers in `tests/helpers/` (auth, expectations, http-client, mock-express, router-invoke, test-app).
 - Disabled tests in `tests/disabled/` (signatures, subjects).
-- When changing behavior, prefer adding or updating tests in `tests/`.
+- When changing behavior, prefer adding or updating tests in `tests/`. SQL contract changes should land with at least one smoke assertion in `tests/integration.smoke.test.js`.
 
 ## Quick References
 - Envelopes: `src/utils/responseBuilder.js`

@@ -494,17 +494,15 @@ class InstructorsService {
     const [teachingStats] = await pool.execute(teachingStatsQuery, [personId]);
 
     const authorshipStatsQuery = `
-      SELECT 
-        COUNT(DISTINCT vws.work_id) as works_authored,
-        COUNT(DISTINCT p.signature_id) as unique_signatures,
-        COUNT(DISTINCT a.work_id) as confirmed_authorships,
-        MIN(pub.year) as first_publication_year,
-        MAX(pub.year) as latest_publication_year
+      SELECT
+        COUNT(DISTINCT a.work_id) AS works_authored,
+        COUNT(DISTINCT p.signature_id) AS unique_signatures,
+        COUNT(DISTINCT a.work_id) AS confirmed_authorships,
+        MIN(pub.year) AS first_publication_year,
+        MAX(pub.year) AS latest_publication_year
       FROM persons p
-      LEFT JOIN v_works_by_signature vws ON p.id = vws.person_id
-      LEFT JOIN authorships a ON p.id = a.person_id
-      LEFT JOIN works w ON vws.work_id = w.id
-      LEFT JOIN publications pub ON w.id = pub.work_id
+      LEFT JOIN authorships a ON a.person_id = p.id
+      LEFT JOIN publications pub ON pub.work_id = a.work_id
       WHERE p.id = ?
       GROUP BY p.id
     `;
@@ -512,13 +510,13 @@ class InstructorsService {
     const [authorshipStats] = await pool.execute(authorshipStatsQuery, [personId]);
 
     const signaturesQuery = `
-      SELECT 
+      SELECT
         s.id,
         s.signature,
-        COUNT(DISTINCT vws.work_id) as works_with_signature
+        COUNT(DISTINCT a.work_id) AS works_with_signature
       FROM persons p
       JOIN signatures s ON p.signature_id = s.id
-      LEFT JOIN v_works_by_signature vws ON p.id = vws.person_id AND s.signature = vws.signature_text
+      LEFT JOIN authorships a ON a.person_id = p.id
       WHERE p.id = ?
       GROUP BY s.id, s.signature
       ORDER BY works_with_signature DESC
@@ -548,11 +546,13 @@ class InstructorsService {
         w.work_type,
         w.language,
         pub.open_access,
-        vws.signature_text
-      FROM v_works_by_signature vws
-      JOIN works w ON vws.work_id = w.id
-      LEFT JOIN publications pub ON w.id = pub.work_id
-      WHERE vws.person_id = ?
+        s.signature AS signature_text
+      FROM authorships a
+      INNER JOIN works w ON w.id = a.work_id
+      LEFT JOIN publications pub ON pub.work_id = w.id
+      LEFT JOIN persons p ON p.id = a.person_id
+      LEFT JOIN signatures s ON s.id = p.signature_id
+      WHERE a.person_id = ?
       ORDER BY pub.year DESC
       LIMIT 10
     `;
