@@ -343,19 +343,25 @@ app.use('/courses', coursesRoutes);
 app.use('/instructors', instructorsRoutes);
 app.use('/bibliographies', bibliographyRoutes);
 
-const worksController = require('./controllers/works.controller');
+const publicationsController = require('./controllers/publications.controller');
 
 /**
  * @swagger
  * /{doi}:
  *   get:
- *     summary: Resolve a work by DOI
+ *     summary: Resolve a publication by DOI
  *     description: |
- *       Look up a work using its DOI. Accepts multiple URL formats:
+ *       Look up a publication by its DOI. Accepts multiple URL formats:
  *       - `/{doi}` (e.g. `/10.4324/9781003371694`)
  *       - `/doi.org/{doi}` (e.g. `/doi.org/10.4324/9781003371694`)
  *       - `/https://doi.org/{doi}` (e.g. `/https://doi.org/10.4324/9781003371694`)
- *     tags: [Works]
+ *
+ *       Phase 7 flipped the resolver from `worksController.getWorkByDoi` to
+ *       `publicationsController.getPublicationByDoi`. The response is the
+ *       publication-shaped payload (with the parent `work` block embedded);
+ *       DOIs that previously collapsed to the latest sibling now resolve to
+ *       the exact publication that owns the DOI.
+ *     tags: [Publications]
  *     parameters:
  *       - in: path
  *         name: doi
@@ -369,16 +375,26 @@ const worksController = require('./controllers/works.controller');
  *         schema:
  *           type: boolean
  *           default: true
- *         description: Include cited_by in the work payload
+ *         description: Include cited_by in the response
  *       - in: query
  *         name: include_references
  *         schema:
  *           type: boolean
  *           default: true
- *         description: Include references in the work payload
+ *         description: Include references in the response
  *     responses:
  *       200:
- *         $ref: '#/components/responses/WorkDetailsSuccess'
+ *         description: Publication retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 data:
+ *                   type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       500:
@@ -387,7 +403,7 @@ const worksController = require('./controllers/works.controller');
 app.get(/^\/((?:https?:\/\/)?doi\.org\/)?(\d{2}\..+)$/, (req, res, next) => {
   req.params.doi = req.params[1];
   next();
-}, relationalLimiter, worksController.getWorkByDoi);
+}, relationalLimiter, publicationsController.getPublicationByDoi);
 
 app.use('*', notFoundHandler);
 

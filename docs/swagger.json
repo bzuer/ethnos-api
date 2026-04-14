@@ -10991,10 +10991,10 @@
     },
     "/{doi}": {
       "get": {
-        "summary": "Resolve a work by DOI",
-        "description": "Look up a work using its DOI. Accepts multiple URL formats:\n- `/{doi}` (e.g. `/10.4324/9781003371694`)\n- `/doi.org/{doi}` (e.g. `/doi.org/10.4324/9781003371694`)\n- `/https://doi.org/{doi}` (e.g. `/https://doi.org/10.4324/9781003371694`)\n",
+        "summary": "Resolve a publication by DOI",
+        "description": "Look up a publication by its DOI. Accepts multiple URL formats:\n- `/{doi}` (e.g. `/10.4324/9781003371694`)\n- `/doi.org/{doi}` (e.g. `/doi.org/10.4324/9781003371694`)\n- `/https://doi.org/{doi}` (e.g. `/https://doi.org/10.4324/9781003371694`)\n\nPhase 7 flipped the resolver from `worksController.getWorkByDoi` to\n`publicationsController.getPublicationByDoi`. The response is the\npublication-shaped payload (with the parent `work` block embedded);\nDOIs that previously collapsed to the latest sibling now resolve to\nthe exact publication that owns the DOI.\n",
         "tags": [
-          "Works"
+          "Publications"
         ],
         "parameters": [
           {
@@ -11014,7 +11014,7 @@
               "type": "boolean",
               "default": true
             },
-            "description": "Include cited_by in the work payload"
+            "description": "Include cited_by in the response"
           },
           {
             "in": "query",
@@ -11023,12 +11023,28 @@
               "type": "boolean",
               "default": true
             },
-            "description": "Include references in the work payload"
+            "description": "Include references in the response"
           }
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/WorkDetailsSuccess"
+            "description": "Publication retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
           },
           "404": {
             "$ref": "#/components/responses/NotFound"

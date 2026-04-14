@@ -214,6 +214,47 @@ describe('Publications', () => {
     expect(res.statusCode).toBe(400);
     expect(res.body.status).toBe('error');
   });
+
+  test('DOI resolver delegates to publicationsController.getPublicationByDoi', async () => {
+    const publicationsController = require('../src/controllers/publications.controller');
+    let captured = null;
+    stubMethod(publicationsService, 'getPublicationByDoi', async (doi, options) => {
+      captured = { doi, options };
+      return { id: 4242, identifiers: { doi }, work: { id: 7, title: 'Parent' } };
+    });
+
+    const req = createMockReq({
+      method: 'GET',
+      path: '/10.4324/9781003371694',
+      params: { doi: '10.4324/9781003371694' },
+      query: {}
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await publicationsController.getPublicationByDoi(req, res, () => {});
+
+    expect(captured).not.toBeNull();
+    expect(captured.doi).toBe('10.4324/9781003371694');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data).toHaveProperty('id', 4242);
+    expect(res.body.data.identifiers).toHaveProperty('doi', '10.4324/9781003371694');
+  });
+
+  test('DOI resolver returns 404 when the publication is not found', async () => {
+    const publicationsController = require('../src/controllers/publications.controller');
+    stubResolved(publicationsService, 'getPublicationByDoi', null);
+
+    const req = createMockReq({
+      method: 'GET',
+      path: '/10.0000/missing',
+      params: { doi: '10.0000/missing' },
+      query: {}
+    });
+    const res = withResponseFormatter(req, createMockRes());
+    await publicationsController.getPublicationByDoi(req, res, () => {});
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.status).toBe('error');
+  });
 });
 
 describe('Persons', () => {
