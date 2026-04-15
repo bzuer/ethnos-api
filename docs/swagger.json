@@ -834,11 +834,6 @@
             "nullable": true,
             "description": "OpenAlex ID (from publications)"
           },
-          "mag_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "Microsoft Academic Graph ID (from publications)"
-          },
           "isbn": {
             "type": "string",
             "nullable": true,
@@ -969,11 +964,6 @@
             "nullable": true,
             "description": "OpenAlex ID"
           },
-          "mag_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "Microsoft Academic Graph ID"
-          },
           "url": {
             "type": "string",
             "nullable": true,
@@ -1001,10 +991,6 @@
                 "nullable": true
               },
               "openalex_id": {
-                "type": "string",
-                "nullable": true
-              },
-              "mag_id": {
                 "type": "string",
                 "nullable": true
               },
@@ -1260,11 +1246,6 @@
             "type": "string",
             "nullable": true,
             "description": "OpenAlex ID"
-          },
-          "mag_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "Microsoft Academic Graph ID"
           },
           "homepage_url": {
             "type": "string",
@@ -5609,11 +5590,15 @@
                 "type",
                 "impact_factor",
                 "works_count",
-                "id"
+                "id",
+                "score",
+                "ranking",
+                "h_index",
+                "cited_by_count"
               ]
             },
             "description": "Field to sort by",
-            "example": "works_count"
+            "example": "score"
           },
           {
             "in": "query",

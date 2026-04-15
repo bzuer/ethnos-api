@@ -79,9 +79,35 @@ describe('Integration smoke (real DB)', () => {
       assert.ok(Array.isArray(body.data));
     });
 
-    test('GET /venues', async () => {
+    test('GET /venues exposes summary_venues surface', async () => {
       const body = assertSuccess(await fetchJson('/venues?limit=2'), 'GET /venues');
       assert.ok(Array.isArray(body.data));
+      assert.equal(body.meta?.source, 'summary_venues');
+      if (body.data.length > 0) {
+        const venue = body.data[0];
+        assert.ok(venue.identifiers, 'identifiers block');
+        assert.equal(typeof venue.is_in_doaj, 'boolean');
+        assert.equal(typeof venue.is_in_scielo, 'boolean');
+        assert.equal(typeof venue.is_indexed_in_scopus, 'boolean');
+        assert.ok('global_ranking_score' in venue, 'global_ranking_score field');
+        assert.ok(Array.isArray(venue.subjects), 'subjects array');
+        assert.ok(Array.isArray(venue.terms), 'terms array');
+        assert.ok(venue.score_breakdown && typeof venue.score_breakdown === 'object', 'score_breakdown object');
+        assert.ok(venue.score_breakdown.components, 'score_breakdown.components');
+      }
+    });
+
+    test('GET /venues/:id embeds yearly_stats and top_authors', async () => {
+      const list = assertSuccess(await fetchJson('/venues?sortBy=works_count&sortOrder=DESC&limit=1'), 'list for detail probe');
+      const venueId = list.data?.[0]?.id;
+      if (!venueId) return;
+      const body = assertSuccess(await fetchJson(`/venues/${venueId}`), `GET /venues/${venueId}`);
+      assert.equal(body.data.id, venueId);
+      assert.ok(Array.isArray(body.data.subjects), 'detail.subjects array');
+      assert.ok(Array.isArray(body.data.yearly_stats), 'detail.yearly_stats array');
+      assert.ok(Array.isArray(body.data.top_authors), 'detail.top_authors array');
+      assert.ok(body.data.publication_summary, 'publication_summary block');
+      assert.ok(Array.isArray(body.data.publication_summary.publication_trend), 'publication_trend array');
     });
 
     test('GET /persons', async () => {

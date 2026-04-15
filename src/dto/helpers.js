@@ -70,8 +70,7 @@ function normalizeVenue(raw) {
     eissn: raw.eissn || null,
     scopus_id: raw.scopus_id || null,
     wikidata_id: raw.wikidata_id || null,
-    openalex_id: raw.openalex_id || null,
-    mag_id: raw.mag_id || null
+    openalex_id: raw.openalex_id || null
   };
 }
 

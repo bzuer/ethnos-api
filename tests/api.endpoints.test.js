@@ -416,7 +416,6 @@ describe('DTOs structure', () => {
       scopus_id: '12345',
       wikidata_id: 'Q123',
       openalex_id: 'V123',
-      mag_id: 'M123',
       issn: '1111-2222',
       eissn: '3333-4444'
     };
@@ -424,7 +423,6 @@ describe('DTOs structure', () => {
     expect(out).toHaveProperty('scopus_id', '12345');
     expect(out).toHaveProperty('wikidata_id', 'Q123');
     expect(out).toHaveProperty('openalex_id', 'V123');
-    expect(out).toHaveProperty('mag_id', 'M123');
     expect(out).toHaveProperty('abbreviated_name', 'T. Venue');
   });
 
@@ -440,7 +438,6 @@ describe('DTOs structure', () => {
       lattes_id: 'L123',
       wikidata_id: 'Q987',
       openalex_id: 'A-1',
-      mag_id: 'MAG-1',
       url: 'https://example.org/jane',
       name_variations: 'J. Doe;Jane D.'
     };
@@ -451,7 +448,6 @@ describe('DTOs structure', () => {
       lattes_id: 'L123',
       wikidata_id: 'Q987',
       openalex_id: 'A-1',
-      mag_id: 'MAG-1',
       url: 'https://example.org/jane'
     });
     expect(Array.isArray(details.name_variations)).toBe(true);
@@ -470,7 +466,6 @@ describe('DTOs structure', () => {
       ror_id: 'ROR123',
       wikidata_id: 'Q555',
       openalex_id: 'O-9',
-      mag_id: 'MAG-O',
       url: 'https://example.org/u'
     };
     const details = formatOrganizationDetails(org);
@@ -478,7 +473,6 @@ describe('DTOs structure', () => {
       ror_id: 'ROR123',
       wikidata_id: 'Q555',
       openalex_id: 'O-9',
-      mag_id: 'MAG-O',
       url: 'https://example.org/u'
     });
     expect(details).toHaveProperty('identifiers');
@@ -504,8 +498,7 @@ describe('DTOs structure', () => {
             wos_id: 'WOS:ABC',
             handle: '12345/6789',
             wikidata_id: 'Q42',
-            openalex_id: 'W-1',
-            mag_id: 'MAG-W'
+            openalex_id: 'W-1'
           },
           publication_year: 2024
         }
@@ -521,7 +514,6 @@ describe('DTOs structure', () => {
         handle: ['12345/6789'],
         wikidata_id: ['Q42'],
         openalex_id: ['W-1'],
-        mag_id: ['MAG-W'],
         isbn: [],
         openlibrary_id: []
       }

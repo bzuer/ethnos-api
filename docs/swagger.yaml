@@ -685,10 +685,6 @@ components:
           type: string
           nullable: true
           description: OpenAlex ID (from publications)
-        mag_id:
-          type: string
-          nullable: true
-          description: Microsoft Academic Graph ID (from publications)
         isbn:
           type: string
           nullable: true
@@ -792,10 +788,6 @@ components:
           type: string
           nullable: true
           description: OpenAlex ID
-        mag_id:
-          type: string
-          nullable: true
-          description: Microsoft Academic Graph ID
         url:
           type: string
           nullable: true
@@ -818,9 +810,6 @@ components:
               type: string
               nullable: true
             openalex_id:
-              type: string
-              nullable: true
-            mag_id:
               type: string
               nullable: true
             url:
@@ -1019,10 +1008,6 @@ components:
           type: string
           nullable: true
           description: OpenAlex ID
-        mag_id:
-          type: string
-          nullable: true
-          description: Microsoft Academic Graph ID
         homepage_url:
           type: string
           nullable: true
@@ -4256,8 +4241,12 @@ paths:
               - impact_factor
               - works_count
               - id
+              - score
+              - ranking
+              - h_index
+              - cited_by_count
           description: Field to sort by
-          example: works_count
+          example: score
         - in: query
           name: sortOrder
           schema:

@@ -59,9 +59,9 @@ const venuesController = require('../controllers/venues.controller');
  *         name: sortBy
  *         schema:
  *           type: string
- *           enum: [name, type, impact_factor, works_count, id]
+ *           enum: [name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count]
  *         description: Field to sort by
- *         example: works_count
+ *         example: score
  *       - in: query
  *         name: sortOrder
  *         schema:
@@ -91,8 +91,8 @@ router.get(
       .withMessage('Search term must be between 1 and 200 characters'),
     query('sortBy')
       .optional()
-      .isIn(['name', 'type', 'impact_factor', 'works_count', 'id'])
-      .withMessage('Sort field must be one of: name, type, impact_factor, works_count, id'),
+      .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count'])
+      .withMessage('Sort field must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count'),
     query('sortOrder')
       .optional()
       .isIn(['ASC', 'DESC'])

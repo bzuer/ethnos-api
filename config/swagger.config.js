@@ -565,7 +565,6 @@ const options = {
             handle: { type: 'string', nullable: true, description: 'Handle identifier (from publications)' },
             wikidata_id: { type: 'string', nullable: true, description: 'Wikidata entity ID (from publications)' },
             openalex_id: { type: 'string', nullable: true, description: 'OpenAlex ID (from publications)' },
-            mag_id: { type: 'string', nullable: true, description: 'Microsoft Academic Graph ID (from publications)' },
             isbn: { type: 'string', nullable: true, description: 'ISBN identifier (from publications)' },
             openlibrary_id: { type: 'string', nullable: true, description: 'OpenLibrary ID (from publications)' },
             funding: {
@@ -660,11 +659,6 @@ const options = {
               nullable: true,
               description: 'OpenAlex ID'
             },
-            mag_id: {
-              type: 'string',
-              nullable: true,
-              description: 'Microsoft Academic Graph ID'
-            },
             url: {
               type: 'string',
               nullable: true,
@@ -680,7 +674,6 @@ const options = {
                 scopus_id: { type: 'string', nullable: true },
                 wikidata_id: { type: 'string', nullable: true },
                 openalex_id: { type: 'string', nullable: true },
-                mag_id: { type: 'string', nullable: true },
                 url: { type: 'string', nullable: true }
               }
             },
@@ -902,11 +895,6 @@ const options = {
               type: 'string',
               nullable: true,
               description: 'OpenAlex ID'
-            },
-            mag_id: {
-              type: 'string',
-              nullable: true,
-              description: 'Microsoft Academic Graph ID'
             },
             homepage_url: {
               type: 'string',

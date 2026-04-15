@@ -400,7 +400,6 @@ class WorksService {
         v.scopus_id AS venue_scopus_id,
         v.wikidata_id AS venue_wikidata_id,
         v.openalex_id AS venue_openalex_id,
-        v.mag_id AS venue_mag_id,
         sp.work_citation_count AS citation_count,
         sp.work_reference_count AS reference_count
       FROM (
@@ -452,8 +451,7 @@ class WorksService {
               eissn: work.venue_eissn || null,
               scopus_id: work.venue_scopus_id || null,
               wikidata_id: work.venue_wikidata_id || null,
-              openalex_id: work.venue_openalex_id || null,
-              mag_id: work.venue_mag_id || null
+              openalex_id: work.venue_openalex_id || null
             }
           : null,
         author_count: authors.length,
@@ -661,7 +659,6 @@ class WorksService {
         v.scopus_id AS venue_scopus_id,
         v.wikidata_id AS venue_wikidata_id,
         v.openalex_id AS venue_openalex_id,
-        v.mag_id AS venue_mag_id,
         publisher.id AS publisher_v_id,
         publisher.name AS publisher_name,
         publisher.type AS publisher_type,
@@ -669,7 +666,6 @@ class WorksService {
         publisher.ror_id AS publisher_ror_id,
         publisher.wikidata_id AS publisher_wikidata_id,
         publisher.openalex_id AS publisher_openalex_id,
-        publisher.mag_id AS publisher_mag_id,
         publisher.url AS publisher_url
       FROM summary_publications sp
       LEFT JOIN venues v ON v.id = sp.venue_id
@@ -740,7 +736,6 @@ class WorksService {
       handle: new Set(),
       wikidata_id: new Set(),
       openalex_id: new Set(),
-      mag_id: new Set(),
       isbn: new Set(),
       openlibrary_id: new Set(),
       scielo_pid: new Set(),

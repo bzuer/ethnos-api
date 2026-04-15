@@ -53,7 +53,6 @@ function normalizeIdentifiers(row = {}) {
     grid_id: normalizeString(identifiers.grid_id || identifiers.gridId) || null,
     wikidata_id: normalizeString(identifiers.wikidata_id || identifiers.wikidataId) || null,
     openalex_id: normalizeString(identifiers.openalex_id) || null,
-    mag_id: normalizeString(identifiers.mag_id) || null,
     url: normalizeString(identifiers.url) || null
   };
 }
@@ -87,7 +86,6 @@ function formatOrganizationListItem(row = {}) {
     ror_id: normalizeString(row.ror_id),
     wikidata_id: normalizeString(row.wikidata_id),
     openalex_id: normalizeString(row.openalex_id),
-    mag_id: normalizeString(row.mag_id),
     url: normalizeString(row.url),
     identifiers: normalizeIdentifiers(row),
     metrics: formatMetrics(row),
@@ -198,7 +196,6 @@ function formatOrganizationDetails(org = {}) {
     ror_id: normalizeString(org.ror_id) || identifiers.ror_id || null,
     wikidata_id: normalizeString(org.wikidata_id) || identifiers.wikidata_id || null,
     openalex_id: normalizeString(org.openalex_id) || identifiers.openalex_id || null,
-    mag_id: normalizeString(org.mag_id) || identifiers.mag_id || null,
     url: normalizeString(org.url) || identifiers.url || null,
     identifiers,
     metrics,

@@ -102,7 +102,6 @@ class PublicationsService {
         v.scopus_id AS venue_scopus_id,
         v.wikidata_id AS venue_wikidata_id,
         v.openalex_id AS venue_openalex_id,
-        v.mag_id AS venue_mag_id,
         publisher.id AS publisher_v_id,
         publisher.name AS publisher_name,
         publisher.type AS publisher_type,
@@ -110,7 +109,6 @@ class PublicationsService {
         publisher.ror_id AS publisher_ror_id,
         publisher.wikidata_id AS publisher_wikidata_id,
         publisher.openalex_id AS publisher_openalex_id,
-        publisher.mag_id AS publisher_mag_id,
         publisher.url AS publisher_url
       FROM summary_publications sp
       LEFT JOIN works w ON w.id = sp.work_id
@@ -180,8 +178,7 @@ class PublicationsService {
             eissn: row.eissn,
             scopus_id: row.venue_scopus_id,
             wikidata_id: row.venue_wikidata_id,
-            openalex_id: row.venue_openalex_id,
-            mag_id: row.venue_mag_id
+            openalex_id: row.venue_openalex_id
           }
         : null,
       publisher: row.publisher_v_id
@@ -193,7 +190,6 @@ class PublicationsService {
             ror_id: row.publisher_ror_id,
             wikidata_id: row.publisher_wikidata_id,
             openalex_id: row.publisher_openalex_id,
-            mag_id: row.publisher_mag_id,
             url: row.publisher_url
           }
         : null

@@ -73,7 +73,6 @@ function normalizeIdentifiers(raw = {}) {
     scopus_id: raw.scopus_id || raw.identifiers?.scopus_id || null,
     wikidata_id: raw.wikidata_id || raw.identifiers?.wikidata_id || null,
     openalex_id: raw.openalex_id || raw.identifiers?.openalex_id || null,
-    mag_id: raw.mag_id || raw.identifiers?.mag_id || null,
     url: raw.url || raw.identifiers?.url || null
   };
 
@@ -116,7 +115,6 @@ function formatPersonListItem(row = {}) {
     scopus_id: row.scopus_id || row.identifiers?.scopus_id || null,
     wikidata_id: row.wikidata_id || row.identifiers?.wikidata_id || null,
     openalex_id: row.openalex_id || row.identifiers?.openalex_id || null,
-    mag_id: row.mag_id || row.identifiers?.mag_id || null,
     url: row.url || row.identifiers?.url || null,
     identifiers: normalizeIdentifiers(row),
     is_verified: toOptionalBoolean(
@@ -256,7 +254,6 @@ function formatPersonDetails(person = {}) {
     scopus_id: person.scopus_id || identifiers.scopus_id || null,
     wikidata_id: person.wikidata_id || identifiers.wikidata_id || null,
     openalex_id: person.openalex_id || identifiers.openalex_id || null,
-    mag_id: person.mag_id || identifiers.mag_id || null,
     url: person.url || identifiers.url || null,
     identifiers,
     is_verified: toOptionalBoolean(person.is_verified),

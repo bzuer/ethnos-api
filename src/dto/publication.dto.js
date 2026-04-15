@@ -78,8 +78,7 @@ function pickVenue(row) {
     eissn: row.eissn,
     scopus_id: row.venue_scopus_id,
     wikidata_id: row.venue_wikidata_id,
-    openalex_id: row.venue_openalex_id,
-    mag_id: row.venue_mag_id
+    openalex_id: row.venue_openalex_id
   });
 }
 
@@ -95,7 +94,6 @@ function pickPublisher(row) {
       ror_id: source.ror_id || null,
       wikidata_id: source.wikidata_id || null,
       openalex_id: source.openalex_id || null,
-      mag_id: source.mag_id || null,
       url: source.url || null
     };
   }
@@ -110,7 +108,6 @@ function pickPublisher(row) {
     ror_id: row.publisher_ror_id || null,
     wikidata_id: row.publisher_wikidata_id || null,
     openalex_id: row.publisher_openalex_id || null,
-    mag_id: row.publisher_mag_id || null,
     url: row.publisher_url || null
   };
 }
@@ -141,7 +138,6 @@ function publicationIdentifiers(row) {
     handle: row.handle ?? fromJson.handle ?? null,
     wikidata_id: row.wikidata_id ?? fromJson.wikidata_id ?? null,
     openalex_id: row.openalex_id ?? fromJson.openalex_id ?? null,
-    mag_id: row.mag_id ?? fromJson.mag_id ?? null,
     isbn: row.isbn ?? fromJson.isbn ?? null,
     openlibrary_id: row.openlibrary_id ?? fromJson.openlibrary_id ?? null,
     scielo_pid: row.scielo_pid ?? fromJson.scielo_pid ?? null,
