@@ -4,24 +4,20 @@ const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-        title: 'Ethnos.app Academic Bibliography API',
-        version: '2.0.0',
-        description: [
-          'REST API for academic bibliography: search, works, persons, institutions, venues, courses, citations, collaborations and health.',
-          '',
-          'Highlights',
-          "- Public endpoints; selected admin/metrics routes require 'x-access-key'.",
-          '- API is read-only by design; the only mutating endpoint is POST /security/unblock/{ip}.',
-          '- Standard response envelope: { status, data, pagination?, meta? }.',
-          '- Pagination supports page/limit and offset/limit.',
-          '- Identifiers: DOI, ORCID, ROR, ISSN.',
-          '',
-          'Notes',
-          '- Rate limiting is configurable via environment and enabled by default.',
-          '- Performance and dataset size vary by deployment.'
-        ].join('\n'),
+      title: 'Ethnos.app Academic Bibliography API',
+      version: '2.0.0',
+      description: [
+        'REST API for academic bibliographic research: works, publications, persons, institutions, venues, courses, citations, collaborations and system health.',
+        '',
+        '## Conventions',
+        '- Public endpoints. Administrative and metrics routes require the `x-access-key` header (see the `XAccessKey` security scheme).',
+        '- Read-only by design. The only mutating endpoint is `POST /security/unblock/{ip}`.',
+        '- Standard response envelope: `{ status, data, pagination?, meta? }`. Errors: `{ status: "error", message, code, timestamp }`.',
+        '- Pagination accepts `page/limit` and `offset/limit` interchangeably.',
+        '- Supported identifier families: DOI, ORCID, ROR, ISSN / eISSN, Scopus, OpenAlex, Wikidata, Handle, PMID, PMCID, arXiv.'
+      ].join('\n'),
       contact: {
-        name: 'Bruno Cesar Cunha Cruz, PhD Student',
+        name: 'Bruno Cesar Cunha Cruz, PhD Student'
       },
       license: {
         name: 'MIT License',
@@ -33,15 +29,15 @@ const options = {
     servers: [
       {
         url: 'https://api.ethnos.app',
-        description: 'Production API Server - Enterprise-ready academic research infrastructure'
+        description: 'Production'
       },
       {
         url: 'http://localhost:1211',
-        description: 'Development Server - Local testing and development environment'
+        description: 'Development'
       }
     ],
     externalDocs: {
-      description: 'Ethnos.app Platform Documentation',
+      description: 'Ethnos.app Platform',
       url: 'https://ethnos.app'
     },
     components: {
@@ -4172,136 +4168,23 @@ const options = {
       }
     },
     tags: [
-      {
-        name: 'Health',
-        description: 'System monitoring: API status, DB/cache/Sphinx checks, metrics.',
-        externalDocs: {
-          description: 'Monitoring Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Security',
-        description: 'Security metrics, rate limiting stats, IP management (access key required).',
-        externalDocs: {
-          description: 'Security Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Works',
-        description: 'Academic publications: articles, books, chapters, theses, conferences.',
-        externalDocs: {
-          description: 'Works API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Persons',
-        description: 'Researcher profiles, identifiers, affiliations, publication history.',
-        externalDocs: {
-          description: 'Persons API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Organizations',
-        description: 'Institutional data: universities, institutes, companies, government, NGOs.',
-        externalDocs: {
-          description: 'Organizations API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Search',
-        description: 'Full-text search (Sphinx when enabled) with filters and autocomplete.',
-        externalDocs: {
-          description: 'Search API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Citations',
-        description: 'Citations, references, metrics, and citation networks.',
-        externalDocs: {
-          description: 'Citations API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Collaborations',
-        description: 'Co-authorship analysis, collaboration networks and rankings.',
-        externalDocs: {
-          description: 'Collaborations API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Metrics',
-        description: 'System analytics and dashboards (access key required).',
-        externalDocs: {
-          description: 'Metrics API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Venues',
-        description: 'Publication venues: journals, conferences, repositories, book series.',
-        externalDocs: {
-          description: 'Venues API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-
-      {
-        name: 'Dashboard',
-        description: 'Real-time analytics and trends (access key required).',
-        externalDocs: {
-          description: 'Dashboard API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Courses',
-        description: 'Academic courses with instructors, bibliography and subjects.',
-        externalDocs: {
-          description: 'Courses API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Instructors',
-        description: 'Instructors, course history, bibliography usage and expertise.',
-        externalDocs: {
-          description: 'Instructors API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-
-      {
-        name: 'Bibliography',
-        description: 'Course bibliography, usage analysis, assignments.',
-        externalDocs: {
-          description: 'Bibliography API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Signatures',
-        description: 'Name signatures and author-identity linkage operations.',
-        externalDocs: {
-          description: 'Signatures API Documentation',
-          url: 'https://ethnos.app'
-        }
-      },
-      {
-        name: 'Subjects',
-        description: 'Subject taxonomy and subject-linked listings',
-        externalDocs: {
-          description: 'Subjects API Documentation',
-          url: 'https://ethnos.app'
-        }
-      }
+      { name: 'Health', description: 'Liveness, readiness, and runtime metrics probes.' },
+      { name: 'Security', description: 'Security headers, rate-limit stats, and IP management. Requires `x-access-key`.' },
+      { name: 'Search', description: 'Full-text search across works, publications, and persons. Sphinx-backed with MariaDB fallback, plus autocomplete and popular-terms helpers.' },
+      { name: 'Works', description: 'Canonical academic works (articles, books, chapters, theses, conferences). Listings surface the latest matching publication per work.' },
+      { name: 'Publications', description: 'Per-publication view over `summary_publications`, including DOI resolution and sibling navigation.' },
+      { name: 'Persons', description: 'Researcher profiles: preferred name, identifiers, affiliations, publication history, collaborators.' },
+      { name: 'Institutions', description: 'Institutional entities (universities, institutes, companies, government, NGOs) exposed at `/institutions`.' },
+      { name: 'Venues', description: 'Journals, conferences, repositories, and book series. Backed by `summary_venues` with ranking and bibliometric surface.' },
+      { name: 'Citations', description: 'Citation and reference relationships, per-work metrics, and citation-network traversal.' },
+      { name: 'Collaborations', description: 'Co-authorship analysis, collaborator lookup, collaboration networks, and top-collaborator rankings.' },
+      { name: 'Courses', description: 'Academic courses with instructors, bibliography, and subject coverage.' },
+      { name: 'Instructors', description: 'Instructors with course history, bibliography usage, and subject expertise.' },
+      { name: 'Bibliography', description: 'Course bibliographies and their usage analysis.' },
+      { name: 'Subjects', description: 'Subject taxonomy and subject-linked listings (works, courses).' },
+      { name: 'Signatures', description: 'Name signatures and author-identity linkage.' },
+      { name: 'Metrics', description: 'Bibliometric analytics and Sphinx runtime metrics. Dashboard routes require `x-access-key`.' },
+      { name: 'Dashboard', description: 'Real-time dashboards for search, performance, trends, and alerts. Requires `x-access-key`.' }
     ]
   },
   apis: [

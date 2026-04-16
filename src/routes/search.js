@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Search
- *   description: Full-text search across works and persons (institutions disabled for performance)
- */
-
 const express = require('express');
 const { query } = require('express-validator');
 const router = express.Router();

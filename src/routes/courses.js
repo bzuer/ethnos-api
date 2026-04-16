@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Courses
- *   description: Academic courses, instructors, bibliography, and subjects
- */
-
 const express = require('express');
 const router = express.Router();
 const coursesController = require('../controllers/courses.controller');

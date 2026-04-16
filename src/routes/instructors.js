@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Instructors
- *   description: Instructor profiles, courses, bibliography, and subjects
- */
-
 const express = require('express');
 const router = express.Router();
 const { query, param } = require('express-validator');

@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Collaborations
- *   description: Research collaboration networks and partnerships
- */
-
 const express = require('express');
 const router = express.Router();
 const { param, query } = require('express-validator');

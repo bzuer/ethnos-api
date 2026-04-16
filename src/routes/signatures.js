@@ -1,13 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Signatures
- *   description: Name signatures and author identification
- *   externalDocs:
- *     description: Signatures API Documentation
- *     url: https://ethnos.app
- */
-
 const express = require('express');
 const router = express.Router();
 const { query, param } = require('express-validator');

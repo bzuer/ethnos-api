@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Health
- *   description: Health monitoring and status endpoints
- */
-
 const express = require('express');
 const { testConnection } = require('../config/database');
 const { catchAsync } = require('../middleware/errorHandler');

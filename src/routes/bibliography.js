@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Bibliography
- *   description: Course bibliography listings and analysis
- */
-
 const express = require('express');
 const router = express.Router();
 const bibliographyController = require('../controllers/bibliography.controller');

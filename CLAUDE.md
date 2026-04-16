@@ -2,159 +2,173 @@
 
 Academic bibliographic system API built with Node.js/Express, backed by MariaDB and Sphinx full-text search.
 
+## Runtime and Execution
+- Runtime: Node.js (>= 18). Framework: Express. Entry points: `src/app.js` (HTTP), `src/https-app.js` (HTTPS).
+- Runtime env: `/etc/node-backend.env` is the single source of truth. Never version secrets or credentials.
+- API runtime port: `1211` (production and development).
+- Test ports: `3000` is the in-process default when `NODE_ENV=test`; integration tests target `1210` via `INTEGRATION_BASE_URL`, so a temporary instance on `PORT=1210` is the expected target. Never touch the live `1211` when validating changes.
+- Development: `npm run dev`. Build: `npm run build`. Production: systemd user service `ethnos-api.service` via `systemctl --user`; `server.sh` is the legacy fallback (PM2/nohup).
+- Systemd setup: `scripts/manage.sh systemd:install` installs the user unit to `~/.config/systemd/user/`. No sudo required.
+
 ## Database
-- **Strict consumer-only**: this project NEVER creates, executes, or alters database procedures, events, triggers, indexes, table structures, or row data. It only issues read-side `SELECT` / `EXISTS` queries against the schema the database provides. Any structural change (DDL, `CREATE`/`ALTER`/`DROP PROCEDURE`/`EVENT`/`TRIGGER`/`TABLE`/`INDEX`, `INSERT`/`UPDATE`/`DELETE`, `CALL`, `TRUNCATE`) must be **requested from the user** and applied via a separate operations pipeline. Read-only utilities (`mariadb-dump --no-data`, `SELECT … FROM information_schema.*`, baseline asserts) are allowed.
-- **Where to file requests**: every change the application needs from the operator goes into `calls/` as a markdown file. The canonical entry is `calls/database-change-requests.md`; new requests get appended there in priority order using its template (Status / Why / Current state / Proposed change / Verification / Rollback). `calls/` is also the right place for any other operator-side runbook, SQL draft, or follow-up ask the application generates.
+- **Strict consumer-only.** This project NEVER creates, executes, or alters database procedures, events, triggers, indexes, table structures, or row data. It only issues read-side `SELECT` / `EXISTS` queries. Any structural change (DDL, `CREATE`/`ALTER`/`DROP PROCEDURE`/`EVENT`/`TRIGGER`/`TABLE`/`INDEX`, `INSERT`/`UPDATE`/`DELETE`, `CALL`, `TRUNCATE`) must be **requested from the user** and applied via a separate operations pipeline. Read-only utilities (`mariadb-dump --no-data`, `SELECT … FROM information_schema.*`, baseline asserts) are allowed.
+- **Where to file requests.** Every change the application needs from the operator goes into `calls/` as a dated file (`calls/YYYY-MM-DD_<slug>.md` or `.sql`). The active request log is `calls/2026-04-13_database-change-requests.md`; new requests get appended there in priority order using the Status / Why / Current state / Proposed change / Verification / Rollback template. `calls/` is also the right place for any other operator-side runbook, SQL draft, or follow-up ask the application generates.
 - Database name: `data`. Direct access: `mariadb data` or `mariadb data -e "..."`.
-- 23 base tables, 0 views, 37 stored procedures, 1 function, 5 triggers.
+- Topology: 23 base tables, 0 views, 37 stored procedures, 1 function, 5 triggers.
 - Schema files:
   - `database/data.schema.sql` — current production schema dump (tables, routines, triggers). Regenerated via `./scripts/maintenance/publications/regenerate_schema_dump.sh data database/data.schema.sql`.
   - `database/schema.sql` — reference schema (kept for historical diff; not regenerated).
   - `data_dev.schema.sql` (root level) — development snapshot with data; not versioned.
-- Summary architecture: three denormalized tables are built by `sp_orchestrate_all_summaries(batch_size)`:
-  - `summary_publications` — one row per publication, joined to `works`/`publications` by PK. Carries text corpus (`title_search`, `abstract_search`, `authors_search`, `venue_search`, `subjects_search`), unique key `uq_summary_pubs_doi`, fulltext indexes `ft_summary_pubs_content` and `ft_summary_pubs_metadata`, embedded JSON columns `authors_json`, `subjects_json`, `files_json`, and additive columns `publication_date`, `volume`, `issue`, `pages_text`, `source`, `license_url`, `license_version`, `identifiers_json`, `has_scimag_file`, `has_libgen_file` (populated by the build proc). `files_json` entries carry `{id, format, size, role, md5, libgen_id, scimag_id, openacess_id, best_oa_url, pages, language, version, verification, downloads}`.
-  - `summary_venues` — one row per venue with text corpus (`name_search`, `abbrev_search`, `publisher_search`), fulltext `ft_summary_venues_text`, embedded `top_subjects_json`, `top_publications_json`, full ranking surface (`global_ranking_score`, `score_breakdown_json` with `total` / `subject` / `snip` / `oa` / `authorship` / `affiliation` / `citation` / `llm` / `llm_relevance` / `llm_justification`), supporting bibliometrics (`impact_factor`, `citescore`, `sjr`, `snip`, `h_index`, `i10_index`, `two_yr_mean_citedness`) and quality flags (`is_in_doaj`, `is_in_scielo`, `is_indexed_in_scopus`, `homepage_url`, `validation_status`).
-  - `summary_persons` — one row per person with text corpus (`preferred_name_search`, `name_variations_search`, `affiliations_search`), fulltext `ft_summary_persons_text`, embedded `current_affiliations_json`, `top_collaborators_json`, `research_subjects_json`, plus denormalised name fields (`signature_id`, `signature_text`, `family_name`, `given_names`, `normalized_name`).
-- Summary builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches. `sp_build_summary_publications` populates `has_files` / `files_json` / `publication_download_count` from the base `files` table during the build.
-- Incremental refresh: `sp_refresh_summary_publications_for_work(p_work_id)` deletes and reinserts every `summary_publications` row for a single work, including the file aggregates. The Ethnos_API project never calls this procedure (consumer-only rule); it is invoked by the operator's mutation pipeline after `publications` / `works` / `authorships` / `work_subjects` / `files` writes.
-- **Real-time Sphinx indexing is operator-owned.** The project's `src/services/realTimeIndexing.service.js` and the `indexWork` / `updateWork` / `deleteWork` methods on `sphinx.service.js` are deliberate no-ops (they return `{ skipped: true, reason: 'operator_pipeline_owned' }`). Mutations to `publications` / `works` propagate into `publications_rt` only after the operator pipeline calls `sp_refresh_summary_publications_for_work` and re-indexes. The API read path always queries `publications_poc` (batch-built on orchestrate) plus `publications_rt` (operator-maintained delta) together.
+
+### Summary architecture
+Three denormalized tables are built by `sp_orchestrate_all_summaries(batch_size)`:
+- `summary_publications` — one row per publication, joined to `works` / `publications` by PK. Carries the text corpus (`title_search`, `abstract_search`, `authors_search`, `venue_search`, `subjects_search`), unique key `uq_summary_pubs_doi`, fulltext indexes `ft_summary_pubs_content` and `ft_summary_pubs_metadata`, embedded JSON columns `authors_json`, `subjects_json`, `files_json`, plus additive columns `publication_date`, `volume`, `issue`, `pages_text`, `source`, `license_url`, `license_version`, `identifiers_json`, `has_scimag_file`, `has_libgen_file`. `files_json` entries carry `{id, format, size, role, md5, libgen_id, scimag_id, openacess_id, best_oa_url, pages, language, version, verification, downloads}`.
+- `summary_venues` — one row per venue with text corpus (`name_search`, `abbrev_search`, `publisher_search`), fulltext `ft_summary_venues_text`, embedded `top_subjects_json`, `top_publications_json`, full ranking surface (`global_ranking_score`, `score_breakdown_json` with `total` / `subject` / `snip` / `oa` / `authorship` / `affiliation` / `citation` / `llm` / `llm_relevance` / `llm_justification`), supporting bibliometrics (`impact_factor`, `citescore`, `sjr`, `snip`, `h_index`, `i10_index`, `two_yr_mean_citedness`) and quality flags (`is_in_doaj`, `is_in_scielo`, `is_indexed_in_scopus`, `homepage_url`, `validation_status`).
+- `summary_persons` — one row per person with text corpus (`preferred_name_search`, `name_variations_search`, `affiliations_search`), fulltext `ft_summary_persons_text`, embedded `current_affiliations_json`, `top_collaborators_json`, `research_subjects_json`, plus denormalised name fields (`signature_id`, `signature_text`, `family_name`, `given_names`, `normalized_name`).
+
+### Summary lifecycle
+- Batch builds: `sp_build_summary_publications(batch)`, `sp_build_summary_venues()`, `sp_build_summary_persons(batch)`. Each build truncates and reloads in work-id batches. `sp_build_summary_publications` populates `has_files` / `files_json` / `publication_download_count` from the base `files` table during the build.
+- Incremental refresh: `sp_refresh_summary_publications_for_work(p_work_id)` deletes and reinserts every `summary_publications` row for a single work, including the file aggregates. The API never calls this procedure (consumer-only rule); it is invoked by the operator's mutation pipeline after `publications` / `works` / `authorships` / `work_subjects` / `files` writes.
+- **Real-time Sphinx indexing is operator-owned.** `src/services/realTimeIndexing.service.js` and the `indexWork` / `updateWork` / `deleteWork` methods on `sphinx.service.js` are deliberate no-ops (they return `{ skipped: true, reason: 'operator_pipeline_owned' }`). Mutations to `publications` / `works` propagate into `publications_rt` only after the operator pipeline calls `sp_refresh_summary_publications_for_work` and re-indexes. The API read path always queries `publications_poc` (batch-built on orchestrate) plus `publications_rt` (operator-maintained delta) together.
 - Legacy artefacts explicitly absent (do not reintroduce): `sphinx_works_summary`, `sphinx_venues_summary`, `sphinx_persons_summary`, `work_author_summary`, `work_subjects_summary`, `sphinx_queue`, `processing_log`, `person_match_log`, `staging_*`, `temp_*`, and the four dormant `v_*` views.
 
+### Schema contracts on the read path
+- Use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`) for citation/reference logic; never rely on legacy `citations` or `unresolved_citations`. `RESOLVED` means the cited work exists in DB; `PENDING` means it does not yet (expected state, not an error).
+- Person-signature relation: direct via `persons.signature_id`. Do not use legacy `persons_signatures`.
+- Publication-file relation: direct in `files` via `publication_id` (`file_role` distinguishes roles). The legacy `files.work_id` column was dropped — never reintroduce a parallel work-level path; always join through `publications.work_id` when a work-scoped query is needed. Legacy `publication_files` is also gone.
+- Summary column contracts: `summary_publications.publication_year`, `summary_publications.work_citation_count`, `summary_publications.work_reference_count`, `summary_venues.name_search` / `abbrev_search`, `summary_persons.preferred_name_search`. Denormalized lists (`authors_json`, `subjects_json`, `files_json`, `top_subjects_json`, `top_publications_json`) are parsed on the service side, not re-joined per row.
+
 ## Project Structure
-- Runtime: Node.js (>= 18), Framework: Express
-- Entry point: `src/app.js` (HTTP), `src/https-app.js` (HTTPS)
-- Source layout:
-  - `src/routes/` — 18 route modules (includes `publications`)
-  - `src/controllers/` — 14 controllers (includes `publications`)
-  - `src/services/` — 22 services (includes `publications`, Sphinx, cache, real-time indexing)
-  - `src/dto/` — 14 DTOs + `helpers.js` (work, publication, person, organization, venue, bibliography, citations, collaborations, course, dashboard, instructor, metrics, signatures, subjects)
-  - `src/middleware/` — 9 middleware modules (accessKey, errorHandler, monitoring, pagination, rateLimiting, responseFormatter, sanitization, timeout, validation)
-  - `src/utils/` — responseBuilder.js, pagination.js, db.js
-  - `src/models/` — Sequelize model definitions
-  - `src/config/` — database.js, redis.js
-- Config: `config/swagger.config.js`, `config/sphinx-unified.conf`
-- Scripts: `scripts/manage.sh`, `scripts/process.sh`, `scripts/generate-swagger.js`, `scripts/clean_ram.sh`
-  - `scripts/maintenance/publications/` — migration SQL + `RUN_ORDER.md` + `regenerate_schema_dump.sh` helper.
-  - `scripts/systemd/` — systemd service definition
-- Tests: `tests/` with `helpers/` and `disabled/` subdirectories
-- Documentation: `docs/swagger.json`, `docs/swagger.yaml`
-- Database: `database/data.schema.sql` (production schema), `database/schema.sql` (reference schema)
-- Root: `server.sh` (fallback process manager; systemd is preferred), `data_dev.schema.sql` (dev snapshot, not versioned)
+- `src/routes/` — 18 route modules (includes `publications`).
+- `src/controllers/` — 14 controllers (includes `publications`).
+- `src/services/` — 22 services (includes `publications`, Sphinx, cache, real-time indexing).
+- `src/dto/` — 14 DTOs + `helpers.js` (work, publication, person, organization, venue, bibliography, citations, collaborations, course, dashboard, instructor, metrics, signatures, subjects).
+- `src/middleware/` — 9 middleware modules (accessKey, errorHandler, monitoring, pagination, rateLimiting, responseFormatter, sanitization, timeout, validation).
+- `src/utils/` — `responseBuilder.js`, `pagination.js`, `db.js`.
+- `src/models/` — Sequelize model definitions.
+- `src/config/` — `database.js`, `redis.js`.
+- `config/` — `swagger.config.js`, `sphinx-unified.conf` (no other files; no `.bak`).
+- `scripts/` — `manage.sh`, `process.sh`, `generate-swagger.js`, `clean_ram.sh`, `maintenance/publications/` (migration SQL + `RUN_ORDER.md` + `regenerate_schema_dump.sh`), `systemd/ethnos-api.service`.
+- `tests/` — see [Tests](#tests).
+- `docs/` — `swagger.json`, `swagger.yaml`.
+- `database/` — `data.schema.sql` (production), `schema.sql` (reference).
+- Root: `server.sh` (legacy fallback), `data_dev.schema.sql` (dev snapshot, not versioned).
 
 ## Response Conventions
-- All responses via `responseFormatter` (global in `src/app.js`).
-- Envelopes (`src/utils/responseBuilder.js`):
-  - Success: `{ status: 'success', data, pagination?, meta? }`
-  - Error: `{ status: 'error', message, code, timestamp, meta? }`
-- Pagination mandatory for listings: `createPagination/normalizePagination` from `src/utils/pagination.js`.
-  - Support both `page/limit` and `offset/limit` simultaneously.
+- All responses flow through `responseFormatter` (global in `src/app.js`) and `src/utils/responseBuilder.js`.
+- Success envelope: `{ status: 'success', data, pagination?, meta? }`.
+- Error envelope: `{ status: 'error', message, code, timestamp, meta? }`.
+- Errors are raised via `res.fail(...)` and `res.error(err, ...)` with `ERROR_CODES`.
+- Pagination is mandatory for listings. Use `createPagination` / `normalizePagination` from `src/utils/pagination.js`. Both `page/limit` and `offset/limit` are accepted simultaneously.
 
 ## Security and Internal Access
-- Protected endpoints require `X-Access-Key` header (case-insensitive: `x-access-key`, `x-internal-key`, `x-api-key`).
+- Protected endpoints require the `X-Access-Key` header (case-insensitive: `x-access-key`, `x-internal-key`, `x-api-key`).
 - Middleware: `src/middleware/accessKey.js`.
   - `requireInternalAccessKey` checks env vars in order: `API_KEY`, `INTERNAL_ACCESS_KEY`, `SECURITY_ACCESS_KEY`, `API_ACCESS_KEY`, `ETHNOS_API_KEY`, `ETHNOS_API_ACCESS_KEY`, `API_SECRET_KEY`.
-  - `createAccessKeyGuard` for specific contexts.
-- OpenAPI defines `securitySchemes.XAccessKey`.
+  - `createAccessKeyGuard` produces guards for specific contexts.
+- OpenAPI declares `securitySchemes.XAccessKey`.
+- Do not expose keys or sensitive data in responses, logs, or error payloads.
 
-## Development Standards
-- Validation: `express-validator`.
-- DTOs per domain in `src/dto/`.
-- Errors: `res.fail(...)` and `res.error(err, ...)` with `ERROR_CODES`.
-- Raw SQL via `sequelize.query`.
-- Production schema: `database/data.schema.sql`. Reference schema: `database/schema.sql`.
-- Dev snapshot: `data_dev.schema.sql` (root level; not versioned).
-- For citation/reference logic, use the unified table `work_references` (`status`: `PENDING|RESOLVED|FAILED`); never rely on legacy `citations` or `unresolved_citations`.
-- `work_references` status semantics: `RESOLVED` = cited work exists in DB; `PENDING` = does not exist yet (expected state, not an error).
-- Person-signature relation: direct via `persons.signature_id`; do not use legacy `persons_signatures`.
-- Publication-file relation: direct in `files` via `publication_id` (`file_role` distinguishes roles). The legacy `files.work_id` column was dropped — never reintroduce a parallel work-level path; always join through `publications.work_id` when a work-scoped query is needed. Legacy `publication_files` is also gone.
-- Summary column contracts (read path): `summary_publications.publication_year`, `summary_publications.work_citation_count`, `summary_publications.work_reference_count`, `summary_venues.name_search` / `abbrev_search`, `summary_persons.preferred_name_search`. Denormalized lists (`authors_json`, `subjects_json`, `files_json`, `top_subjects_json`, `top_publications_json`) are parsed on the service side, not re-joined per row.
+## Route Standards
+- Plural collections: `/bibliographies`, `/institutions`, `/publications`, `/works`, `/persons`, `/venues`, `/courses`, `/instructors`, `/subjects`, `/signatures`.
+- Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
+- Venue payloads expose `abbreviated_name` alongside `name` (or `venue_abbreviated_name` alongside `venue_name`). Both must appear together when either is exposed.
+- All optional query params use `optional({ values: 'falsy' })` so empty strings (`param=`) are treated as absent. Controllers normalize empty-string params to `undefined` before passing to services (avoid treating `""` as `false` for booleans).
+
+### Works endpoints
+- Listings: `/works`, `/works/showcase`. Filters apply with `meta.match_mode = "any_publication"` — a work appears if **any of its publications** matches, and the displayed publication is the latest matching one. List items expose the latest `publication_id` and total `publications_count` for direct navigation to `/publications/{publication_id}` without a detail fetch.
+- Detail: `/works/{id}` embeds `publications[]` (full per-publication entries with their own `identifiers`, `venue`, `publisher`, `files`, `_links.self`), `publications_total`, `publications_has_more`. The legacy single `publication` / `venue` / `publisher` / `files` / `licenses` blocks were removed in Phase 6. Aggregated `identifiers` (union over every publication) remains. Cache key: `work:v2:{id}:c{0|1}:r{0|1}`.
+
+### Publications endpoints
+- `/publications` and `/publications/{id}` are backed by `summary_publications`. Free-text queries (`q`) route through Sphinx; filter-only paths hit MariaDB. List rows join `venues v` and `organizations publisher` so `venue` (type / issn / eissn / scopus_id / wikidata_id / openalex_id) and `publisher` hydrate; `source`, `license_url`, `license_version` are surfaced on every list row. Detail responses embed `work`, `siblings[]`, `files[]`, optional `citations` / `references`.
+- DOI resolution: `/{doi}`, `/doi.org/{doi}`, `/https://doi.org/{doi}` resolve a DOI to a publication via `summary_publications.uq_summary_pubs_doi` (`publications.doi` fallback) and return the publication-shaped payload with the parent `work` block embedded. Regex route is wired in `src/app.js` and handled by `publicationsController.getPublicationByDoi`.
+
+### Venues endpoints
+- `/venues`, `/venues/{id}`, `/venues/{id}/works`, `/venues/search`, `/venues/statistics` are backed by `summary_venues` (joined with `venues` + `organizations` for base columns and publisher). Subjects come from the embedded `top_subjects_json` (pre-sorted top 10). `/venues/search` routes free-text through Sphinx with a `summary_venues` MariaDB fallback.
+- List `sortBy` accepts `id|name|type|impact_factor|works_count|h_index|cited_by_count|score|ranking`.
+- Payload surfaces: `identifiers` (issn / eissn / scopus_id / wikidata_id / openalex_id / scielo_id) with top-level aliases, quality flags (`is_in_doaj`, `is_in_scielo`, `is_indexed_in_scopus`, `validation_status`), bibliometrics (`impact_factor`, `citescore`, `sjr`, `snip`, `h_index`, `i10_index`, `two_yr_mean_citedness`), `global_ranking_score` + `score_breakdown` (`total`, `components.{subject|snip|oa|authorship|affiliation|citation|llm}`, `llm.{relevance|justification}`), `subjects[]` / `terms[]` / `keywords[]`, `publisher`. Detail additionally embeds `publication_summary.publication_trend`, `yearly_stats`, `top_authors`, `recent_works`.
+- Cache key: `venue:v2:{id}:{include_flags}`. `mag_id` is never exposed — OpenAlex IDs already encode the same identifier.
+
+### Search endpoints
+- `/search/works`, `/search/advanced`: `q` is optional; filter-only queries (e.g. `venue=mana`) are supported.
+- `/search/global`, `/search/persons`, `/search/autocomplete`, `/search/popular`, `/search/health`.
+
+### Metrics and dashboard
+- Bibliometric metrics: `/metrics/annual`, `/metrics/venues`, `/metrics/institutions`, `/metrics/persons`, `/metrics/collaborations`.
+- Sphinx metrics: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
+- Dashboard (access key required): `/dashboard/overview`, `/dashboard/performance`, `/dashboard/search-trends`, `/dashboard/alerts`.
+
+### Bibliography relationships
+- `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
+
+### Endpoint inventory
+- 81 operations across 81 paths in `docs/swagger.json`.
+- Disabled at the collection root: `/signatures` (root listing) and `/subjects` (root listing). Nested endpoints remain active.
 
 ## Documentation (OpenAPI)
 - UI: `/docs` (Swagger UI) sourced from `/docs.json`.
 - JSON: `GET /docs.json`. YAML: `GET /docs.yaml` (aliases: `/openapi.yaml`, `/openapi.yml`).
-- Generation: `npm run docs:generate`, `npm run docs:generate:yaml`.
-- Update Swagger JSDoc in routes when creating or modifying endpoints.
-- Document `page`, `limit`, `offset` and use `$ref` for envelopes and pagination.
+- Single source of truth: `config/swagger.config.js` (global `info`, `servers`, `securitySchemes`, reusable `schemas`, `parameters`, `responses`, and `tags`). Route modules contribute only the operation definitions via `@swagger` JSDoc blocks.
+- Do not redefine tags inside route files — the canonical tag list lives in `config/swagger.config.js`.
+- Generation: `npm run docs:generate` (JSON + YAML) or `npm run docs:generate:yaml`. Regenerate after any JSDoc change; `docs/swagger.json` and `docs/swagger.yaml` are committed and must stay in sync with the config.
+- Every operation should: declare `tags`, use `$ref: '#/components/parameters/*'` for pagination params, use `$ref: '#/components/responses/*'` for standard responses, and reference `SuccessEnvelope` / `Error` from `components.schemas`.
 
-## Execution and Environments
-- Runtime env: `/etc/node-backend.env` as single source of truth.
-- Development: `npm run dev`.
-- Build: `npm run build`.
-- Production: systemd user service (`ethnos-api.service`) via `systemctl --user`. `server.sh` is the legacy fallback (PM2/nohup).
-- Systemd setup: `scripts/manage.sh systemd:install` installs the user unit to `~/.config/systemd/user/`. No sudo required.
-- API runtime port: `1211`. Use `3000` only for test context (`NODE_ENV=test`).
+## Development Standards
+- Validation: `express-validator`. DTOs per domain in `src/dto/`.
+- Raw SQL via `sequelize.query`. Models in `src/models/` (Sequelize).
+- Production schema: `database/data.schema.sql`. Reference schema: `database/schema.sql`. Dev snapshot: `data_dev.schema.sql`.
 
-## Important Scripts
+## Tests
+- Framework: Node test runner (`node --test`).
+- Active suites:
+  - `npm test` — fast unit suite (`tests/api.endpoints.test.js`). Mocks the service layer via `stubResolved` / `stubMethod`, validates route wiring and DTO shape. 31 tests, runs in <1 s.
+  - `npm run test:integration` — integration smoke (`tests/integration.smoke.test.js`). Hits the running API at `INTEGRATION_BASE_URL` (default `http://localhost:1210`) through the full HTTP stack, real MariaDB, and Sphinx. Requires the API to be up. Metrics endpoints are covered only when `INTEGRATION_ACCESS_KEY` is set (skipped otherwise). Catches SQL regressions that the mock-only unit suite cannot see.
+  - `npm run test:watch`, `npm run test:coverage` — variants of the unit suite.
+- Test helpers in `tests/helpers/` (auth, expectations, http-client, mock-express, router-invoke, test-app).
+- `tests/disabled/` holds signatures and subjects suites that stay off the runner.
+- The per-domain `tests/*.test.js` files (bibliography, citations, collaborations, courses, health, instructors, organizations, persons, search, venues, works) are reference fixtures authored in Jest style; they are not executed by the current Node-runner scripts. Do not treat them as a live safety net.
+- When changing behavior, prefer updating `tests/api.endpoints.test.js`. SQL contract changes should land with at least one smoke assertion in `tests/integration.smoke.test.js`.
+
+## Sphinx
+- Template: `config/sphinx-unified.conf` (no secrets).
+- Runtime config: `/var/run/ethnos-api/sphinx.conf` (generated by `manage.sh` from `/etc/node-backend.env`).
+- Runtime data: `/var/lib/ethnos-api/sphinx`. Logs: `/var/log/ethnos-api`. PID: `/var/run/ethnos-api/sphinx.pid`.
+
+## Scripts
 - `scripts/manage.sh` — unified control script with automatic infrastructure verification.
   - `restart`: stops API → cleans logs/caches → installs deps → generates docs → verifies and fixes MariaDB, Redis, Sphinx, API → validates all.
   - `deploy`: full deploy with Sphinx reindex + test suite. Stops all → clean → deps → docs → reindex → repair NOT SERVING → tests → start + validate.
   - `start`: verifies all infrastructure (MariaDB, Redis, Sphinx, API), starts/fixes anything missing, validates.
-  - `stop`: stops API service and kills rogue processes on port 1211.
+  - `stop`: stops the API service and kills rogue processes on port 1211.
   - `status`: validates all infrastructure and reports (non-destructive).
-  - `systemd:install`: installs user unit to `~/.config/systemd/user/` via `systemctl --user`. No sudo.
+  - `systemd:install`: installs the user unit to `~/.config/systemd/user/` via `systemctl --user`. No sudo.
   - `sphinx start|stop|status`: Sphinx lifecycle management.
   - `index [names...]` / `index:fast`: Sphinx indexing.
   - `test --endpoints` / `test --data`: test suites.
-  - Infrastructure checks: MariaDB connectivity, Redis PING (auto-start if down), Sphinx searchd (auto-start if down), API systemd service (auto-install if missing, auto-start if stopped), rogue process cleanup on port 1211.
+  - Infrastructure checks: MariaDB connectivity, Redis PING (auto-start), Sphinx searchd (auto-start), API systemd service (auto-install if missing, auto-start if stopped), rogue process cleanup on port 1211.
   - `NOT SERVING` repair: evaluates only entries after the latest `ETHNOS_MARKER`; targeted rebuild first, full rebuild as fallback.
-  - **Agent rule:** never execute heavy indexing commands automatically (`deploy`, `index`, `index:fast`); always ask the user to run them manually.
-- `scripts/process.sh` — CI/CD pipeline orchestrator (build/dev/deploy).
+  - **Agent rule.** Never execute heavy indexing commands automatically (`deploy`, `index`, `index:fast`); always ask the user to run them manually.
+- `scripts/process.sh` — CI/CD pipeline orchestrator (build / dev / deploy).
 - `server.sh` — legacy server management (PM2 or nohup fallback).
-- `scripts/generate-swagger.js` — generates `docs/swagger.json` and `docs/swagger.yaml`.
-## Sphinx
-- Template: `config/sphinx-unified.conf` (no secrets).
-- Runtime config: `/var/run/ethnos-api/sphinx.conf` (generated by `manage.sh` from `/etc/node-backend.env`).
-- Runtime data: `/var/lib/ethnos-api/sphinx`, logs: `/var/log/ethnos-api`, PID: `/var/run/ethnos-api/sphinx.pid`.
+- `scripts/generate-swagger.js` — regenerates `docs/swagger.json` and `docs/swagger.yaml`.
 
 ## Repository Hygiene
 - Ignored: `logs/`, `coverage/`, `venv/`, `backup/`, `database/*.sql` (except `database/schema.sql` and `database/data.schema.sql`), `node_modules/`, `.env*`.
-- Valid folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `database/`, `calls/`.
-- `calls/` holds operator-side requests the application has filed (see `## Database` → "Where to file requests"). Its contents are tracked in git.
+- Tracked folders: `src/`, `config/`, `tests/`, `docs/`, `scripts/`, `database/`, `calls/`.
+- `calls/` holds operator-side requests the application has filed (see [Database → Where to file requests](#database)). Its contents are tracked in git.
 - `ssl/` is a runtime-only directory for TLS certificates (not tracked; referenced by `src/config/database.js`).
-- `config/` must contain only `swagger.config.js` and `sphinx-unified.conf` (remove `.bak` and stale files).
-- `runtime/` must not contain Sphinx indexes (use only `/var/lib/ethnos-api/sphinx`).
-- Repo logs must be cleared at the start of `deploy` and `restart`.
+- `runtime/` must not contain Sphinx indexes — only `/var/lib/ethnos-api/sphinx`.
+- Repo logs are cleared at the start of `deploy` and `restart`.
 
 ## Code Style
-- Comments forbidden in code, except Swagger JSDoc and strictly necessary annotations.
-- Forbidden: TODO, FIXME, HACK, NOTE, BUG, XXX, commented-out code.
-- Use technical English for variable names, functions, files, tests, and system messages.
-- Do not add inline CSS/JS in API documentation examples or responses.
+- Comments forbidden in code except Swagger JSDoc and strictly necessary annotations. Forbidden tokens: TODO, FIXME, HACK, NOTE, BUG, XXX, commented-out code.
+- Technical English for variable names, functions, files, tests, and system messages.
+- No inline CSS/JS in API documentation examples or responses.
 - Never version secrets or credentials; use `/etc/node-backend.env`.
-- Do not expose keys or sensitive data in responses, logs, or error payloads.
-
-## Endpoints State
-- 81 operations across 81 paths in `docs/swagger.json`.
-- Disabled endpoints: `/signatures`, `/subjects` (root). Nested endpoints remain active.
-
-## Route Standards
-- Use plural collections: `/bibliographies`, `/institutions`, `/publications`.
-- Venue payloads must expose `abbreviated_name` when available.
-- Any endpoint exposing venue naming must include both `name` and `abbreviated_name` (or `venue_name` and `venue_abbreviated_name`) together.
-- Health probes: `/health/liveness`, `/health/readiness`, `/health/metrics`.
-- Works listing: `/works`, `/works/showcase`. Filters apply with `meta.match_mode = "any_publication"` semantics — a work appears if **any of its publications** matches the filter set, and the displayed publication is the latest matching one. Each list item exposes the latest `publication_id` and total `publications_count` so clients can navigate to `/publications/{publication_id}` without a detail fetch.
-- Works detail: `/works/{id}` embeds `publications[]` (full per-publication entries with their own `identifiers`, `venue`, `publisher`, `files`, `_links.self`), `publications_total`, `publications_has_more`. The legacy single `publication`/`venue`/`publisher`/`files`/`licenses` blocks were removed in Phase 6. Aggregated `identifiers` (union over every publication) remains. Cache key: `work:v2:{id}:c{0|1}:r{0|1}`.
-- Publications: `/publications` and `/publications/{id}` are backed by `summary_publications` (free-text via `q` routes through Sphinx; filter-only paths hit MariaDB). List items join `venues v` and `organizations publisher` so the `venue` block (type/issn/eissn/scopus_id/wikidata_id/openalex_id) and the `publisher` block hydrate; `source`, `license_url`, `license_version` are surfaced on every list row. Detail responses embed `work`, `siblings[]`, `files[]`, optional `citations` / `references` blocks.
-- Venues: `/venues`, `/venues/{id}`, `/venues/{id}/works`, `/venues/search`, `/venues/statistics` are backed by `summary_venues` (joined with `venues` + `organizations` for base columns and publisher). Subjects come from the embedded `top_subjects_json` (pre-sorted top 10). `/venues/search` routes free-text through Sphinx with a `summary_venues` MariaDB fallback. List `sortBy` accepts `id|name|type|impact_factor|works_count|h_index|cited_by_count|score|ranking`. Payload surfaces: `identifiers` (issn/eissn/scopus_id/wikidata_id/openalex_id/scielo_id) plus top-level aliases, quality flags (`is_in_doaj`, `is_in_scielo`, `is_indexed_in_scopus`, `validation_status`), bibliometrics (`impact_factor`, `citescore`, `sjr`, `snip`, `h_index`, `i10_index`, `two_yr_mean_citedness`), `global_ranking_score` + `score_breakdown` (`total`, `components.{subject|snip|oa|authorship|affiliation|citation|llm}`, `llm.{relevance|justification}`), `subjects[]` / `terms[]` / `keywords[]`, `publisher`. Detail additionally embeds `publication_summary.publication_trend`, `yearly_stats`, `top_authors`, `recent_works`. Cache key: `venue:v2:{id}:{include_flags}`. Note: `mag_id` is never exposed — OpenAlex IDs already encode the same identifier.
-- Bibliography relationships: `/works/{id}/bibliographies`, `/courses/{id}/bibliographies`, `/instructors/{id}/bibliographies`.
-- DOI resolution: `/{doi}`, `/doi.org/{doi}`, `/https://doi.org/{doi}` — resolves DOI to a publication via `summary_publications.uq_summary_pubs_doi` (with `publications.doi` as a fallback) and returns the publication-shaped payload (with the parent `work` block embedded). Regex route in `src/app.js`, handled by `publicationsController.getPublicationByDoi`.
-- Sphinx endpoints: `/metrics/sphinx`, `/metrics/sphinx/detailed`, `/metrics/sphinx/search`, `/metrics/sphinx/status`, `/metrics/sphinx/compare`.
-- Search endpoints (`/search/works`, `/search/advanced`): `q` is optional; filter-only queries (e.g. `venue=mana`) are supported.
-- All optional query params must use `optional({ values: 'falsy' })` so empty strings (`param=`) are treated as absent.
-- Controller must normalize empty-string params to `undefined` before passing to services (avoid treating `""` as `false` for booleans).
-
-## Tests
-- Framework: Node test runner (`node --test`).
-- Commands:
-  - `npm test` — fast unit suite (`tests/api.endpoints.test.js`). Mocks service layer via `stubResolved`/`stubMethod`, validates route wiring + DTO shape. 31 tests, runs in <1 s.
-  - `npm run test:integration` — integration smoke (`tests/integration.smoke.test.js`). Hits the running API at `INTEGRATION_BASE_URL` (default `http://localhost:1210`) through the full HTTP stack + real MariaDB + Sphinx. Requires the API to be up. Metrics endpoints are covered only when `INTEGRATION_ACCESS_KEY` is set (skipped otherwise). Catches SQL regressions that the mock-based unit suite cannot see (e.g. legacy view references, broken fallbacks, DB column drift).
-  - `npm run test:watch`, `npm run test:coverage` — variants of the unit suite.
-- Test helpers in `tests/helpers/` (auth, expectations, http-client, mock-express, router-invoke, test-app).
-- Disabled tests in `tests/disabled/` (signatures, subjects).
-- When changing behavior, prefer adding or updating tests in `tests/`. SQL contract changes should land with at least one smoke assertion in `tests/integration.smoke.test.js`.
 
 ## Quick References
 - Envelopes: `src/utils/responseBuilder.js`
 - Pagination: `src/utils/pagination.js`
 - Internal access: `src/middleware/accessKey.js`
 - Monitoring: `src/middleware/monitoring.js`
+- OpenAPI spec: `config/swagger.config.js`

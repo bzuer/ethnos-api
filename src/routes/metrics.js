@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Metrics
- *   description: Statistical analysis and bibliometric indicators
- */
-
 const express = require('express');
 const router = express.Router();
 const { requireInternalAccessKey } = require('../middleware/accessKey');

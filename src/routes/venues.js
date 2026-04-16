@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Venues
- *   description: Academic venues and publication platforms
- */
-
 const express = require('express');
 const router = express.Router();
 const { body, query, param } = require('express-validator');

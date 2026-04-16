@@ -1,10 +1,3 @@
-/**
- * @swagger
- * tags:
- *   name: Citations
- *   description: Citation analysis and bibliometric relationships
- */
-
 const express = require('express');
 const router = express.Router();
 const { param, query } = require('express-validator');
