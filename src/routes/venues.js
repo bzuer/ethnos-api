@@ -53,14 +53,15 @@ const venuesController = require('../controllers/venues.controller');
  *         schema:
  *           type: string
  *           enum: [name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count]
- *         description: Field to sort by
+ *           default: score
+ *         description: Field to sort by. Defaults to `score` (global ranking score) so the most important venues come first.
  *         example: score
  *       - in: query
  *         name: sortOrder
  *         schema:
  *           type: string
  *           enum: [ASC, DESC]
- *         description: Sort order
+ *         description: Sort order. When omitted, numeric/ranking fields default to `DESC`; `id`, `name`, and `type` default to `ASC`.
  *         example: DESC
  *     responses:
  *       200:

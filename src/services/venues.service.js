@@ -492,7 +492,7 @@ class VenuesService {
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v2:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v3:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -536,16 +536,21 @@ class VenuesService {
     }
 
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const normalizedSortBy = typeof sortBy === 'string' ? sortBy.toLowerCase() : 'id';
-    const sortField = SUMMARY_SORT_FIELDS[normalizedSortBy] || SUMMARY_SORT_FIELDS.id;
-    const sortOrderFinal = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+    const requestedSortBy = typeof sortBy === 'string' && sortBy.trim() ? sortBy.trim().toLowerCase() : null;
+    const normalizedSortBy = requestedSortBy && SUMMARY_SORT_FIELDS[requestedSortBy] ? requestedSortBy : 'score';
+    const sortField = SUMMARY_SORT_FIELDS[normalizedSortBy];
+    const descByDefault = new Set(['score', 'ranking', 'impact_factor', 'citescore', 'sjr', 'snip', 'works_count', 'cited_by_count', 'h_index', 'i10_index']);
+    const requestedOrder = typeof sortOrder === 'string' ? sortOrder.trim().toUpperCase() : '';
+    const sortOrderFinal = requestedOrder === 'ASC' || requestedOrder === 'DESC'
+      ? requestedOrder
+      : (descByDefault.has(normalizedSortBy) ? 'DESC' : 'ASC');
 
     const listSql = `
       SELECT
         ${SUMMARY_BASE_SELECT}
       ${SUMMARY_BASE_JOIN}
       ${whereClause}
-      ORDER BY ${sortField} ${sortOrderFinal}, sv.name_search ASC
+      ORDER BY ${sortField} ${sortOrderFinal}, COALESCE(sv.global_ranking_score, 0) DESC, sv.name_search ASC
       LIMIT :lim OFFSET :off
     `;
     const countSql = `SELECT COUNT(*) AS total ${SUMMARY_BASE_JOIN} ${whereClause}`;
@@ -564,7 +569,7 @@ class VenuesService {
     const meta = {
       source: 'summary_venues',
       sort: {
-        by: SUMMARY_SORT_FIELDS[normalizedSortBy] ? normalizedSortBy : 'id',
+        by: normalizedSortBy,
         order: sortOrderFinal
       }
     };
