@@ -189,6 +189,7 @@ class WorksService {
           sp.work_id AS id,
           sp.work_id,
           sp.publication_id,
+          latest.publications_count,
           sp.title_search AS title,
           sp.abstract_search AS abstract,
           sp.doi,
@@ -206,7 +207,10 @@ class WorksService {
           sp.work_citation_count AS citation_count,
           sp.work_reference_count AS reference_count
         FROM (
-          SELECT work_id, MAX(publication_id) AS pub_id
+          SELECT
+            work_id,
+            MAX(publication_id) AS pub_id,
+            COUNT(*) AS publications_count
           FROM summary_publications
           ${whereClause}
           GROUP BY work_id
@@ -232,6 +236,10 @@ class WorksService {
         const authorsPreview = authorsFromJson(work.authors_json);
         const base = formatWorkListItem({
           id: work.id,
+          publication_id: work.publication_id || null,
+          publications_count: work.publications_count !== undefined && work.publications_count !== null
+            ? parseInt(work.publications_count, 10)
+            : null,
           title: work.title,
           subtitle: null,
           abstract: work.abstract,
@@ -380,6 +388,7 @@ class WorksService {
         sp.work_id AS id,
         sp.work_id,
         sp.publication_id,
+        latest.publications_count,
         sp.title_search AS title,
         sp.abstract_search AS abstract,
         sp.doi,
@@ -403,7 +412,10 @@ class WorksService {
         sp.work_citation_count AS citation_count,
         sp.work_reference_count AS reference_count
       FROM (
-        SELECT sp.work_id, MAX(sp.publication_id) AS pub_id
+        SELECT
+          sp.work_id,
+          MAX(sp.publication_id) AS pub_id,
+          COUNT(*) AS publications_count
         FROM summary_publications sp
         ${venueJoin}
         ${whereClause}
@@ -432,6 +444,10 @@ class WorksService {
 
       return {
         id: work.id,
+        publication_id: work.publication_id || null,
+        publications_count: work.publications_count !== undefined && work.publications_count !== null
+          ? parseInt(work.publications_count, 10)
+          : null,
         title: work.title,
         subtitle: null,
         abstract: work.abstract || null,
@@ -996,6 +1012,7 @@ class WorksService {
         sp.work_id AS id,
         sp.work_id,
         sp.publication_id,
+        latest.publications_count,
         sp.title_search AS title,
         sp.abstract_search AS abstract,
         sp.publication_year,
@@ -1012,7 +1029,10 @@ class WorksService {
         w.subtitle,
         w.created_at
       FROM (
-        SELECT sp.work_id, MAX(sp.publication_id) AS pub_id
+        SELECT
+          sp.work_id,
+          MAX(sp.publication_id) AS pub_id,
+          COUNT(*) AS publications_count
         FROM summary_publications sp
         ${venueJoin}
         WHERE ${whereConditions.join(' AND ')}
@@ -1041,6 +1061,10 @@ class WorksService {
       const authors = authorsFromJson(row.authors_json);
       return {
         id: row.work_id,
+        publication_id: row.publication_id || null,
+        publications_count: row.publications_count !== undefined && row.publications_count !== null
+          ? parseInt(row.publications_count, 10)
+          : null,
         title: row.title,
         subtitle: row.subtitle || null,
         abstract: row.abstract || null,
@@ -1183,6 +1207,7 @@ class WorksService {
       const authors = authorsFromJson(row.authors_json);
       return {
         id: row.work_id,
+        publication_id: row.publication_id || null,
         title: row.title,
         subtitle: row.subtitle || null,
         abstract: row.abstract || null,
@@ -1206,7 +1231,26 @@ class WorksService {
       };
     });
 
-    const items = uniqueById(processedWorks).map(formatWorkListItem);
+    const uniqueWorks = uniqueById(processedWorks);
+    if (uniqueWorks.length > 0) {
+      const workIds = uniqueWorks.map((w) => w.id).filter(Boolean);
+      if (workIds.length > 0) {
+        const countPlaceholders = workIds.map(() => '?').join(',');
+        const countRows = await sequelize.query(
+          `SELECT work_id, COUNT(*) AS publications_count
+             FROM summary_publications
+             WHERE work_id IN (${countPlaceholders})
+             GROUP BY work_id`,
+          { replacements: workIds, type: sequelize.QueryTypes.SELECT }
+        );
+        const countMap = new Map(countRows.map((r) => [r.work_id, parseInt(r.publications_count, 10)]));
+        for (const work of uniqueWorks) {
+          work.publications_count = countMap.get(work.id) ?? null;
+        }
+      }
+    }
+
+    const items = uniqueWorks.map(formatWorkListItem);
 
     return {
       data: items,

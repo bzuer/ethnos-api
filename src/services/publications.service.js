@@ -426,6 +426,8 @@ class PublicationsService {
         sp.issue,
         sp.pages_text AS pages,
         sp.source,
+        sp.license_url,
+        sp.license_version,
         sp.open_access,
         sp.peer_reviewed,
         sp.has_files,
@@ -438,9 +440,25 @@ class PublicationsService {
         sp.subjects_json,
         sp.identifiers_json,
         sp.venue_search AS venue_name,
-        sv.abbrev_search AS venue_abbreviated_name
+        sv.abbrev_search AS venue_abbreviated_name,
+        v.type AS venue_type,
+        v.issn,
+        v.eissn,
+        v.scopus_id AS venue_scopus_id,
+        v.wikidata_id AS venue_wikidata_id,
+        v.openalex_id AS venue_openalex_id,
+        publisher.id AS publisher_v_id,
+        publisher.name AS publisher_name,
+        publisher.type AS publisher_type,
+        publisher.country_code AS publisher_country,
+        publisher.ror_id AS publisher_ror_id,
+        publisher.wikidata_id AS publisher_wikidata_id,
+        publisher.openalex_id AS publisher_openalex_id,
+        publisher.url AS publisher_url
       FROM summary_publications sp
       LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
+      LEFT JOIN venues v ON v.id = sp.venue_id
+      LEFT JOIN organizations publisher ON publisher.id = sp.publisher_id
       ${whereClause}
       ${orderClause}
       ${limitClause}

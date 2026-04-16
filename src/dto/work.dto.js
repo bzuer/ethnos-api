@@ -39,6 +39,8 @@ function formatWorkListItem(row = {}) {
 
   return {
     id: toOptionalInteger(row.id),
+    publication_id: toOptionalInteger(row.publication_id),
+    publications_count: toOptionalInteger(row.publications_count),
     title: row.title || null,
     subtitle: row.subtitle || null,
     abstract: row.abstract || null,

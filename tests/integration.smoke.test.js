@@ -48,10 +48,15 @@ describe('Integration smoke (real DB)', () => {
   });
 
   describe('Core listings', () => {
-    test('GET /works returns match_mode any_publication', async () => {
+    test('GET /works returns match_mode any_publication and exposes publication_id', async () => {
       const body = assertSuccess(await fetchJson('/works?limit=3'), 'GET /works');
       assert.ok(Array.isArray(body.data), 'data must be array');
       assert.equal(body.meta?.match_mode, 'any_publication');
+      if (body.data.length > 0) {
+        const work = body.data[0];
+        assert.ok('publication_id' in work, 'work must expose publication_id');
+        assert.ok('publications_count' in work, 'work must expose publications_count');
+      }
     });
 
     test('GET /works/:id embeds publications[]', async () => {
@@ -72,6 +77,21 @@ describe('Integration smoke (real DB)', () => {
     test('GET /publications with filter-only path', async () => {
       const body = assertSuccess(await fetchJson('/publications?venue=culture&limit=2'), 'GET /publications?venue');
       assert.ok(Array.isArray(body.data));
+    });
+
+    test('GET /publications list hydrates venue + source + license', async () => {
+      const body = assertSuccess(await fetchJson('/publications?limit=3'), 'GET /publications');
+      assert.ok(Array.isArray(body.data));
+      const withVenue = (body.data || []).find((p) => p.venue && p.venue.id);
+      if (withVenue) {
+        assert.ok(withVenue.venue.name, 'venue.name populated');
+        assert.ok('type' in withVenue.venue, 'venue.type key present');
+        assert.ok('issn' in withVenue.venue, 'venue.issn key present');
+        assert.ok('openalex_id' in withVenue.venue, 'venue.openalex_id key present');
+        assert.ok('source' in withVenue, 'publication exposes source');
+        assert.ok('license_url' in withVenue, 'publication exposes license_url');
+        assert.ok('publisher' in withVenue, 'publication exposes publisher field');
+      }
     });
 
     test('GET /institutions does not hit legacy views', async () => {
