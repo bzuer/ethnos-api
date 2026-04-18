@@ -489,6 +489,7 @@ const validateWorksQuery = [
   
   query('role')
     .optional()
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
     .isIn(['AUTHOR', 'EDITOR'])
     .withMessage('Role must be AUTHOR or EDITOR')
 ];

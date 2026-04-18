@@ -414,7 +414,6 @@ class PublicationsService {
 
     const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-    const COUNT_SAMPLE_LIMIT = 20000;
     const COUNT_BUDGET_MS = 2000;
     let totalItems;
     let totalIsExact = true;
@@ -424,25 +423,13 @@ class PublicationsService {
       totalItems = 6567060;
       totalIsExact = false;
     } else {
-      const countSql = `
-        SELECT COUNT(*) AS total
-        FROM (
-          SELECT 1 FROM summary_publications sp ${whereClause}
-          LIMIT ${COUNT_SAMPLE_LIMIT}
-        ) AS limited_count
-      `;
+      const countSql = `SELECT COUNT(*) AS total FROM summary_publications sp ${whereClause}`;
       try {
         const [countRow] = await sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
           replacements: queryParams,
           type: sequelize.QueryTypes.SELECT
         });
-        const limitedCount = parseInt(countRow?.total) || 0;
-        if (limitedCount === COUNT_SAMPLE_LIMIT) {
-          totalItems = limitedCount * 300;
-          totalIsExact = false;
-        } else {
-          totalItems = limitedCount;
-        }
+        totalItems = parseInt(countRow?.total) || 0;
       } catch (countError) {
         logger.warn('Publications list count query exceeded budget, returning estimate', {
           error: countError.message

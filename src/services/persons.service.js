@@ -503,6 +503,7 @@ class PersonsService {
           type: work.work_type,
           language: work.language,
           doi: work.doi,
+          publication_year: work.year !== undefined && work.year !== null ? parseInt(work.year, 10) : null,
           open_access: work.open_access === 1 || work.open_access === true,
           authorship: {
             role: work.role,

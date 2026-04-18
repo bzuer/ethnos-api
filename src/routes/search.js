@@ -404,6 +404,8 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  */
+const worksService = require('../services/works.service');
+
 const advancedSearch = async (req, res, next) => {
   try {
     const query = (req.query.q || '').trim();
@@ -412,17 +414,6 @@ const advancedSearch = async (req, res, next) => {
 
     const sphinxActive = String(process.env.SEARCH_ENGINE || 'SPHINX').toUpperCase() !== 'MARIADB';
     const useSphinx = sphinxActive && !sphinxHealthCheck.rollbackActive;
-
-    if (!useSphinx) {
-      return res.fail('Advanced search requires Sphinx engine', {
-        statusCode: 503,
-        code: ERROR_CODES.INTERNAL,
-        meta: {
-          query,
-          search_engine: process.env.SEARCH_ENGINE || 'MARIADB'
-        }
-      });
-    }
 
     const filters = {
       work_type: req.query.work_type || req.query.type,
@@ -445,12 +436,60 @@ const advancedSearch = async (req, res, next) => {
     });
 
     const start = Date.now();
-    const results = await sphinxService.searchWithFacets(query, filters, {
-      limit,
-      offset
-    });
-    const controllerTime = Date.now() - start;
+    let engine = 'Sphinx';
+    let results = null;
+    if (useSphinx) {
+      try {
+        results = await sphinxService.searchWithFacets(query, filters, { limit, offset });
+      } catch (sphinxError) {
+        logger.warn('Advanced search Sphinx path unavailable, falling back to MariaDB', {
+          error: sphinxError.message
+        });
+        results = null;
+        engine = 'MariaDB-fallback';
+      }
+    } else {
+      engine = 'MariaDB';
+    }
 
+    if (!results) {
+      const worksFilters = {
+        page,
+        limit,
+        offset,
+        search: query,
+        type: filters.work_type,
+        language: filters.language,
+        year_from: filters.year_from,
+        year_to: filters.year_to,
+        peer_reviewed: filters.peer_reviewed,
+        open_access: filters.open_access,
+        venue_name: filters.venue_name,
+        author: filters.author,
+        subject: filters.subject
+      };
+      const fallback = await worksService.getWorks(worksFilters);
+      const controllerTime = Date.now() - start;
+      const data = {
+        results: fallback.data || [],
+        facets: {}
+      };
+      return res.success(data, {
+        pagination: fallback.pagination || createPagination(page, limit, data.results.length),
+        meta: {
+          query,
+          search_type: 'fulltext_faceted',
+          filters_applied: Object.keys(filters).length,
+          pagination_total_exact: fallback.meta?.pagination_total_exact ?? true,
+          performance: {
+            engine,
+            controller_time_ms: controllerTime
+          }
+        }
+      });
+    }
+
+    const controllerTime = Date.now() - start;
     const data = {
       results: Array.isArray(results?.results) ? results.results : [],
       facets: results?.facets || {}
@@ -463,7 +502,7 @@ const advancedSearch = async (req, res, next) => {
         search_type: 'fulltext_faceted',
         filters_applied: Object.keys(filters).length,
         performance: {
-          engine: 'Sphinx',
+          engine,
           query_time_ms: results?.query_time || null,
           controller_time_ms: controllerTime
         }

@@ -161,34 +161,28 @@ class WorksService {
 
       const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-      const COUNT_SAMPLE_LIMIT = 20000;
       const COUNT_BUDGET_MS = 2000;
       let totalItems = 0;
+      let totalIsExact = true;
 
       if (queryParams.length === 0) {
         totalItems = 2499146;
+        totalIsExact = false;
       } else {
-        const countSql = `
-          SELECT COUNT(*) as total
-          FROM (
-            SELECT 1 FROM summary_publications
-            ${whereClause}
-            LIMIT ${COUNT_SAMPLE_LIMIT}
-          ) as limited_count
-        `;
+        const countSql = `SELECT COUNT(*) as total FROM summary_publications ${whereClause}`;
 
         try {
           const [countResult] = await sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
             replacements: queryParams,
             type: sequelize.QueryTypes.SELECT
           });
-          const limitedCount = parseInt(countResult?.total) || 0;
-          totalItems = limitedCount === COUNT_SAMPLE_LIMIT ? limitedCount * 125 : limitedCount;
+          totalItems = parseInt(countResult?.total) || 0;
         } catch (countError) {
           logger.warn('Works vitrine count query exceeded budget, returning estimate', {
             error: countError.message
           });
           totalItems = 2499146;
+          totalIsExact = false;
         }
       }
 
@@ -285,6 +279,7 @@ class WorksService {
         meta: {
           match_mode: 'any_publication',
           query_source: 'summary_publications',
+          pagination_total_exact: totalIsExact,
           performance: {
             engine: 'MariaDB',
             query_type: 'showcase_optimized',
@@ -365,7 +360,6 @@ class WorksService {
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000');
     const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-    const COUNT_SAMPLE_LIMIT = 20000;
     const COUNT_BUDGET_MS = 2000;
     let totalItems;
     let totalIsExact = true;
@@ -373,28 +367,14 @@ class WorksService {
       totalItems = 2499146;
       totalIsExact = false;
     } else {
-      const countSql = `
-        SELECT COUNT(*) as total
-        FROM (
-          SELECT 1 FROM summary_publications sp
-          ${venueJoin}
-          ${whereClause}
-          LIMIT ${COUNT_SAMPLE_LIMIT}
-        ) as limited_count
-      `;
+      const countSql = `SELECT COUNT(*) as total FROM summary_publications sp ${venueJoin} ${whereClause}`;
 
       try {
         const [countRow] = await sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
           replacements: filterParams,
           type: sequelize.QueryTypes.SELECT
         });
-        const limitedCount = parseInt(countRow?.total) || 0;
-        if (limitedCount === COUNT_SAMPLE_LIMIT) {
-          totalItems = limitedCount * 125;
-          totalIsExact = false;
-        } else {
-          totalItems = limitedCount;
-        }
+        totalItems = parseInt(countRow?.total) || 0;
       } catch (countError) {
         logger.warn('Works showcase count query exceeded budget, returning estimate', {
           error: countError.message,
@@ -984,14 +964,27 @@ class WorksService {
   async _getWorksSearchFallback(search, filters, limit, offset, page) {
     const { type, language, year_from, year_to, open_access, peer_reviewed, venue_name, author, subject } = filters || {};
     const trimmed = (search || '').trim();
-    if (!trimmed) {
+    const hasContent = Boolean(trimmed);
+    const hasMetadata = Boolean(venue_name || author || subject);
+    if (!hasContent && !hasMetadata) {
       return { data: [], pagination: createPagination(page, limit, 0) };
     }
 
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '4000');
 
-    const whereConditions = ['sp.title_search LIKE ?'];
-    const filterParams = [`%${trimmed}%`];
+    const whereConditions = [];
+    const filterParams = [];
+
+    if (hasContent) {
+      whereConditions.push('MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE)');
+      filterParams.push(trimmed);
+    }
+
+    const metadataTerms = [venue_name, author, subject].filter(Boolean).join(' ');
+    if (metadataTerms) {
+      whereConditions.push('MATCH(sp.authors_search, sp.venue_search, sp.subjects_search) AGAINST (? IN BOOLEAN MODE)');
+      filterParams.push(metadataTerms);
+    }
 
     if (type) {
       whereConditions.push('sp.work_type = ?');
@@ -1018,20 +1011,14 @@ class WorksService {
       filterParams.push(peer_reviewed === true || peer_reviewed === 'true' || peer_reviewed === 1 || peer_reviewed === '1' ? 1 : 0);
     }
 
-    let venueJoin = '';
-    if (venue_name) {
-      venueJoin = 'LEFT JOIN summary_venues sv_filter ON sv_filter.venue_id = sp.venue_id';
-      whereConditions.push('(sp.venue_search LIKE ? OR sv_filter.abbrev_search LIKE ?)');
-      filterParams.push(`%${venue_name}%`, `%${venue_name}%`);
-    }
-    if (author) {
-      whereConditions.push('sp.authors_search LIKE ?');
-      filterParams.push(`%${author}%`);
-    }
-    if (subject) {
-      whereConditions.push('sp.subjects_search LIKE ?');
-      filterParams.push(`%${subject}%`);
-    }
+    const relevanceExpr = hasContent
+      ? 'MAX(MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE))'
+      : (metadataTerms
+        ? 'MAX(MATCH(sp.authors_search, sp.venue_search, sp.subjects_search) AGAINST (? IN BOOLEAN MODE))'
+        : '0');
+    const innerRelevanceParams = hasContent
+      ? [trimmed]
+      : (metadataTerms ? [metadataTerms] : []);
 
     const selectSql = `
       SELECT
@@ -1039,6 +1026,7 @@ class WorksService {
         sp.work_id,
         sp.publication_id,
         latest.publications_count,
+        latest.relevance,
         sp.title_search AS title,
         sp.abstract_search AS abstract,
         sp.publication_year,
@@ -1058,30 +1046,48 @@ class WorksService {
         SELECT
           sp.work_id,
           MAX(sp.publication_id) AS pub_id,
-          COUNT(*) AS publications_count
+          COUNT(*) AS publications_count,
+          ${relevanceExpr} AS relevance
         FROM summary_publications sp
-        ${venueJoin}
         WHERE ${whereConditions.join(' AND ')}
         GROUP BY sp.work_id
-        ORDER BY sp.work_id DESC
+        ORDER BY relevance DESC, sp.work_id DESC
         LIMIT ? OFFSET ?
       ) latest
       INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
       LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
       LEFT JOIN works w ON w.id = sp.work_id
-      ORDER BY sp.work_id DESC
+      ORDER BY latest.relevance DESC, sp.work_id DESC
     `;
 
-    const queryParams = [...filterParams, limit, offset];
+    const queryParams = [...innerRelevanceParams, ...filterParams, limit, offset];
     const primaryQueryStart = process.hrtime.bigint();
-    const rows = await Promise.race([
-      sequelize.query(selectSql, {
-        replacements: queryParams,
-        type: sequelize.QueryTypes.SELECT
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), dbTimeoutMs))
-    ]);
+    const rows = await sequelize.query(withTimeout(selectSql, dbTimeoutMs), {
+      replacements: queryParams,
+      type: sequelize.QueryTypes.SELECT
+    });
     const primaryQueryMs = Number(((process.hrtime.bigint() - primaryQueryStart) / BigInt(1e6)).toString());
+
+    let totalItems;
+    let totalIsExact = true;
+    const distinctCountSql = `
+      SELECT COUNT(DISTINCT sp.work_id) AS total
+      FROM summary_publications sp
+      WHERE ${whereConditions.join(' AND ')}
+    `;
+    try {
+      const [countRow] = await sequelize.query(withTimeout(distinctCountSql, 2000), {
+        replacements: filterParams,
+        type: sequelize.QueryTypes.SELECT
+      });
+      totalItems = parseInt(countRow?.total) || 0;
+    } catch (countError) {
+      logger.warn('Works search fallback count exceeded budget, using lower-bound estimate', {
+        error: countError.message
+      });
+      totalItems = offset + rows.length + (rows.length === limit ? limit : 0);
+      totalIsExact = false;
+    }
 
     const processed = (rows || []).map(row => {
       const authors = authorsFromJson(row.authors_json);
@@ -1115,10 +1121,12 @@ class WorksService {
     });
 
     const items = processed.map(formatWorkListItem);
-    const approxTotal = offset + processed.length;
     return {
       data: items,
-      pagination: createPagination(page, limit, approxTotal),
+      pagination: createPagination(page, limit, totalItems),
+      meta: {
+        pagination_total_exact: totalIsExact
+      },
       performance: {
         engine: 'MariaDB',
         query_type: 'search_fallback',

@@ -77,7 +77,8 @@ Three denormalized tables are built by `sp_orchestrate_all_summaries(batch_size)
 - All optional query params use `optional({ values: 'falsy' })` so empty strings (`param=`) are treated as absent. Controllers normalize empty-string params to `undefined` before passing to services (avoid treating `""` as `false` for booleans).
 
 ### Works endpoints
-- Listings: `/works`, `/works/showcase`. Filters apply with `meta.match_mode = "any_publication"` — a work appears if **any of its publications** matches, and the displayed publication is the latest matching one. List items expose the latest `publication_id` and total `publications_count` for direct navigation to `/publications/{publication_id}` without a detail fetch.
+- Listings: `/works`, `/works/showcase`, `/search/works`, `/search/advanced`. Filters apply with `meta.match_mode = "any_publication"` — a work appears if **any of its publications** matches, and the displayed publication is the latest matching one. List items expose the latest `publication_id` and total `publications_count` for direct navigation to `/publications/{publication_id}` without a detail fetch.
+- Fulltext (`q`) and LIKE-style metadata filters (`venue_name`, `author`, `subject`) route through Sphinx first (`publications_poc`). When Sphinx is unavailable, the MariaDB fallback (`worksService._getWorksSearchFallback`) uses `MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE)` against `ft_summary_pubs_content` for `q` and `MATCH(sp.authors_search, sp.venue_search, sp.subjects_search) AGAINST (? IN BOOLEAN MODE)` against `ft_summary_pubs_metadata` for the metadata terms (instead of leading-wildcard `LIKE`, which full-scans the 6 M-row table). `/search/advanced` uses the same fallback when Sphinx throws `no enabled local indexes`, so it never returns HTTP 500 for a missing index.
 - Detail: `/works/{id}` embeds `publications[]` (full per-publication entries with their own `identifiers`, `venue`, `publisher`, `files`, `_links.self`), `publications_total`, `publications_has_more`. The legacy single `publication` / `venue` / `publisher` / `files` / `licenses` blocks were removed in Phase 6. Aggregated `identifiers` (union over every publication) remains. Cache key: `work:v2:{id}:c{0|1}:r{0|1}`.
 
 ### Publications endpoints
@@ -93,6 +94,7 @@ Three denormalized tables are built by `sp_orchestrate_all_summaries(batch_size)
 ### Search endpoints
 - `/search/works`, `/search/advanced`: `q` is optional; filter-only queries (e.g. `venue=mana`) are supported.
 - `/search/global`, `/search/persons`, `/search/autocomplete`, `/search/popular`, `/search/health`.
+- `/search/autocomplete` honours the `{ suggestions, type, count, query, generated_at }` envelope. When Sphinx is down the service falls back to `MATCH(title_search, abstract_search)` against `ft_summary_pubs_content` (without `ORDER BY` so it terminates early) and returns an empty suggestions list if that path also fails — it never surfaces `{ error: … }` inside a `status: success` payload.
 
 ### Metrics and dashboard
 - Bibliometric metrics: `/metrics/annual`, `/metrics/venues`, `/metrics/institutions`, `/metrics/persons`, `/metrics/collaborations`.

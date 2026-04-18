@@ -83,33 +83,55 @@ class AutocompleteService {
 
         } catch (error) {
             logger.error('Autocomplete suggestions failed', { query, type, error: error.message });
-            return { suggestions: [], type: 'error', error: error.message };
+            return {
+                query,
+                suggestions: [],
+                type,
+                count: 0,
+                generated_at: new Date().toISOString()
+            };
         }
     }
 
 
     async _fetchPublicationIdsByMatch(query, fetchLimit) {
-        await sphinxService.ensureConnection();
-
-        const matchExpr = sphinxService.formatMatchQuery(query);
         const cappedLimit = Math.max(1, Math.min(parseInt(fetchLimit, 10) || 50, 500));
 
-        const sql = `SELECT id, WEIGHT() as weight
-            FROM publications_poc
-            WHERE MATCH(${matchExpr})
-            ORDER BY weight DESC
-            LIMIT ${cappedLimit}
-            OPTION max_matches=${cappedLimit}`;
+        try {
+            await sphinxService.ensureConnection();
+            const matchExpr = sphinxService.formatMatchQuery(query);
+            const sql = `SELECT id, WEIGHT() as weight
+                FROM publications_poc
+                WHERE MATCH(${matchExpr})
+                ORDER BY weight DESC
+                LIMIT ${cappedLimit}
+                OPTION max_matches=${cappedLimit}`;
 
-        return new Promise((resolve, reject) => {
-            sphinxService.connection.query(sql, (error, results) => {
-                if (error) {
-                    reject(error);
-                    return;
-                }
-                resolve((results || []).map(row => row.id).filter(Number.isFinite));
+            return await new Promise((resolve, reject) => {
+                sphinxService.connection.query(sql, (error, results) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+                    resolve((results || []).map(row => row.id).filter(Number.isFinite));
+                });
             });
-        });
+        } catch (sphinxError) {
+            logger.warn('Autocomplete Sphinx path unavailable, falling back to MariaDB fulltext', {
+                error: sphinxError.message
+            });
+            const rows = await sequelize.query(
+                `SELECT sp.publication_id AS id
+                 FROM summary_publications sp
+                 WHERE MATCH(sp.title_search, sp.abstract_search) AGAINST (:q IN BOOLEAN MODE)
+                 LIMIT :lim`,
+                {
+                    replacements: { q: query, lim: cappedLimit },
+                    type: sequelize.QueryTypes.SELECT
+                }
+            );
+            return rows.map(r => r.id).filter(Number.isFinite);
+        }
     }
 
     async getTitleSuggestions(query, limit) {
