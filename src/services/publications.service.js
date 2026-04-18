@@ -8,6 +8,7 @@ const {
   formatPublicationDetails
 } = require('../dto/publication.dto');
 const { authorsFromJson } = require('../dto/helpers');
+const { withTimeout } = require('../utils/db');
 
 const normalizeDoiValue = (value) => {
   if (!value) return null;
@@ -263,6 +264,7 @@ class PublicationsService {
     let sphinxIds = null;
     let sphinxTotal = null;
     let sphinxQueryMs = null;
+    let sphinxFailed = false;
     let searchEngine = 'MariaDB';
 
     if (useSphinx) {
@@ -287,6 +289,8 @@ class PublicationsService {
         sphinxQueryMs = spx?.query_time ?? null;
         searchEngine = 'Sphinx+MariaDB';
       } catch (sphinxError) {
+        sphinxFailed = true;
+        searchEngine = 'MariaDB-fallback';
         logger.warn('Sphinx publication search unavailable, falling back to MariaDB', {
           error: sphinxError.message
         });
@@ -374,31 +378,78 @@ class PublicationsService {
           queryParams.push(...candidates);
         }
       }
-      if (filters.venue_name || filters.venue) {
-        whereConditions.push('sp.venue_search LIKE ?');
-        queryParams.push(`%${filters.venue_name || filters.venue}%`);
-      }
-      if (filters.author) {
-        whereConditions.push('sp.authors_search LIKE ?');
-        queryParams.push(`%${filters.author}%`);
-      }
-      if (filters.subject) {
-        whereConditions.push('sp.subjects_search LIKE ?');
-        queryParams.push(`%${filters.subject}%`);
+
+      if (sphinxFailed) {
+        if (searchTerm) {
+          whereConditions.push('(MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE))');
+          queryParams.push(searchTerm);
+        }
+        if (venueFilter) {
+          whereConditions.push('sp.venue_search LIKE ?');
+          queryParams.push(`%${venueFilter}%`);
+        }
+        if (authorFilter) {
+          whereConditions.push('sp.authors_search LIKE ?');
+          queryParams.push(`%${authorFilter}%`);
+        }
+        if (subjectFilter) {
+          whereConditions.push('sp.subjects_search LIKE ?');
+          queryParams.push(`%${subjectFilter}%`);
+        }
+      } else {
+        if (filters.venue_name || filters.venue) {
+          whereConditions.push('sp.venue_search LIKE ?');
+          queryParams.push(`%${filters.venue_name || filters.venue}%`);
+        }
+        if (filters.author) {
+          whereConditions.push('sp.authors_search LIKE ?');
+          queryParams.push(`%${filters.author}%`);
+        }
+        if (filters.subject) {
+          whereConditions.push('sp.subjects_search LIKE ?');
+          queryParams.push(`%${filters.subject}%`);
+        }
       }
     }
 
     const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
+    const COUNT_SAMPLE_LIMIT = 20000;
+    const COUNT_BUDGET_MS = 2000;
     let totalItems;
+    let totalIsExact = true;
     if (sphinxIds && sphinxTotal !== null) {
       totalItems = sphinxTotal;
+    } else if (whereConditions.length === 0) {
+      totalItems = 6567060;
+      totalIsExact = false;
     } else {
-      const [countRow] = await sequelize.query(
-        `SELECT COUNT(*) AS total FROM summary_publications sp ${whereClause}`,
-        { replacements: queryParams, type: sequelize.QueryTypes.SELECT }
-      );
-      totalItems = parseInt(countRow?.total) || 0;
+      const countSql = `
+        SELECT COUNT(*) AS total
+        FROM (
+          SELECT 1 FROM summary_publications sp ${whereClause}
+          LIMIT ${COUNT_SAMPLE_LIMIT}
+        ) AS limited_count
+      `;
+      try {
+        const [countRow] = await sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
+          replacements: queryParams,
+          type: sequelize.QueryTypes.SELECT
+        });
+        const limitedCount = parseInt(countRow?.total) || 0;
+        if (limitedCount === COUNT_SAMPLE_LIMIT) {
+          totalItems = limitedCount * 300;
+          totalIsExact = false;
+        } else {
+          totalItems = limitedCount;
+        }
+      } catch (countError) {
+        logger.warn('Publications list count query exceeded budget, returning estimate', {
+          error: countError.message
+        });
+        totalItems = 6567060;
+        totalIsExact = false;
+      }
     }
 
     const orderClause = sphinxIds && sphinxIds.length > 0
@@ -474,6 +525,7 @@ class PublicationsService {
       pagination: createPagination(page, limit, totalItems),
       meta: {
         engine: searchEngine,
+        pagination_total_exact: totalIsExact,
         sphinx_query_ms: sphinxQueryMs,
         elapsed_ms: Date.now() - t0
       }

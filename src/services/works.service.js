@@ -161,6 +161,8 @@ class WorksService {
 
       const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
+      const COUNT_SAMPLE_LIMIT = 20000;
+      const COUNT_BUDGET_MS = 2000;
       let totalItems = 0;
 
       if (queryParams.length === 0) {
@@ -171,17 +173,23 @@ class WorksService {
           FROM (
             SELECT 1 FROM summary_publications
             ${whereClause}
-            LIMIT 100000
+            LIMIT ${COUNT_SAMPLE_LIMIT}
           ) as limited_count
         `;
 
-        const [countResult] = await sequelize.query(withTimeout(countSql), {
-          replacements: queryParams,
-          type: sequelize.QueryTypes.SELECT
-        });
-
-        const limitedCount = parseInt(countResult?.total) || 0;
-        totalItems = limitedCount === 100000 ? limitedCount * 25 : limitedCount;
+        try {
+          const [countResult] = await sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
+            replacements: queryParams,
+            type: sequelize.QueryTypes.SELECT
+          });
+          const limitedCount = parseInt(countResult?.total) || 0;
+          totalItems = limitedCount === COUNT_SAMPLE_LIMIT ? limitedCount * 125 : limitedCount;
+        } catch (countError) {
+          logger.warn('Works vitrine count query exceeded budget, returning estimate', {
+            error: countError.message
+          });
+          totalItems = 2499146;
+        }
       }
 
       const selectSql = `
@@ -357,9 +365,13 @@ class WorksService {
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000');
     const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
+    const COUNT_SAMPLE_LIMIT = 20000;
+    const COUNT_BUDGET_MS = 2000;
     let totalItems;
+    let totalIsExact = true;
     if (filterParams.length === 0) {
       totalItems = 2499146;
+      totalIsExact = false;
     } else {
       const countSql = `
         SELECT COUNT(*) as total
@@ -367,19 +379,30 @@ class WorksService {
           SELECT 1 FROM summary_publications sp
           ${venueJoin}
           ${whereClause}
-          LIMIT 100000
+          LIMIT ${COUNT_SAMPLE_LIMIT}
         ) as limited_count
       `;
 
-      const [countRow] = await Promise.race([
-        sequelize.query(countSql, {
+      try {
+        const [countRow] = await sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
           replacements: filterParams,
           type: sequelize.QueryTypes.SELECT
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), dbTimeoutMs))
-      ]);
-      const limitedCount = parseInt(countRow?.total) || 0;
-      totalItems = limitedCount === 100000 ? limitedCount * 25 : limitedCount;
+        });
+        const limitedCount = parseInt(countRow?.total) || 0;
+        if (limitedCount === COUNT_SAMPLE_LIMIT) {
+          totalItems = limitedCount * 125;
+          totalIsExact = false;
+        } else {
+          totalItems = limitedCount;
+        }
+      } catch (countError) {
+        logger.warn('Works showcase count query exceeded budget, returning estimate', {
+          error: countError.message,
+          filters: Object.keys(filters || {})
+        });
+        totalItems = 2499146;
+        totalIsExact = false;
+      }
     }
 
     const queryParams = [...filterParams, limit, offset];
@@ -526,6 +549,9 @@ class WorksService {
     return {
       data: items,
       pagination: createPagination(page, limit, totalItems),
+      meta: {
+        pagination_total_exact: totalIsExact
+      },
       performance: {
         engine: 'MariaDB',
         query_type: 'showcase_enriched',

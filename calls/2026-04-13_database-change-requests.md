@@ -251,3 +251,150 @@ Always state explicitly whether the project itself will *call* the new
 artefact (procedure, function) or only *read* from it. The default is
 read-only — the consumer-only rule in `CLAUDE.md` means the project itself
 must never call any procedure.
+
+---
+
+## Request 4 — Index `summary_publications.language`
+
+**Status:** PENDING (filed 2026-04-17).
+
+### Why it matters to the API
+
+`/works`, `/search/works`, and `/publications` all accept a `language` filter.
+`summary_publications.language` has no index, so the filtered count and the
+inner `GROUP BY work_id` scan the full 6.1 M-row table. Before the API-side
+workaround landed in this change set the count query ran for 9–19 s per
+call; the endpoint timed out at 6 s (`Works showcase query failed: Operation
+timeout`). The current mitigation clamps the count sample to 20 000 with a
+2 s server-side budget (`SET STATEMENT max_statement_time`) and falls back
+to an estimate when the budget is exceeded. Adding the index lets the count
+run to completion and makes `pagination.total` exact again.
+
+### Current state
+
+```sql
+SHOW INDEX FROM summary_publications WHERE Column_name = 'language';
+-- Expected after applying: one row with Key_name = 'idx_summary_pubs_language'.
+-- Currently: zero rows.
+
+SELECT COUNT(*) FROM summary_publications WHERE language = 'en';
+-- Runtime today: 9-19 seconds (full table scan).
+```
+
+### Proposed change
+
+```sql
+ALTER TABLE summary_publications
+  ADD INDEX idx_summary_pubs_language (language);
+```
+
+### Verification
+
+```sql
+SHOW INDEX FROM summary_publications
+ WHERE Key_name = 'idx_summary_pubs_language';
+-- Expected: one row.
+
+EXPLAIN SELECT COUNT(*) FROM summary_publications WHERE language = 'en';
+-- Expected: key = 'idx_summary_pubs_language', ref = const.
+
+SELECT COUNT(*) FROM summary_publications WHERE language = 'pt';
+-- Expected runtime: sub-second.
+```
+
+API spot-check after the index lands:
+
+```
+curl -s 'http://localhost:1211/works?language=pt&limit=10' | jq '.pagination.total, .meta.pagination_total_exact'
+-- Expected: a small integer (~36 000) and `true`.
+```
+
+### Rollback
+
+```sql
+ALTER TABLE summary_publications DROP INDEX idx_summary_pubs_language;
+```
+
+---
+
+## Request 5 — Restore Sphinx `publications_poc` index
+
+**Status:** PENDING (filed 2026-04-17). Operator-owned (Sphinx indexer
+pipeline, not DDL).
+
+### Why it matters to the API
+
+`src/services/sphinx.service.js` uses `publications_poc` as the primary
+Sphinx index for every publication search path (`/publications?q=…`,
+`/publications?venue=…`, `/publications?author=…`, `/publications?subject=…`,
+`/search/works?q=…` fulltext routing). Right now the searchd runtime has
+only `persons_poc`, `publications_rt`, and `venues_poc` — `publications_poc`
+is **absent**:
+
+```
+mysql -h127.0.0.1 -P9306 --ssl=0 -e 'SHOW TABLES'
+Index            Type
+persons_poc      local
+publications_rt  rt
+venues_poc       local
+```
+
+Every publication search therefore throws `no enabled local indexes to
+search`, the service catches it, and the MariaDB fallback runs. Before this
+change set the fallback was a bug: `q` / `venue` / `author` / `subject`
+filters were dropped entirely, so `COUNT(*)` returned the whole corpus
+(6 567 060) and the first page was whatever `publication_id DESC` returned,
+completely unrelated to the query term. The fix that landed in this change
+set maps those filters to `MATCH ... AGAINST` (for `q`) and `LIKE` (for
+`venue` / `author` / `subject`) against the `summary_publications` fulltext
+indexes, so the results are now correct — but they are slower and less
+precise than Sphinx. Restoring the Sphinx index returns the fast path.
+
+### Current state
+
+```
+mysql -h127.0.0.1 -P9306 --ssl=0 -e 'SELECT COUNT(*) FROM publications_poc'
+ERROR 1064 (42000): no enabled local indexes to search
+```
+
+### Proposed change
+
+Rebuild and load the `publications_poc` index from the unified template
+(`config/sphinx-unified.conf` in the repo) following the standard
+maintenance runbook:
+
+```
+scripts/manage.sh index publications_poc
+# or, if a full rebuild is needed:
+scripts/manage.sh index:fast
+```
+
+Both commands are heavy and must be triggered manually by the operator
+(`CLAUDE.md` → `## Scripts → Agent rule`). No DDL changes to the `data`
+MariaDB schema are required — this is a Sphinx-side artefact only.
+
+### Verification
+
+```
+mysql -h127.0.0.1 -P9306 --ssl=0 -e 'SHOW TABLES'
+-- Expected: a `publications_poc` row appears, Type = `local`.
+
+mysql -h127.0.0.1 -P9306 --ssl=0 -e \
+  "SELECT COUNT(*) FROM publications_poc WHERE MATCH('amazonia'); SHOW META"
+-- Expected: a non-zero count, total_found > 0, time < 100 ms.
+```
+
+API spot-check:
+
+```
+curl -s 'http://localhost:1211/publications?q=amazonia&limit=1' \
+  | jq '.meta.engine, .pagination.total'
+-- Expected: `"Sphinx+MariaDB"` and a count in the low thousands
+-- (the MariaDB fallback currently reports 6106 for the same query).
+```
+
+### Rollback
+
+Stop the `publications_poc` indexer; the API automatically falls back to
+the MariaDB path implemented in
+`src/services/publications.service.js::getPublications`.
