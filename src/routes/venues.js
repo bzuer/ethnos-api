@@ -52,17 +52,66 @@ const venuesController = require('../controllers/venues.controller');
  *         name: sortBy
  *         schema:
  *           type: string
- *           enum: [name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count]
+ *           enum: [name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest]
  *           default: score
- *         description: Field to sort by. Defaults to `score` (global ranking score) so the most important venues come first.
+ *         description: |
+ *           Field to sort by. Defaults to `score` (global ranking score) so the most important venues come first.
+ *           `oldest` is an alias for `coverage_start_year` (ASC by default — oldest coverage first); `newest` is an alias
+ *           for `coverage_end_year` (DESC by default — most recently covered first). Rows with NULL coverage years are
+ *           always pushed to the tail regardless of direction.
  *         example: score
  *       - in: query
  *         name: sortOrder
  *         schema:
  *           type: string
  *           enum: [ASC, DESC]
- *         description: Sort order. When omitted, numeric/ranking fields default to `DESC`; `id`, `name`, and `type` default to `ASC`.
+ *         description: Sort order. When omitted, numeric/ranking fields default to `DESC`; `id`, `name`, `type`, `coverage_start_year`, and `oldest` default to `ASC`; `coverage_end_year` and `newest` default to `DESC`.
  *         example: DESC
+ *       - in: query
+ *         name: coverage_from
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Keep only venues whose `coverage_start_year` is greater than or equal to this year.
+ *         example: 1950
+ *       - in: query
+ *         name: coverage_to
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Keep only venues whose `coverage_end_year` is less than or equal to this year.
+ *         example: 2024
+ *       - in: query
+ *         name: coverage_start_from
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive lower bound on `coverage_start_year`.
+ *       - in: query
+ *         name: coverage_start_to
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive upper bound on `coverage_start_year`.
+ *       - in: query
+ *         name: coverage_end_from
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive lower bound on `coverage_end_year`.
+ *       - in: query
+ *         name: coverage_end_to
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive upper bound on `coverage_end_year`.
+ *       - in: query
+ *         name: active_in_year
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Keep only venues whose coverage range covers the supplied year (coverage_start_year <= year <= coverage_end_year).
+ *         example: 2010
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
@@ -85,12 +134,49 @@ router.get(
       .withMessage('Search term must be between 1 and 200 characters'),
     query('sortBy')
       .optional()
-      .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count'])
-      .withMessage('Sort field must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count'),
+      .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count', 'coverage_start_year', 'coverage_end_year', 'oldest', 'newest'])
+      .withMessage('Sort field must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest'),
+    query('sort_by')
+      .optional()
+      .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count', 'coverage_start_year', 'coverage_end_year', 'oldest', 'newest'])
+      .withMessage('sort_by must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest'),
     query('sortOrder')
       .optional()
       .isIn(['ASC', 'DESC'])
       .withMessage('Sort order must be ASC or DESC'),
+    query('sort_order')
+      .optional()
+      .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+      .isIn(['ASC', 'DESC'])
+      .withMessage('sort_order must be ASC or DESC'),
+    query('coverage_from')
+      .optional({ values: 'falsy' })
+      .isInt({ min: 0 })
+      .withMessage('coverage_from must be a non-negative integer'),
+    query('coverage_to')
+      .optional({ values: 'falsy' })
+      .isInt({ min: 0 })
+      .withMessage('coverage_to must be a non-negative integer'),
+    query('coverage_start_from')
+      .optional({ values: 'falsy' })
+      .isInt({ min: 0 })
+      .withMessage('coverage_start_from must be a non-negative integer'),
+    query('coverage_start_to')
+      .optional({ values: 'falsy' })
+      .isInt({ min: 0 })
+      .withMessage('coverage_start_to must be a non-negative integer'),
+    query('coverage_end_from')
+      .optional({ values: 'falsy' })
+      .isInt({ min: 0 })
+      .withMessage('coverage_end_from must be a non-negative integer'),
+    query('coverage_end_to')
+      .optional({ values: 'falsy' })
+      .isInt({ min: 0 })
+      .withMessage('coverage_end_to must be a non-negative integer'),
+    query('active_in_year')
+      .optional({ values: 'falsy' })
+      .isInt({ min: 0 })
+      .withMessage('active_in_year must be a non-negative integer'),
     query('include_legacy')
       .optional()
       .isBoolean()

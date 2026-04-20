@@ -42,7 +42,11 @@ const SUMMARY_SORT_FIELDS = {
   impact_factor: 'sv.impact_factor',
   h_index: 'sv.h_index',
   score: 'sv.global_ranking_score',
-  ranking: 'sv.global_ranking_score'
+  ranking: 'sv.global_ranking_score',
+  coverage_start_year: 'sv.coverage_start_year',
+  coverage_end_year: 'sv.coverage_end_year',
+  oldest: 'sv.coverage_start_year',
+  newest: 'sv.coverage_end_year'
 };
 
 const SUMMARY_BASE_SELECT = `
@@ -514,8 +518,30 @@ class VenuesService {
       sortBy,
       sortOrder,
       includeLegacyMetrics = false,
-      min_id
+      min_id,
+      coverage_from,
+      coverage_to,
+      coverage_start_from,
+      coverage_start_to,
+      coverage_end_from,
+      coverage_end_to,
+      active_in_year
     } = options;
+
+    const toYear = (value) => {
+      if (value === undefined || value === null || value === '') return null;
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed < 0) return null;
+      return parsed;
+    };
+
+    const coverageFrom = toYear(coverage_from);
+    const coverageTo = toYear(coverage_to);
+    const coverageStartFrom = toYear(coverage_start_from);
+    const coverageStartTo = toYear(coverage_start_to);
+    const coverageEndFrom = toYear(coverage_end_from);
+    const coverageEndTo = toYear(coverage_end_to);
+    const activeInYear = toYear(active_in_year);
 
     const where = [];
     const replacements = { lim: limit, off: offset };
@@ -535,22 +561,57 @@ class VenuesService {
       replacements.term = `%${String(search).trim()}%`;
     }
 
+    if (coverageFrom !== null) {
+      where.push('sv.coverage_start_year >= :coverageFrom');
+      replacements.coverageFrom = coverageFrom;
+    }
+    if (coverageTo !== null) {
+      where.push('sv.coverage_end_year <= :coverageTo');
+      replacements.coverageTo = coverageTo;
+    }
+    if (coverageStartFrom !== null) {
+      where.push('sv.coverage_start_year >= :coverageStartFrom');
+      replacements.coverageStartFrom = coverageStartFrom;
+    }
+    if (coverageStartTo !== null) {
+      where.push('sv.coverage_start_year <= :coverageStartTo');
+      replacements.coverageStartTo = coverageStartTo;
+    }
+    if (coverageEndFrom !== null) {
+      where.push('sv.coverage_end_year >= :coverageEndFrom');
+      replacements.coverageEndFrom = coverageEndFrom;
+    }
+    if (coverageEndTo !== null) {
+      where.push('sv.coverage_end_year <= :coverageEndTo');
+      replacements.coverageEndTo = coverageEndTo;
+    }
+    if (activeInYear !== null) {
+      where.push('sv.coverage_start_year <= :activeInYear AND sv.coverage_end_year >= :activeInYear');
+      replacements.activeInYear = activeInYear;
+    }
+
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const requestedSortBy = typeof sortBy === 'string' && sortBy.trim() ? sortBy.trim().toLowerCase() : null;
     const normalizedSortBy = requestedSortBy && SUMMARY_SORT_FIELDS[requestedSortBy] ? requestedSortBy : 'score';
     const sortField = SUMMARY_SORT_FIELDS[normalizedSortBy];
-    const descByDefault = new Set(['score', 'ranking', 'impact_factor', 'citescore', 'sjr', 'snip', 'works_count', 'cited_by_count', 'h_index', 'i10_index']);
+    const descByDefault = new Set(['score', 'ranking', 'impact_factor', 'citescore', 'sjr', 'snip', 'works_count', 'cited_by_count', 'h_index', 'i10_index', 'coverage_end_year', 'newest']);
+    const ascByDefault = new Set(['coverage_start_year', 'oldest']);
     const requestedOrder = typeof sortOrder === 'string' ? sortOrder.trim().toUpperCase() : '';
     const sortOrderFinal = requestedOrder === 'ASC' || requestedOrder === 'DESC'
       ? requestedOrder
-      : (descByDefault.has(normalizedSortBy) ? 'DESC' : 'ASC');
+      : (ascByDefault.has(normalizedSortBy) ? 'ASC' : (descByDefault.has(normalizedSortBy) ? 'DESC' : 'ASC'));
+
+    const coverageSortKeys = new Set(['coverage_start_year', 'coverage_end_year', 'oldest', 'newest']);
+    const sortNullGuard = coverageSortKeys.has(normalizedSortBy)
+      ? `${sortField} IS NULL, `
+      : '';
 
     const listSql = `
       SELECT
         ${SUMMARY_BASE_SELECT}
       ${SUMMARY_BASE_JOIN}
       ${whereClause}
-      ORDER BY ${sortField} ${sortOrderFinal}, COALESCE(sv.global_ranking_score, 0) DESC, sv.name_search ASC
+      ORDER BY ${sortNullGuard}${sortField} ${sortOrderFinal}, COALESCE(sv.global_ranking_score, 0) DESC, sv.name_search ASC
       LIMIT :lim OFFSET :off
     `;
     const countSql = `SELECT COUNT(*) AS total ${SUMMARY_BASE_JOIN} ${whereClause}`;

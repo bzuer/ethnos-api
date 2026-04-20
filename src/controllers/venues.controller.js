@@ -59,10 +59,17 @@ class VenuesController {
         ...pagination,
         type: req.query.type,
         search: req.query.search,
-        sortBy: req.query.sortBy,
-        sortOrder: req.query.sortOrder,
+        sortBy: req.query.sortBy ?? req.query.sort_by,
+        sortOrder: req.query.sortOrder ?? req.query.sort_order,
         includeLegacyMetrics,
-        min_id: minId
+        min_id: minId,
+        coverage_from: req.query.coverage_from,
+        coverage_to: req.query.coverage_to,
+        coverage_start_from: req.query.coverage_start_from,
+        coverage_start_to: req.query.coverage_start_to,
+        coverage_end_from: req.query.coverage_end_from,
+        coverage_end_to: req.query.coverage_end_to,
+        active_in_year: req.query.active_in_year
       };
 
       const result = await venuesService.getVenues(options);
