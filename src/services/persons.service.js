@@ -403,9 +403,47 @@ class PersonsService {
     const pagination = normalizePagination(options);
     const { page, limit, offset } = pagination;
     const { role } = options;
-    
-    const cacheKey = `person:${personId}:works:${JSON.stringify(options)}`;
-    
+
+    const toNonNegativeInt = (value) => {
+      if (value === undefined || value === null || value === '') return null;
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed < 0) return null;
+      return parsed;
+    };
+
+    const citedByMin = toNonNegativeInt(options.cited_by_min ?? options.citation_count_min);
+    const citedByMax = toNonNegativeInt(options.cited_by_max ?? options.citation_count_max);
+    const yearFrom = toNonNegativeInt(options.year_from);
+    const yearTo = toNonNegativeInt(options.year_to);
+
+    const sortKey = (typeof options.sort_by === 'string'
+      ? options.sort_by
+      : (typeof options.sortBy === 'string' ? options.sortBy : '')).toLowerCase();
+    const sortDir = (typeof options.sort_order === 'string'
+      ? options.sort_order
+      : (typeof options.sortOrder === 'string' ? options.sortOrder : 'DESC')).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    let orderClause;
+    switch (sortKey) {
+      case 'cited_by_count':
+      case 'citation_count':
+      case 'citations':
+        orderClause = `COALESCE(sp_a.work_citation_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
+        break;
+      case 'references_count':
+      case 'reference_count':
+        orderClause = `COALESCE(sp_a.work_reference_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
+        break;
+      case 'publication_year':
+      case 'year':
+        orderClause = `COALESCE(pub.year, 2024) ${sortDir}, w.id DESC`;
+        break;
+      default:
+        orderClause = 'COALESCE(pub.year, 2024) DESC, w.id DESC';
+    }
+
+    const cacheKey = `person:${personId}:works:v2:${JSON.stringify({ page, limit, offset, role, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
+
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) {
@@ -421,11 +459,28 @@ class PersonsService {
         replacements.role = role.toUpperCase();
       }
 
+      if (yearFrom !== null) {
+        whereConditions.push('COALESCE(pub.year, sp_a.publication_year) >= :yearFrom');
+        replacements.yearFrom = yearFrom;
+      }
+      if (yearTo !== null) {
+        whereConditions.push('COALESCE(pub.year, sp_a.publication_year) <= :yearTo');
+        replacements.yearTo = yearTo;
+      }
+      if (citedByMin !== null) {
+        whereConditions.push('COALESCE(sp_a.work_citation_count, 0) >= :citedByMin');
+        replacements.citedByMin = citedByMin;
+      }
+      if (citedByMax !== null) {
+        whereConditions.push('COALESCE(sp_a.work_citation_count, 0) <= :citedByMax');
+        replacements.citedByMax = citedByMax;
+      }
+
       const whereClause = whereConditions.join(' AND ');
 
       const [works, countResult] = await Promise.all([
         sequelize.query(`
-          SELECT 
+          SELECT
             w.id,
             w.title,
             w.subtitle,
@@ -443,6 +498,8 @@ class PersonsService {
             pub.issue,
           pub.pages,
           sp_a.authors_json,
+          sp_a.work_citation_count,
+          sp_a.work_reference_count,
           pub.open_access,
           (
             SELECT JSON_LENGTH(sp_a2.authors_json)
@@ -459,16 +516,23 @@ class PersonsService {
             WHERE work_id = w.id
           )
           WHERE ${whereClause}
-          ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
+          ORDER BY ${orderClause}
           LIMIT :limit OFFSET :offset
         `, {
           replacements,
           type: sequelize.QueryTypes.SELECT
         }),
-        
+
         sequelize.query(`
           SELECT COUNT(*) as total
           FROM authorships a
+          INNER JOIN works w ON a.work_id = w.id
+          LEFT JOIN publications pub ON w.id = pub.work_id
+          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
+            SELECT MAX(publication_id)
+            FROM summary_publications
+            WHERE work_id = w.id
+          )
           WHERE ${whereClause}
         `, {
           replacements: Object.fromEntries(
@@ -505,6 +569,8 @@ class PersonsService {
           doi: work.doi,
           publication_year: work.year !== undefined && work.year !== null ? parseInt(work.year, 10) : null,
           open_access: work.open_access === 1 || work.open_access === true,
+          cited_by_count: parseInt(work.work_citation_count, 10) || 0,
+          references_count: parseInt(work.work_reference_count, 10) || 0,
           authorship: {
             role: work.role,
             position: work.position,

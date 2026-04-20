@@ -198,9 +198,15 @@ class VenuesController {
 
       const result = await venuesService.getVenueWorks(id, {
         ...pagination,
-        year
+        year,
+        year_from: req.query.year_from,
+        year_to: req.query.year_to,
+        cited_by_min: req.query.cited_by_min ?? req.query.citation_count_min,
+        cited_by_max: req.query.cited_by_max ?? req.query.citation_count_max,
+        sort_by: req.query.sort_by ?? req.query.sortBy,
+        sort_order: req.query.sort_order ?? req.query.sortOrder
       });
-      
+
       const meta = {};
       if (year !== null) {
         meta.filters = { year };

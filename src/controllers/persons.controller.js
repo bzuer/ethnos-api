@@ -100,8 +100,19 @@ class PersonsController {
       const pagination = normalizePagination(req.query);
       const { page, limit, offset } = pagination;
       const { role } = req.query;
-      
-      const result = await personsService.getPersonWorks(id, { page, limit, offset, role });
+
+      const result = await personsService.getPersonWorks(id, {
+        page,
+        limit,
+        offset,
+        role,
+        year_from: req.query.year_from,
+        year_to: req.query.year_to,
+        cited_by_min: req.query.cited_by_min ?? req.query.citation_count_min,
+        cited_by_max: req.query.cited_by_max ?? req.query.citation_count_max,
+        sort_by: req.query.sort_by ?? req.query.sortBy,
+        sort_order: req.query.sort_order ?? req.query.sortOrder
+      });
       
       if (!result) {
         return res.fail(`Person with ID ${id} not found`, {

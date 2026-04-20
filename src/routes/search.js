@@ -73,7 +73,24 @@ const validateWorksSearch = [
   query('include_facets')
     .optional({ values: 'falsy' })
     .isIn(['1', '0', 'true', 'false'])
-    .withMessage('include_facets must be boolean-like (1/0/true/false)')
+    .withMessage('include_facets must be boolean-like (1/0/true/false)'),
+  query('cited_by_min')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_min must be a non-negative integer'),
+  query('cited_by_max')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_max must be a non-negative integer'),
+  query('sort_by')
+    .optional({ values: 'falsy' })
+    .isIn(['cited_by_count', 'citation_count', 'references_count', 'reference_count', 'publication_year', 'year', 'id', 'work_id', 'relevance'])
+    .withMessage('sort_by must be one of: cited_by_count, references_count, publication_year, id, relevance'),
+  query('sort_order')
+    .optional({ values: 'falsy' })
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+    .isIn(['ASC', 'DESC'])
+    .withMessage('sort_order must be ASC or DESC')
 ];
 
 /**
@@ -152,6 +169,32 @@ const validateWorksSearch = [
  *         schema:
  *           type: string
  *           example: "anthropology"
+ *       - name: cited_by_min
+ *         in: query
+ *         description: Keep only works whose cited_by_count is greater than or equal to this value.
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         example: 10
+ *       - name: cited_by_max
+ *         in: query
+ *         description: Keep only works whose cited_by_count is less than or equal to this value.
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *       - name: sort_by
+ *         in: query
+ *         description: Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance` is only meaningful when `q`, `venue`, `author`, or `subject` is set.
+ *         schema:
+ *           type: string
+ *           enum: [cited_by_count, references_count, publication_year, id, relevance]
+ *       - name: sort_order
+ *         in: query
+ *         description: Sort direction for `sort_by`. Defaults to DESC.
+ *         schema:
+ *           type: string
+ *           enum: [ASC, DESC]
+ *           default: DESC
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -360,6 +403,31 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  *         schema:
  *           type: string
  *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
+ *       - name: cited_by_min
+ *         in: query
+ *         description: Keep only works whose cited_by_count is greater than or equal to this value.
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *       - name: cited_by_max
+ *         in: query
+ *         description: Keep only works whose cited_by_count is less than or equal to this value.
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *       - name: sort_by
+ *         in: query
+ *         description: Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance` is only meaningful when a full-text clause is set.
+ *         schema:
+ *           type: string
+ *           enum: [cited_by_count, references_count, publication_year, id, relevance]
+ *       - name: sort_order
+ *         in: query
+ *         description: Sort direction for `sort_by`. Defaults to DESC.
+ *         schema:
+ *           type: string
+ *           enum: [ASC, DESC]
+ *           default: DESC
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -415,6 +483,13 @@ const advancedSearch = async (req, res, next) => {
     const sphinxActive = String(process.env.SEARCH_ENGINE || 'SPHINX').toUpperCase() !== 'MARIADB';
     const useSphinx = sphinxActive && !sphinxHealthCheck.rollbackActive;
 
+    const toNonNegativeInt = (value) => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+      return parsed;
+    };
+
     const filters = {
       work_type: req.query.work_type || req.query.type,
       language: req.query.language,
@@ -426,8 +501,21 @@ const advancedSearch = async (req, res, next) => {
       open_access: req.query.open_access === 'true' ? true :
         req.query.open_access === 'false' ? false : undefined,
       author: (req.query.author || '').trim() || undefined,
-      subject: (req.query.subject || '').trim() || undefined
+      subject: (req.query.subject || '').trim() || undefined,
+      citation_count_min: toNonNegativeInt(req.query.cited_by_min ?? req.query.citation_count_min),
+      citation_count_max: toNonNegativeInt(req.query.cited_by_max ?? req.query.citation_count_max)
     };
+
+    const sortBy = req.query.sort_by ?? req.query.sortBy ?? null;
+    const sortOrder = req.query.sort_order ?? req.query.sortOrder ?? null;
+    const sphinxOrderBy = (() => {
+      const dir = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'ASC' ? 'asc' : 'desc';
+      const key = (typeof sortBy === 'string' ? sortBy : '').toLowerCase();
+      if (['cited_by_count', 'citation_count', 'citations'].includes(key)) return `cited_by_count_${dir}`;
+      if (['publication_year', 'year'].includes(key)) return `publication_year_${dir}`;
+      if (key === 'relevance') return 'relevance';
+      return null;
+    })();
 
     Object.keys(filters).forEach((key) => {
       if (filters[key] === undefined || filters[key] === null || filters[key] === '') {
@@ -440,7 +528,7 @@ const advancedSearch = async (req, res, next) => {
     let results = null;
     if (useSphinx) {
       try {
-        results = await sphinxService.searchWithFacets(query, filters, { limit, offset });
+        results = await sphinxService.searchWithFacets(query, filters, { limit, offset, orderBy: sphinxOrderBy });
       } catch (sphinxError) {
         logger.warn('Advanced search Sphinx path unavailable, falling back to MariaDB', {
           error: sphinxError.message
@@ -466,7 +554,11 @@ const advancedSearch = async (req, res, next) => {
         open_access: filters.open_access,
         venue_name: filters.venue_name,
         author: filters.author,
-        subject: filters.subject
+        subject: filters.subject,
+        cited_by_min: filters.citation_count_min,
+        cited_by_max: filters.citation_count_max,
+        sort_by: sortBy,
+        sort_order: sortOrder
       };
       const fallback = await worksService.getWorks(worksFilters);
       const controllerTime = Date.now() - start;
@@ -540,7 +632,24 @@ const validateAdvancedSearch = [
         }
       }
       return true;
-    })
+    }),
+  query('cited_by_min')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_min must be a non-negative integer'),
+  query('cited_by_max')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_max must be a non-negative integer'),
+  query('sort_by')
+    .optional({ values: 'falsy' })
+    .isIn(['cited_by_count', 'citation_count', 'references_count', 'reference_count', 'publication_year', 'year', 'id', 'work_id', 'relevance'])
+    .withMessage('sort_by must be one of: cited_by_count, references_count, publication_year, id, relevance'),
+  query('sort_order')
+    .optional({ values: 'falsy' })
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+    .isIn(['ASC', 'DESC'])
+    .withMessage('sort_order must be ASC or DESC')
 ];
 
 router.get('/advanced', validateAdvancedSearch, enhancedValidationHandler, advancedSearch);

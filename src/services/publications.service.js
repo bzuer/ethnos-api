@@ -47,6 +47,53 @@ const toBoolFlag = (value) => {
   return null;
 };
 
+const toNonNegativeInt = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+};
+
+const resolvePublicationsOrderClause = (sortBy, sortOrder) => {
+  const dir = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+  const key = (typeof sortBy === 'string' ? sortBy : '').toLowerCase();
+  switch (key) {
+    case 'cited_by_count':
+    case 'citation_count':
+    case 'citations':
+      return `sp.work_citation_count ${dir}, sp.publication_year DESC, sp.publication_id DESC`;
+    case 'references_count':
+    case 'reference_count':
+      return `sp.work_reference_count ${dir}, sp.publication_year DESC, sp.publication_id DESC`;
+    case 'publication_year':
+    case 'year':
+      return `sp.publication_year ${dir}, sp.publication_id DESC`;
+    case 'id':
+    case 'publication_id':
+      return `sp.publication_id ${dir}`;
+    default:
+      return null;
+  }
+};
+
+const resolveSphinxPublicationOrderBy = (sortBy, sortOrder) => {
+  const dir = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'ASC' ? 'asc' : 'desc';
+  const key = (typeof sortBy === 'string' ? sortBy : '').toLowerCase();
+  switch (key) {
+    case 'cited_by_count':
+    case 'citation_count':
+    case 'citations':
+      return `cited_by_count_${dir}`;
+    case 'publication_year':
+    case 'year':
+      return `publication_year_${dir}`;
+    case 'relevance':
+      return 'relevance';
+    default:
+      return null;
+  }
+};
+
 class PublicationsService {
   async getPublicationById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
@@ -267,6 +314,13 @@ class PublicationsService {
     let sphinxFailed = false;
     let searchEngine = 'MariaDB';
 
+    const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
+    const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
+    const sortBy = filters.sort_by ?? filters.sortBy ?? null;
+    const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
+    const sphinxOrderBy = resolveSphinxPublicationOrderBy(sortBy, sortOrder);
+    const mariaOrderClause = resolvePublicationsOrderClause(sortBy, sortOrder);
+
     if (useSphinx) {
       try {
         const spx = await sphinxService.searchPublicationIds(searchTerm, {
@@ -282,8 +336,10 @@ class PublicationsService {
           venue_id: filters.venue_id,
           publisher_id: filters.publisher_id,
           work_id: filters.work_id,
-          has_files: filters.has_files
-        }, { limit, offset });
+          has_files: filters.has_files,
+          citation_count_min: citedByMin ?? filters.citation_count_min,
+          citation_count_max: citedByMax ?? filters.citation_count_max
+        }, { limit, offset, orderBy: sphinxOrderBy });
         sphinxIds = Array.isArray(spx?.publication_ids) ? spx.publication_ids : (Array.isArray(spx?.ids) ? spx.ids : []);
         sphinxTotal = parseInt(spx?.total ?? sphinxIds.length, 10) || 0;
         sphinxQueryMs = spx?.query_time ?? null;
@@ -379,6 +435,15 @@ class PublicationsService {
         }
       }
 
+      if (citedByMin !== null) {
+        whereConditions.push('sp.work_citation_count >= ?');
+        queryParams.push(citedByMin);
+      }
+      if (citedByMax !== null) {
+        whereConditions.push('sp.work_citation_count <= ?');
+        queryParams.push(citedByMax);
+      }
+
       if (sphinxFailed) {
         if (searchTerm) {
           whereConditions.push('(MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE))');
@@ -441,7 +506,7 @@ class PublicationsService {
 
     const orderClause = sphinxIds && sphinxIds.length > 0
       ? `ORDER BY FIELD(sp.publication_id, ${sphinxIds.map(() => '?').join(',')})`
-      : 'ORDER BY sp.publication_id DESC';
+      : `ORDER BY ${mariaOrderClause || 'sp.publication_id DESC'}`;
 
     const orderParams = sphinxIds && sphinxIds.length > 0 ? [...sphinxIds] : [];
     const limitClause = sphinxIds ? '' : 'LIMIT ? OFFSET ?';

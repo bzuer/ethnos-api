@@ -663,7 +663,46 @@ class VenuesService {
     const pagination = normalizePagination(options);
     const { page, limit, offset } = pagination;
     const { year = null } = options;
-    const cacheKey = `venue:${venueId}:works:${JSON.stringify({ page, limit, offset, year })}`;
+
+    const toNonNegativeInt = (value) => {
+      if (value === undefined || value === null || value === '') return null;
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed < 0) return null;
+      return parsed;
+    };
+
+    const citedByMin = toNonNegativeInt(options.cited_by_min ?? options.citation_count_min);
+    const citedByMax = toNonNegativeInt(options.cited_by_max ?? options.citation_count_max);
+    const yearFrom = toNonNegativeInt(options.year_from);
+    const yearTo = toNonNegativeInt(options.year_to);
+
+    const sortKey = (typeof options.sort_by === 'string'
+      ? options.sort_by
+      : (typeof options.sortBy === 'string' ? options.sortBy : '')).toLowerCase();
+    const sortDir = (typeof options.sort_order === 'string'
+      ? options.sort_order
+      : (typeof options.sortOrder === 'string' ? options.sortOrder : 'DESC')).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    let orderClause;
+    switch (sortKey) {
+      case 'cited_by_count':
+      case 'citation_count':
+      case 'citations':
+        orderClause = `COALESCE(sp.work_citation_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
+        break;
+      case 'references_count':
+      case 'reference_count':
+        orderClause = `COALESCE(sp.work_reference_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
+        break;
+      case 'publication_year':
+      case 'year':
+        orderClause = `p.year ${sortDir}, w.id DESC`;
+        break;
+      default:
+        orderClause = 'p.year DESC, w.id DESC';
+    }
+
+    const cacheKey = `venue:${venueId}:works:v2:${JSON.stringify({ page, limit, offset, year, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
 
     const cached = await cacheService.get(cacheKey);
     if (cached) {
@@ -677,8 +716,32 @@ class VenuesService {
       where.push('p.year = :year');
       replacements.year = parseInt(year, 10);
     }
+    if (yearFrom !== null) {
+      where.push('p.year >= :yearFrom');
+      replacements.yearFrom = yearFrom;
+    }
+    if (yearTo !== null) {
+      where.push('p.year <= :yearTo');
+      replacements.yearTo = yearTo;
+    }
+    if (citedByMin !== null) {
+      where.push('COALESCE(sp.work_citation_count, 0) >= :citedByMin');
+      replacements.citedByMin = citedByMin;
+    }
+    if (citedByMax !== null) {
+      where.push('COALESCE(sp.work_citation_count, 0) <= :citedByMax');
+      replacements.citedByMax = citedByMax;
+    }
 
     const whereClause = `WHERE ${where.join(' AND ')}`;
+
+    const summaryJoin = `
+      LEFT JOIN summary_publications sp ON sp.publication_id = (
+        SELECT MAX(publication_id)
+        FROM summary_publications
+        WHERE work_id = w.id
+      )
+    `;
 
     const listSql = `
       SELECT
@@ -695,11 +758,14 @@ class VenuesService {
         p.doi,
         p.open_access,
         p.peer_reviewed,
-        p.publication_date
+        p.publication_date,
+        sp.work_citation_count,
+        sp.work_reference_count
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
+      ${summaryJoin}
       ${whereClause}
-      ORDER BY p.year DESC, w.id DESC
+      ORDER BY ${orderClause}
       LIMIT :lim OFFSET :off
     `;
 
@@ -707,6 +773,7 @@ class VenuesService {
       SELECT COUNT(*) AS total
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
+      ${summaryJoin}
       ${whereClause}
     `;
 
@@ -771,6 +838,8 @@ class VenuesService {
         open_access: toNullableBoolean(w.open_access),
         peer_reviewed: toNullableBoolean(w.peer_reviewed),
         publication_date: w.publication_date,
+        cited_by_count: toInt(w.work_citation_count, 0),
+        references_count: toInt(w.work_reference_count, 0),
         author_count: authors.length,
         authors
       };

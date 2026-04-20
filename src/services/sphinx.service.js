@@ -110,8 +110,14 @@ class SphinxService {
             if (filters.citation_count_min) {
                 appendWhere('work_citation_count >= ?', parseInt(filters.citation_count_min, 10));
             }
+            if (filters.citation_count_max) {
+                appendWhere('work_citation_count <= ?', parseInt(filters.citation_count_max, 10));
+            }
             if (filters.reference_count_min) {
                 appendWhere('work_reference_count >= ?', parseInt(filters.reference_count_min, 10));
+            }
+            if (filters.reference_count_max) {
+                appendWhere('work_reference_count <= ?', parseInt(filters.reference_count_max, 10));
             }
 
             const hasFilesFlag = this._toTinyIntFlag(filters.has_files);
@@ -283,8 +289,14 @@ class SphinxService {
             if (filters.citation_count_min) {
                 appendWhere('work_citation_count >= ?', parseInt(filters.citation_count_min, 10));
             }
+            if (filters.citation_count_max) {
+                appendWhere('work_citation_count <= ?', parseInt(filters.citation_count_max, 10));
+            }
             if (filters.reference_count_min) {
                 appendWhere('work_reference_count >= ?', parseInt(filters.reference_count_min, 10));
+            }
+            if (filters.reference_count_max) {
+                appendWhere('work_reference_count <= ?', parseInt(filters.reference_count_max, 10));
             }
 
             const hasFilesFlag = this._toTinyIntFlag(filters.has_files);
@@ -1088,8 +1100,13 @@ class SphinxService {
             relevance: 'relevance DESC, publication_year DESC, id DESC',
             year_desc: 'publication_year DESC, id DESC',
             year_asc: 'publication_year ASC, id ASC',
+            publication_year_desc: 'publication_year DESC, id DESC',
+            publication_year_asc: 'publication_year ASC, id ASC',
             citations_desc: 'work_citation_count DESC, publication_year DESC, id DESC',
-            citations_asc: 'work_citation_count ASC, publication_year ASC, id ASC'
+            citations_asc: 'work_citation_count ASC, publication_year ASC, id ASC',
+            cited_by_count_desc: 'work_citation_count DESC, publication_year DESC, id DESC',
+            cited_by_count_asc: 'work_citation_count ASC, publication_year ASC, id ASC',
+            cited_by_count: 'work_citation_count DESC, publication_year DESC, id DESC'
         };
 
         return this._sanitizeOrderClause(orderBy, allowed, 'default');

@@ -15,6 +15,53 @@ const subjectsFromJson = (value) =>
     assigned_by: 'SYSTEM'
   }));
 
+const toNonNegativeInt = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+};
+
+const resolveWorksOrderClause = (sortBy, sortOrder) => {
+  const dir = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+  const key = (typeof sortBy === 'string' ? sortBy : '').toLowerCase();
+  switch (key) {
+    case 'cited_by_count':
+    case 'citation_count':
+    case 'citations':
+      return `sp.work_citation_count ${dir}, sp.publication_year DESC, sp.work_id DESC`;
+    case 'references_count':
+    case 'reference_count':
+      return `sp.work_reference_count ${dir}, sp.publication_year DESC, sp.work_id DESC`;
+    case 'publication_year':
+    case 'year':
+      return `sp.publication_year ${dir}, sp.work_id DESC`;
+    case 'id':
+    case 'work_id':
+      return `sp.work_id ${dir}`;
+    default:
+      return null;
+  }
+};
+
+const resolveSphinxOrderBy = (sortBy, sortOrder) => {
+  const dir = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'ASC' ? 'asc' : 'desc';
+  const key = (typeof sortBy === 'string' ? sortBy : '').toLowerCase();
+  switch (key) {
+    case 'cited_by_count':
+    case 'citation_count':
+    case 'citations':
+      return `cited_by_count_${dir}`;
+    case 'publication_year':
+    case 'year':
+      return `publication_year_${dir}`;
+    case 'relevance':
+      return 'relevance';
+    default:
+      return null;
+  }
+};
+
 const normalizeDoiValue = (value) => {
   if (!value) return null;
   const normalized = String(value)
@@ -61,8 +108,12 @@ class WorksService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { search, type, year_from, year_to, open_access, language, peer_reviewed, venue_name, author, subject } = filters;
+    const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
+    const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
+    const sortBy = filters.sort_by ?? filters.sortBy ?? null;
+    const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
     const effectiveLimit = Math.min(limit, 20);
-    const cacheKey = `works:showcase:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}`;
+    const cacheKey = `works:showcase:v2:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -70,21 +121,28 @@ class WorksService {
 
       const trimmedSearch = (search || '').trim();
       const hasFulltextFilter = Boolean(trimmedSearch || venue_name || author || subject);
+      const enrichedFilters = {
+        ...filters,
+        cited_by_min: citedByMin,
+        cited_by_max: citedByMax,
+        sort_by: sortBy,
+        sort_order: sortOrder
+      };
 
       if (hasFulltextFilter) {
         try {
-          const result = await this._getWorksFromSphinx(trimmedSearch, filters);
+          const result = await this._getWorksFromSphinx(trimmedSearch, enrichedFilters);
           result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
           return result;
         } catch (sphinxError) {
           logger.warn('Sphinx search unavailable, using MariaDB fallback', { message: sphinxError.message, code: sphinxError.code });
-          const result = await this._getWorksSearchFallback(trimmedSearch, filters, effectiveLimit, offset, page);
+          const result = await this._getWorksSearchFallback(trimmedSearch, enrichedFilters, effectiveLimit, offset, page);
           result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
           return result;
         }
       }
 
-      const result = await this._getWorksVitrine(filters, effectiveLimit, offset, page);
+      const result = await this._getWorksVitrine(enrichedFilters, effectiveLimit, offset, page);
       result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
       await cacheService.set(cacheKey, result, 1800);
       return result;
@@ -126,9 +184,14 @@ class WorksService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { type, year_from, year_to, language } = filters;
+    const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
+    const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
+    const sortBy = filters.sort_by ?? filters.sortBy ?? null;
+    const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
+    const customOrderClause = resolveWorksOrderClause(sortBy, sortOrder);
     const effectiveLimit = Math.min(limit, 100);
-    
-    const cacheKey = `works:showcase:p${page}:l${effectiveLimit}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:lang${language || 'all'}`;
+
+    const cacheKey = `works:showcase:p${page}:l${effectiveLimit}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:lang${language || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -159,6 +222,15 @@ class WorksService {
         queryParams.push(parseInt(year_to));
       }
 
+      if (citedByMin !== null) {
+        whereConditions.push('work_citation_count >= ?');
+        queryParams.push(citedByMin);
+      }
+      if (citedByMax !== null) {
+        whereConditions.push('work_citation_count <= ?');
+        queryParams.push(citedByMax);
+      }
+
       const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
       const COUNT_BUDGET_MS = 2000;
@@ -186,6 +258,10 @@ class WorksService {
         }
       }
 
+      const vitrineInnerOrder = customOrderClause
+        ? `MAX(work_citation_count) ${customOrderClause.includes('ASC') ? 'ASC' : 'DESC'}, work_id DESC`
+        : 'work_id DESC';
+      const vitrineOuterOrder = customOrderClause || 'sp.work_id DESC';
       const selectSql = `
         SELECT
           sp.work_id AS id,
@@ -216,12 +292,12 @@ class WorksService {
           FROM summary_publications
           ${whereClause}
           GROUP BY work_id
-          ORDER BY work_id DESC
+          ORDER BY ${vitrineInnerOrder}
           LIMIT ? OFFSET ?
         ) latest
         INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
         LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
-        ORDER BY sp.work_id DESC
+        ORDER BY ${vitrineOuterOrder}
       `;
 
       const queryParamsWithPagination = [...queryParams, effectiveLimit, offset];
@@ -257,6 +333,8 @@ class WorksService {
           authors_preview: authorsPreview.slice(0, 3),
           author_count: authorsPreview.length,
           first_author: authorsPreview[0] || null,
+          cited_by_count: parseInt(work.citation_count, 10) || 0,
+          references_count: parseInt(work.reference_count, 10) || 0,
           created_at: null
         });
 
@@ -268,6 +346,8 @@ class WorksService {
           venue_abbreviated_name: work.venue_abbrev || null,
           work_type: work.work_type || null,
           year: work.publication_year ?? null,
+          cited_by_count: parseInt(work.citation_count, 10) || 0,
+          references_count: parseInt(work.reference_count, 10) || 0,
           created_ts: null,
           created_at: null
         };
@@ -301,6 +381,8 @@ class WorksService {
   
   async _getWorksVitrine(filters, limit, offset, page) {
     const { type, year_from, year_to, search, open_access, language, peer_reviewed, venue_name, author, subject } = filters;
+    const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
+    const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
 
     const whereConditions = [];
     const filterParams = [];
@@ -357,6 +439,17 @@ class WorksService {
       filterParams.push(`%${subject}%`);
     }
 
+    if (citedByMin !== null) {
+      whereConditions.push('sp.work_citation_count >= ?');
+      filterParams.push(citedByMin);
+    }
+    if (citedByMax !== null) {
+      whereConditions.push('sp.work_citation_count <= ?');
+      filterParams.push(citedByMax);
+    }
+
+    const customOrderClause = resolveWorksOrderClause(filters.sort_by ?? filters.sortBy, filters.sort_order ?? filters.sortOrder);
+
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000');
     const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
@@ -386,6 +479,10 @@ class WorksService {
     }
 
     const queryParams = [...filterParams, limit, offset];
+    const innerOrderClause = customOrderClause
+      ? `MAX(sp.work_citation_count) ${customOrderClause.includes('ASC') ? 'ASC' : 'DESC'}, sp.work_id DESC`
+      : 'sp.work_id DESC';
+    const outerOrderClause = customOrderClause || 'sp.work_id DESC';
     const selectSql = `
       SELECT
         sp.work_id AS id,
@@ -423,13 +520,13 @@ class WorksService {
         ${venueJoin}
         ${whereClause}
         GROUP BY sp.work_id
-        ORDER BY sp.work_id DESC
+        ORDER BY ${innerOrderClause}
         LIMIT ? OFFSET ?
       ) latest
       INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
       LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
       LEFT JOIN venues v ON v.id = sp.venue_id
-      ORDER BY sp.work_id DESC
+      ORDER BY ${outerOrderClause}
     `;
 
     const primaryQueryStart = process.hrtime.bigint();
@@ -476,6 +573,8 @@ class WorksService {
         author_count: authors.length,
         first_author: authors.length > 0 ? authors[0] : null,
         authors_preview: authors.slice(0, 3),
+        cited_by_count: parseInt(work.citation_count, 10) || 0,
+        references_count: parseInt(work.reference_count, 10) || 0,
         added_to_database: null,
         created_at: null,
         data_source: 'full_api',
@@ -963,6 +1062,9 @@ class WorksService {
   
   async _getWorksSearchFallback(search, filters, limit, offset, page) {
     const { type, language, year_from, year_to, open_access, peer_reviewed, venue_name, author, subject } = filters || {};
+    const citedByMin = toNonNegativeInt(filters?.cited_by_min ?? filters?.citation_count_min);
+    const citedByMax = toNonNegativeInt(filters?.cited_by_max ?? filters?.citation_count_max);
+    const customOrderClause = resolveWorksOrderClause(filters?.sort_by ?? filters?.sortBy, filters?.sort_order ?? filters?.sortOrder);
     const trimmed = (search || '').trim();
     const hasContent = Boolean(trimmed);
     const hasMetadata = Boolean(venue_name || author || subject);
@@ -1010,6 +1112,14 @@ class WorksService {
       whereConditions.push('sp.peer_reviewed = ?');
       filterParams.push(peer_reviewed === true || peer_reviewed === 'true' || peer_reviewed === 1 || peer_reviewed === '1' ? 1 : 0);
     }
+    if (citedByMin !== null) {
+      whereConditions.push('sp.work_citation_count >= ?');
+      filterParams.push(citedByMin);
+    }
+    if (citedByMax !== null) {
+      whereConditions.push('sp.work_citation_count <= ?');
+      filterParams.push(citedByMax);
+    }
 
     const relevanceExpr = hasContent
       ? 'MAX(MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE))'
@@ -1020,6 +1130,10 @@ class WorksService {
       ? [trimmed]
       : (metadataTerms ? [metadataTerms] : []);
 
+    const innerOrderForFallback = customOrderClause
+      ? `MAX(sp.work_citation_count) ${customOrderClause.includes('ASC') ? 'ASC' : 'DESC'}, relevance DESC, sp.work_id DESC`
+      : 'relevance DESC, sp.work_id DESC';
+    const outerOrderForFallback = customOrderClause || 'latest.relevance DESC, sp.work_id DESC';
     const selectSql = `
       SELECT
         sp.work_id AS id,
@@ -1040,6 +1154,8 @@ class WorksService {
         sp.venue_id,
         sp.venue_search AS venue_name,
         sv.abbrev_search AS venue_abbreviated_name,
+        sp.work_citation_count AS citation_count,
+        sp.work_reference_count AS reference_count,
         w.subtitle,
         w.created_at
       FROM (
@@ -1051,13 +1167,13 @@ class WorksService {
         FROM summary_publications sp
         WHERE ${whereConditions.join(' AND ')}
         GROUP BY sp.work_id
-        ORDER BY relevance DESC, sp.work_id DESC
+        ORDER BY ${innerOrderForFallback}
         LIMIT ? OFFSET ?
       ) latest
       INNER JOIN summary_publications sp ON sp.publication_id = latest.pub_id
       LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
       LEFT JOIN works w ON w.id = sp.work_id
-      ORDER BY latest.relevance DESC, sp.work_id DESC
+      ORDER BY ${outerOrderForFallback}
     `;
 
     const queryParams = [...innerRelevanceParams, ...filterParams, limit, offset];
@@ -1114,6 +1230,8 @@ class WorksService {
         author_count: authors.length,
         first_author: authors[0] || null,
         authors_preview: authors.slice(0, 3),
+        cited_by_count: parseInt(row.citation_count, 10) || 0,
+        references_count: parseInt(row.reference_count, 10) || 0,
         added_to_database: row.created_at,
         data_source: 'showcase',
         search_engine: 'MariaDB'
@@ -1141,6 +1259,10 @@ class WorksService {
     const pagination = normalizePagination(filters);
     const { limit, offset } = pagination;
 
+    const citedByMin = toNonNegativeInt(filters?.cited_by_min ?? filters?.citation_count_min);
+    const citedByMax = toNonNegativeInt(filters?.cited_by_max ?? filters?.citation_count_max);
+    const sphinxOrderBy = resolveSphinxOrderBy(filters?.sort_by ?? filters?.sortBy, filters?.sort_order ?? filters?.sortOrder);
+
     const spx = await SphinxService.searchPublicationIds(search, {
       work_type: filters?.type,
       language: filters?.language,
@@ -1153,10 +1275,11 @@ class WorksService {
       subject: filters?.subject,
       venue_id: filters?.venue_id,
       publisher_id: filters?.publisher_id,
-      citation_count_min: filters?.citation_count_min,
+      citation_count_min: citedByMin ?? filters?.citation_count_min,
+      citation_count_max: citedByMax ?? filters?.citation_count_max,
       reference_count_min: filters?.reference_count_min,
       has_files: filters?.has_files
-    }, { limit, offset });
+    }, { limit, offset, orderBy: sphinxOrderBy });
 
     const matchedPubIds = Array.isArray(spx?.publication_ids) ? spx.publication_ids : (Array.isArray(spx?.ids) ? spx.ids : []);
     const matchedWorkIds = Array.isArray(spx?.work_ids) ? spx.work_ids : [];
@@ -1222,6 +1345,8 @@ class WorksService {
           sp.venue_id,
           sp.venue_search AS venue_name,
           sv.abbrev_search AS venue_abbreviated_name,
+          sp.work_citation_count AS citation_count,
+          sp.work_reference_count AS reference_count,
           w.subtitle,
           w.created_at
         FROM summary_publications sp
@@ -1259,6 +1384,8 @@ class WorksService {
         author_count: authors.length,
         first_author: authors[0] || null,
         authors_preview: authors.slice(0, 3),
+        cited_by_count: parseInt(row.citation_count, 10) || 0,
+        references_count: parseInt(row.reference_count, 10) || 0,
         added_to_database: row.created_at,
         data_source: 'showcase',
         search_engine: 'Sphinx'

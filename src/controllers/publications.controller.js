@@ -83,7 +83,11 @@ class PublicationsController {
         work_id: normalizeOptional(req.query.work_id),
         doi: normalizeOptional(req.query.doi),
         author: normalizeOptional(req.query.author),
-        subject: normalizeOptional(req.query.subject)
+        subject: normalizeOptional(req.query.subject),
+        cited_by_min: normalizeOptional(req.query.cited_by_min ?? req.query.citation_count_min),
+        cited_by_max: normalizeOptional(req.query.cited_by_max ?? req.query.citation_count_max),
+        sort_by: normalizeOptional(req.query.sort_by ?? req.query.sortBy),
+        sort_order: normalizeOptional(req.query.sort_order ?? req.query.sortOrder)
       };
 
       const result = await publicationsService.getPublications(filters);

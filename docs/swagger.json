@@ -4995,6 +4995,54 @@
             },
             "description": "Filter by language code",
             "example": "en"
+          },
+          {
+            "in": "query",
+            "name": "cited_by_min",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is greater than or equal to this value.",
+            "example": 10
+          },
+          {
+            "in": "query",
+            "name": "cited_by_max",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is less than or equal to this value."
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cited_by_count",
+                "references_count",
+                "publication_year",
+                "id",
+                "relevance"
+              ]
+            },
+            "description": "Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance`\nis only meaningful when `q` / `venue` / `author` / `subject` are set (Sphinx path).\n",
+            "example": "cited_by_count"
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "DESC"
+            },
+            "description": "Sort direction for `sort_by`. Defaults to DESC."
           }
         ],
         "responses": {
@@ -5091,6 +5139,51 @@
             },
             "description": "Filter by language code",
             "example": "en"
+          },
+          {
+            "in": "query",
+            "name": "cited_by_min",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is greater than or equal to this value."
+          },
+          {
+            "in": "query",
+            "name": "cited_by_max",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is less than or equal to this value."
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cited_by_count",
+                "references_count",
+                "publication_year",
+                "id"
+              ]
+            },
+            "description": "Primary sort key for the showcase listing."
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "DESC"
+            },
+            "description": "Sort direction for `sort_by`."
           }
         ],
         "responses": {
@@ -5814,7 +5907,70 @@
               "type": "integer",
               "minimum": 1900
             },
-            "description": "Filter by publication year"
+            "description": "Exact publication year filter."
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer",
+              "minimum": 1000
+            },
+            "description": "Inclusive lower bound on publication year."
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer",
+              "minimum": 1000
+            },
+            "description": "Inclusive upper bound on publication year."
+          },
+          {
+            "in": "query",
+            "name": "cited_by_min",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is greater than or equal to this value.",
+            "example": 10
+          },
+          {
+            "in": "query",
+            "name": "cited_by_max",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is less than or equal to this value."
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cited_by_count",
+                "references_count",
+                "publication_year"
+              ]
+            },
+            "description": "Primary sort key. `cited_by_count` surfaces the venue's most cited works first."
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "DESC"
+            },
+            "description": "Sort direction for `sort_by`."
           }
         ],
         "responses": {
@@ -7250,6 +7406,53 @@
             }
           },
           {
+            "name": "cited_by_min",
+            "in": "query",
+            "description": "Keep only works whose cited_by_count is greater than or equal to this value.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": 10
+          },
+          {
+            "name": "cited_by_max",
+            "in": "query",
+            "description": "Keep only works whose cited_by_count is less than or equal to this value.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "description": "Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance` is only meaningful when `q`, `venue`, `author`, or `subject` is set.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cited_by_count",
+                "references_count",
+                "publication_year",
+                "id",
+                "relevance"
+              ]
+            }
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "description": "Sort direction for `sort_by`. Defaults to DESC.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "DESC"
+            }
+          },
+          {
             "$ref": "#/components/parameters/pageParam"
           },
           {
@@ -7583,6 +7786,52 @@
                 "EDITORIAL",
                 "OTHER"
               ]
+            }
+          },
+          {
+            "name": "cited_by_min",
+            "in": "query",
+            "description": "Keep only works whose cited_by_count is greater than or equal to this value.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cited_by_max",
+            "in": "query",
+            "description": "Keep only works whose cited_by_count is less than or equal to this value.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "description": "Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance` is only meaningful when a full-text clause is set.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cited_by_count",
+                "references_count",
+                "publication_year",
+                "id",
+                "relevance"
+              ]
+            }
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "description": "Sort direction for `sort_by`. Defaults to DESC.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "DESC"
             }
           },
           {
@@ -7937,6 +8186,54 @@
               "maxLength": 255
             },
             "description": "Substring match against subjects_search"
+          },
+          {
+            "in": "query",
+            "name": "cited_by_min",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only publications whose parent work has cited_by_count >= this value.",
+            "example": 5
+          },
+          {
+            "in": "query",
+            "name": "cited_by_max",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only publications whose parent work has cited_by_count <= this value."
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cited_by_count",
+                "references_count",
+                "publication_year",
+                "id",
+                "relevance"
+              ]
+            },
+            "description": "Primary sort key. `cited_by_count` surfaces the most cited publications first; `relevance`\nis only meaningful on the Sphinx path (when `q`, `venue`, `author`, or `subject` is set).\n",
+            "example": "cited_by_count"
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "DESC"
+            },
+            "description": "Sort direction for `sort_by`. Defaults to DESC."
           }
         ],
         "responses": {
@@ -8527,6 +8824,69 @@
               ]
             },
             "description": "Filter by role (AUTHOR or EDITOR)"
+          },
+          {
+            "in": "query",
+            "name": "year_from",
+            "schema": {
+              "type": "integer",
+              "minimum": 1000
+            },
+            "description": "Inclusive lower bound on publication year (matches `publications.year` or the parent work's latest publication_year)."
+          },
+          {
+            "in": "query",
+            "name": "year_to",
+            "schema": {
+              "type": "integer",
+              "minimum": 1000
+            },
+            "description": "Inclusive upper bound on publication year."
+          },
+          {
+            "in": "query",
+            "name": "cited_by_min",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is greater than or equal to this value.",
+            "example": 5
+          },
+          {
+            "in": "query",
+            "name": "cited_by_max",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Keep only works whose cited_by_count is less than or equal to this value."
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "cited_by_count",
+                "references_count",
+                "publication_year"
+              ]
+            },
+            "description": "Primary sort key. `cited_by_count` surfaces the person's most cited works first. Default falls back to publication_year DESC."
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ASC",
+                "DESC"
+              ],
+              "default": "DESC"
+            },
+            "description": "Sort direction for `sort_by`."
           }
         ],
         "responses": {
@@ -8569,6 +8929,14 @@
                           "doi": {
                             "type": "string",
                             "description": "DOI identifier"
+                          },
+                          "cited_by_count": {
+                            "type": "integer",
+                            "description": "Number of works citing this one (surfaced from summary_publications.work_citation_count)."
+                          },
+                          "references_count": {
+                            "type": "integer",
+                            "description": "Number of references this work makes."
                           },
                           "authorship": {
                             "type": "object",

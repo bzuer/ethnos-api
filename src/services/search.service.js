@@ -11,10 +11,14 @@ class SearchService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { type, language, year_from, year_to, peer_reviewed, open_access, venue_name, author, subject } = filters;
+    const citedByMin = filters.cited_by_min ?? filters.citation_count_min ?? null;
+    const citedByMax = filters.cited_by_max ?? filters.citation_count_max ?? null;
+    const sortBy = filters.sort_by ?? filters.sortBy ?? null;
+    const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
     const trimmedQuery = (query || '').trim();
     const includeFacets = filters.include_facets === true;
 
-    const cacheKey = `search:works:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${includeFacets}`;
+    const cacheKey = `search:works:v2:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}:${includeFacets}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -36,7 +40,11 @@ class SearchService {
         open_access,
         venue_name,
         author,
-        subject
+        subject,
+        cited_by_min: citedByMin,
+        cited_by_max: citedByMax,
+        sort_by: sortBy,
+        sort_order: sortOrder
       };
 
       const worksResult = await worksService.getWorks(worksFilters);

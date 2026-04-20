@@ -93,7 +93,28 @@ const validatePublicationsQuery = [
 
   query('subject')
     .optional({ values: 'falsy' })
-    .isLength({ max: 255 })
+    .isLength({ max: 255 }),
+
+  query('cited_by_min')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_min must be a non-negative integer'),
+
+  query('cited_by_max')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_max must be a non-negative integer'),
+
+  query('sort_by')
+    .optional({ values: 'falsy' })
+    .isIn(['cited_by_count', 'citation_count', 'references_count', 'reference_count', 'publication_year', 'year', 'id', 'publication_id', 'relevance'])
+    .withMessage('sort_by must be one of: cited_by_count, references_count, publication_year, id, relevance'),
+
+  query('sort_order')
+    .optional({ values: 'falsy' })
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+    .isIn(['ASC', 'DESC'])
+    .withMessage('sort_order must be ASC or DESC')
 ];
 
 /**
@@ -226,6 +247,35 @@ const validatePublicationsQuery = [
  *           type: string
  *           maxLength: 255
  *         description: Substring match against subjects_search
+ *       - in: query
+ *         name: cited_by_min
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Keep only publications whose parent work has cited_by_count >= this value.
+ *         example: 5
+ *       - in: query
+ *         name: cited_by_max
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Keep only publications whose parent work has cited_by_count <= this value.
+ *       - in: query
+ *         name: sort_by
+ *         schema:
+ *           type: string
+ *           enum: [cited_by_count, references_count, publication_year, id, relevance]
+ *         description: |
+ *           Primary sort key. `cited_by_count` surfaces the most cited publications first; `relevance`
+ *           is only meaningful on the Sphinx path (when `q`, `venue`, `author`, or `subject` is set).
+ *         example: cited_by_count
+ *       - in: query
+ *         name: sort_order
+ *         schema:
+ *           type: string
+ *           enum: [ASC, DESC]
+ *           default: DESC
+ *         description: Sort direction for `sort_by`. Defaults to DESC.
  *     responses:
  *       200:
  *         description: Publications retrieved successfully

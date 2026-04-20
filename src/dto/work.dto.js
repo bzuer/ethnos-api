@@ -37,6 +37,15 @@ function formatWorkListItem(row = {}) {
     type: row.venue_type
   });
 
+  const citedByCount =
+    row.cited_by_count !== undefined && row.cited_by_count !== null
+      ? toOptionalInteger(row.cited_by_count)
+      : toOptionalInteger(row.citation_count);
+  const referencesCount =
+    row.references_count !== undefined && row.references_count !== null
+      ? toOptionalInteger(row.references_count)
+      : toOptionalInteger(row.reference_count);
+
   return {
     id: toOptionalInteger(row.id),
     publication_id: toOptionalInteger(row.publication_id),
@@ -56,6 +65,8 @@ function formatWorkListItem(row = {}) {
     first_author: row.first_author || (authorsPreview.length > 0 ? authorsPreview[0] : null),
     first_author_id: toOptionalInteger(row.first_author_id),
     first_author_identifiers: row.first_author_identifiers || null,
+    cited_by_count: citedByCount !== null ? citedByCount : 0,
+    references_count: referencesCount !== null ? referencesCount : 0,
     added_to_database: row.added_to_database || row.created_at || null,
     data_source: row.data_source || null,
     search_engine: row.search_engine || null

@@ -374,6 +374,44 @@ const validateSignaturesQuery = [
  *           type: string
  *           enum: [AUTHOR, EDITOR]
  *         description: Filter by role (AUTHOR or EDITOR)
+ *       - in: query
+ *         name: year_from
+ *         schema:
+ *           type: integer
+ *           minimum: 1000
+ *         description: Inclusive lower bound on publication year (matches `publications.year` or the parent work's latest publication_year).
+ *       - in: query
+ *         name: year_to
+ *         schema:
+ *           type: integer
+ *           minimum: 1000
+ *         description: Inclusive upper bound on publication year.
+ *       - in: query
+ *         name: cited_by_min
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Keep only works whose cited_by_count is greater than or equal to this value.
+ *         example: 5
+ *       - in: query
+ *         name: cited_by_max
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Keep only works whose cited_by_count is less than or equal to this value.
+ *       - in: query
+ *         name: sort_by
+ *         schema:
+ *           type: string
+ *           enum: [cited_by_count, references_count, publication_year]
+ *         description: Primary sort key. `cited_by_count` surfaces the person's most cited works first. Default falls back to publication_year DESC.
+ *       - in: query
+ *         name: sort_order
+ *         schema:
+ *           type: string
+ *           enum: [ASC, DESC]
+ *           default: DESC
+ *         description: Sort direction for `sort_by`.
  *     responses:
  *       200:
  *         description: Works retrieved successfully
@@ -408,6 +446,12 @@ const validateSignaturesQuery = [
  *                       doi:
  *                         type: string
  *                         description: DOI identifier
+ *                       cited_by_count:
+ *                         type: integer
+ *                         description: Number of works citing this one (surfaced from summary_publications.work_citation_count).
+ *                       references_count:
+ *                         type: integer
+ *                         description: Number of references this work makes.
  *                       authorship:
  *                         type: object
  *                         properties:
@@ -491,7 +535,38 @@ const validateWorksQuery = [
     .optional()
     .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
     .isIn(['AUTHOR', 'EDITOR'])
-    .withMessage('Role must be AUTHOR or EDITOR')
+    .withMessage('Role must be AUTHOR or EDITOR'),
+
+  query('year_from')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1000 })
+    .withMessage('year_from must be a valid year'),
+
+  query('year_to')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1000 })
+    .withMessage('year_to must be a valid year'),
+
+  query('cited_by_min')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_min must be a non-negative integer'),
+
+  query('cited_by_max')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('cited_by_max must be a non-negative integer'),
+
+  query('sort_by')
+    .optional({ values: 'falsy' })
+    .isIn(['cited_by_count', 'citation_count', 'references_count', 'reference_count', 'publication_year', 'year'])
+    .withMessage('sort_by must be one of: cited_by_count, references_count, publication_year'),
+
+  query('sort_order')
+    .optional({ values: 'falsy' })
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+    .isIn(['ASC', 'DESC'])
+    .withMessage('sort_order must be ASC or DESC')
 ];
 
 router.get('/:id/works', relationalLimiter, validatePersonId, validateWorksQuery, personsController.getPersonWorks);
