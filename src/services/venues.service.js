@@ -393,9 +393,8 @@ class VenuesService {
     const currentLimit = Math.min(Math.max(1, parseInt(pagination.limit, 10) || 20), 100);
     const currentOffset = Math.max(0, parseInt(pagination.offset, 10) || 0);
     const type = options.type;
-    const includeLegacyMetrics = Boolean(options.includeLegacyMetrics || options.includeLegacy);
 
-    const cacheKey = `venues:search:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type, includeLegacyMetrics })}`;
+    const cacheKey = `venues:search:v2:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info(`Venues search "${query}" retrieved from cache`);
@@ -404,17 +403,17 @@ class VenuesService {
 
     let result;
     try {
-      result = await this._searchVenuesSphinx(query, { page: currentPage, limit: currentLimit, offset: currentOffset, type, includeLegacyMetrics });
+      result = await this._searchVenuesSphinx(query, { page: currentPage, limit: currentLimit, offset: currentOffset, type });
     } catch (sphinxError) {
       logger.warn(`Sphinx venues search failed for "${query}", falling back to MariaDB`, { error: sphinxError.message });
-      result = await this._searchVenuesMariaDB(query, { page: currentPage, limit: currentLimit, offset: currentOffset, type, includeLegacyMetrics });
+      result = await this._searchVenuesMariaDB(query, { page: currentPage, limit: currentLimit, offset: currentOffset, type });
     }
 
     await cacheService.set(cacheKey, result, 3600);
     return result;
   }
 
-  async _searchVenuesSphinx(query, { page, limit, offset, type, includeLegacyMetrics }) {
+  async _searchVenuesSphinx(query, { page, limit, offset, type }) {
     const spx = await sphinxService.searchVenueIds(query, { limit, offset, type });
     const ids = Array.isArray(spx?.ids) ? spx.ids : [];
     const total = parseInt(spx?.total || 0, 10) || 0;
@@ -431,7 +430,7 @@ class VenuesService {
     const venues = ids
       .map((id) => venueMap.get(id))
       .filter(Boolean)
-      .map((venue) => formatVenueListItem(venue, { includeLegacyMetrics }));
+      .map((venue) => formatVenueListItem(venue));
 
     const meta = { source: 'sphinx', query, sphinx_query_ms: spx?.query_time || null };
     if (type) meta.filters = { type };
@@ -445,7 +444,7 @@ class VenuesService {
     };
   }
 
-  async _searchVenuesMariaDB(query, { page, limit, offset, type, includeLegacyMetrics }) {
+  async _searchVenuesMariaDB(query, { page, limit, offset, type }) {
     const where = ['(sv.name_search LIKE :term OR sv.abbrev_search LIKE :term OR sv.issn LIKE :term OR sv.eissn LIKE :term OR sv.publisher_search LIKE :term)'];
     const replacements = { term: `%${query}%`, lim: limit, off: offset };
 
@@ -473,7 +472,7 @@ class VenuesService {
     const venues = rows
       .map(mapSummaryRow)
       .filter(Boolean)
-      .map((venue) => formatVenueListItem(venue, { includeLegacyMetrics }));
+      .map((venue) => formatVenueListItem(venue));
 
     const total = toInt(countRows?.[0]?.total, 0);
     const meta = { source: 'mariadb_fallback', query };
@@ -492,11 +491,10 @@ class VenuesService {
     const normalizedOptions = {
       ...options,
       ...pagination,
-      includeLegacyMetrics: Boolean(options.includeLegacyMetrics || options.includeLegacy),
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v3:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v4:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -517,7 +515,6 @@ class VenuesService {
       search,
       sortBy,
       sortOrder,
-      includeLegacyMetrics = false,
       min_id,
       coverage_from,
       coverage_to,
@@ -624,7 +621,7 @@ class VenuesService {
     const venues = rows
       .map(mapSummaryRow)
       .filter(Boolean)
-      .map((venue) => formatVenueListItem(venue, { includeLegacyMetrics }));
+      .map((venue) => formatVenueListItem(venue));
 
     const total = toInt(countRows?.[0]?.total, 0);
     const meta = {
@@ -657,14 +654,12 @@ class VenuesService {
     const includeSubjects = options.includeSubjects !== false;
     const includeYearly = options.includeYearly !== false;
     const includeTopAuthors = options.includeTopAuthors !== false;
-    const includeLegacyMetrics = options.includeLegacyMetrics !== false;
     const includeRecentWorks = options.includeRecentWorks !== false;
 
-    const cacheKey = `venue:v2:${venueId}:${JSON.stringify({
+    const cacheKey = `venue:v3:${venueId}:${JSON.stringify({
       includeSubjects,
       includeYearly,
       includeTopAuthors,
-      includeLegacyMetrics,
       includeRecentWorks
     })}`;
 
@@ -703,7 +698,6 @@ class VenuesService {
     venue.top_authors = topAuthorsMap.get(venueId) || [];
 
     const formatted = formatVenueDetails(venue, {
-      includeLegacyMetrics,
       includeSubjects,
       includeYearlyStats: includeYearly,
       includeTopAuthors,

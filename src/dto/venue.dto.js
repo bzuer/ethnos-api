@@ -30,9 +30,9 @@ const toNullableBoolean = (value) => {
 
 const SCORE_COMPONENT_KEYS = ['subject', 'snip', 'oa', 'authorship', 'affiliation', 'citation', 'llm'];
 
-const buildScoreBreakdown = (venue = {}) => {
+const buildRanking = (venue = {}) => {
   const source = venue.score_breakdown && typeof venue.score_breakdown === 'object' ? venue.score_breakdown : null;
-  const total = toNullableNumber(source?.total ?? venue.global_ranking_score);
+  const score = toNullableNumber(source?.total ?? venue.global_ranking_score);
 
   const components = {};
   for (const key of SCORE_COMPONENT_KEYS) {
@@ -42,15 +42,8 @@ const buildScoreBreakdown = (venue = {}) => {
   const llmRelevance = source?.llm_relevance ?? venue.llm_relevance ?? null;
   const llmJustification = source?.llm_justification ?? venue.llm_justification ?? null;
 
-  const hasAny = total !== null
-    || Object.values(components).some((v) => v !== null)
-    || llmRelevance !== null
-    || llmJustification !== null;
-
-  if (!hasAny) return null;
-
   return {
-    total,
+    score,
     components,
     llm: {
       relevance: llmRelevance !== null && llmRelevance !== undefined ? toNullableInt(llmRelevance) : null,
@@ -66,6 +59,23 @@ const buildIdentifiers = (venue = {}) => ({
   wikidata_id: venue.wikidata_id || null,
   openalex_id: venue.openalex_id || null,
   scielo_id: venue.scielo_id || null
+});
+
+const buildIndexing = (venue = {}) => ({
+  is_in_doaj: toNullableBoolean(venue.is_in_doaj),
+  is_in_scielo: toNullableBoolean(venue.is_in_scielo),
+  is_indexed_in_scopus: toNullableBoolean(venue.is_indexed_in_scopus),
+  validation_status: venue.validation_status || null
+});
+
+const buildMetrics = (venue = {}) => ({
+  impact_factor: toNullableNumber(venue.impact_factor),
+  citescore: toNullableNumber(venue.citescore),
+  sjr: toNullableNumber(venue.sjr),
+  snip: toNullableNumber(venue.snip),
+  h_index: toNullableInt(venue.h_index),
+  i10_index: toNullableInt(venue.i10_index),
+  two_yr_mean_citedness: toNullableNumber(venue.two_yr_mean_citedness)
 });
 
 const buildPublisher = (venue = {}) => {
@@ -88,100 +98,51 @@ const mapSubject = (subject = {}) => ({
   lang: subject?.lang || null
 });
 
-const buildSubjectCollections = (subjects = [], options = {}) => {
-  if (!Array.isArray(subjects) || subjects.length === 0) {
-    return { subjects: [], terms: [], keywords: [] };
-  }
-
+const buildSubjects = (subjects = [], options = {}) => {
+  if (!Array.isArray(subjects) || subjects.length === 0) return [];
   const limit = Number.isInteger(options.limit) ? options.limit : undefined;
   const slice = limit !== undefined ? subjects.slice(0, limit) : subjects.slice();
-
-  const mapped = slice
+  return slice
     .map(mapSubject)
     .filter((s) => s.subject_id !== null || s.term !== null);
-
-  const terms = mapped.map((s) => (s.term || '').trim()).filter(Boolean);
-
-  const seen = new Set();
-  const keywords = [];
-  for (const term of terms) {
-    const key = term.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    keywords.push(term);
-  }
-
-  return { subjects: mapped, terms, keywords };
 };
 
-const baseVenue = (venue = {}, options = {}) => {
-  const base = {
-    id: toNullableInt(venue.id),
-    name: venue.name || null,
-    abbreviated_name: venue.abbreviated_name || null,
-    type: venue.type || null,
-    aggregation_type: venue.aggregation_type || null,
-    country_code: venue.country_code || null,
-    homepage_url: venue.homepage_url || null,
-    open_access: toNullableBoolean(venue.open_access),
-    coverage_start_year: toNullableInt(venue.coverage_start_year),
-    coverage_end_year: toNullableInt(venue.coverage_end_year),
-    works_count: toInteger(venue.works_count, 0),
-    cited_by_count: toInteger(venue.cited_by_count, 0),
-    open_access_percentage: toNullableNumber(venue.open_access_percentage),
-    h_index: toNullableInt(venue.h_index),
-    i10_index: toNullableInt(venue.i10_index),
-    two_yr_mean_citedness: toNullableNumber(venue.two_yr_mean_citedness),
-    impact_factor: toNullableNumber(venue.impact_factor),
-    citescore: toNullableNumber(venue.citescore),
-    sjr: toNullableNumber(venue.sjr),
-    snip: toNullableNumber(venue.snip),
-    is_in_doaj: toNullableBoolean(venue.is_in_doaj),
-    is_in_scielo: toNullableBoolean(venue.is_in_scielo),
-    is_indexed_in_scopus: toNullableBoolean(venue.is_indexed_in_scopus),
-    validation_status: venue.validation_status || null,
-    global_ranking_score: toNullableNumber(venue.global_ranking_score),
-    score_breakdown: buildScoreBreakdown(venue),
-    issn: venue.issn || null,
-    eissn: venue.eissn || null,
-    scopus_id: venue.scopus_id || null,
-    wikidata_id: venue.wikidata_id || null,
-    openalex_id: venue.openalex_id || null,
-    scielo_id: venue.scielo_id || null,
-    identifiers: buildIdentifiers(venue),
-    publisher: buildPublisher(venue)
-  };
-
-  if (options.includeLegacyMetrics) {
-    base.legacy_metrics = {
-      impact_factor: base.impact_factor,
-      sjr: base.sjr,
-      snip: base.snip,
-      citescore: base.citescore
-    };
-  }
-
-  return base;
-};
+const baseVenue = (venue = {}) => ({
+  id: toNullableInt(venue.id),
+  name: venue.name || null,
+  abbreviated_name: venue.abbreviated_name || null,
+  type: venue.type || null,
+  aggregation_type: venue.aggregation_type || null,
+  country_code: venue.country_code || null,
+  homepage_url: venue.homepage_url || null,
+  open_access: toNullableBoolean(venue.open_access),
+  open_access_percentage: toNullableNumber(venue.open_access_percentage),
+  coverage_start_year: toNullableInt(venue.coverage_start_year),
+  coverage_end_year: toNullableInt(venue.coverage_end_year),
+  works_count: toInteger(venue.works_count, 0),
+  cited_by_count: toInteger(venue.cited_by_count, 0),
+  publisher: buildPublisher(venue),
+  identifiers: buildIdentifiers(venue),
+  indexing: buildIndexing(venue),
+  metrics: buildMetrics(venue),
+  ranking: buildRanking(venue)
+});
 
 function formatVenueListItem(venue = {}, options = {}) {
   const includeSubjects = options.includeSubjects !== false;
   const subjectsLimit = Number.isInteger(options.subjectsLimit) ? options.subjectsLimit : 5;
 
-  const result = baseVenue(venue, { includeLegacyMetrics: Boolean(options.includeLegacyMetrics) });
+  const result = baseVenue(venue);
 
   if (includeSubjects) {
-    const collections = buildSubjectCollections(venue.subjects || [], { limit: subjectsLimit });
-    result.subjects = collections.subjects;
-    result.terms = collections.terms;
-    result.keywords = collections.keywords;
+    result.subjects = buildSubjects(venue.subjects || [], { limit: subjectsLimit });
   }
 
   return result;
 }
 
 function formatVenueDetails(venue = {}, options = {}) {
-  const detail = baseVenue(venue, { includeLegacyMetrics: Boolean(options.includeLegacyMetrics) });
+  const detail = baseVenue(venue);
 
   detail.created_at = venue.created_at || null;
   detail.updated_at = venue.updated_at || null;
@@ -204,11 +165,7 @@ function formatVenueDetails(venue = {}, options = {}) {
   };
 
   if (options.includeSubjects) {
-    const collections = buildSubjectCollections(venue.subjects || []);
-    detail.subjects = collections.subjects;
-    detail.terms = collections.terms;
-    detail.keywords = collections.keywords;
-    detail.top_subjects = collections.subjects.slice(0, 10);
+    detail.subjects = buildSubjects(venue.subjects || []);
   }
 
   if (options.includeYearlyStats) {

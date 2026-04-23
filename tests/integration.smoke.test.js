@@ -105,15 +105,23 @@ describe('Integration smoke (real DB)', () => {
       assert.equal(body.meta?.source, 'summary_venues');
       if (body.data.length > 0) {
         const venue = body.data[0];
-        assert.ok(venue.identifiers, 'identifiers block');
-        assert.equal(typeof venue.is_in_doaj, 'boolean');
-        assert.equal(typeof venue.is_in_scielo, 'boolean');
-        assert.equal(typeof venue.is_indexed_in_scopus, 'boolean');
-        assert.ok('global_ranking_score' in venue, 'global_ranking_score field');
+        assert.ok(venue.identifiers && typeof venue.identifiers === 'object', 'identifiers block');
+        assert.ok('issn' in venue.identifiers && 'openalex_id' in venue.identifiers, 'identifiers keys');
+        assert.ok(venue.indexing && typeof venue.indexing === 'object', 'indexing block');
+        assert.equal(typeof venue.indexing.is_in_doaj, 'boolean');
+        assert.equal(typeof venue.indexing.is_in_scielo, 'boolean');
+        assert.equal(typeof venue.indexing.is_indexed_in_scopus, 'boolean');
+        assert.ok(venue.metrics && typeof venue.metrics === 'object', 'metrics block');
+        assert.ok('impact_factor' in venue.metrics && 'h_index' in venue.metrics, 'metrics keys');
+        assert.ok(venue.ranking && typeof venue.ranking === 'object', 'ranking block');
+        assert.ok('score' in venue.ranking, 'ranking.score');
+        assert.ok(venue.ranking.components && typeof venue.ranking.components === 'object', 'ranking.components');
         assert.ok(Array.isArray(venue.subjects), 'subjects array');
-        assert.ok(Array.isArray(venue.terms), 'terms array');
-        assert.ok(venue.score_breakdown && typeof venue.score_breakdown === 'object', 'score_breakdown object');
-        assert.ok(venue.score_breakdown.components, 'score_breakdown.components');
+        assert.ok(!('terms' in venue), 'terms removed');
+        assert.ok(!('keywords' in venue), 'keywords removed');
+        assert.ok(!('legacy_metrics' in venue), 'legacy_metrics removed');
+        assert.ok(!('issn' in venue), 'top-level issn removed');
+        assert.ok(!('global_ranking_score' in venue), 'top-level global_ranking_score removed');
       }
     });
 

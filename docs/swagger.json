@@ -1179,21 +1179,21 @@
       },
       "Venue": {
         "type": "object",
+        "description": "Canonical venue payload backed by summary_venues. Identifiers, bibliometric metrics, the global ranking surface and the indexing/quality flags are grouped into dedicated blocks so clients can consume each domain without scanning top-level fields.",
         "properties": {
           "id": {
             "type": "integer",
-            "example": 1
+            "example": 1012134
           },
           "name": {
             "type": "string",
-            "example": "American Anthropologist",
+            "example": "Cultural Anthropology",
             "description": "Official name of the venue"
           },
           "abbreviated_name": {
             "type": "string",
             "nullable": true,
-            "example": "Am. Anthropol.",
-            "description": "Standard abbreviated name of the venue"
+            "example": "Cult. Anthropol"
           },
           "type": {
             "type": "string",
@@ -1201,153 +1201,70 @@
               "JOURNAL",
               "CONFERENCE",
               "REPOSITORY",
-              "BOOK_SERIES"
+              "BOOK_SERIES",
+              "OTHER"
             ],
             "example": "JOURNAL"
-          },
-          "open_access": {
-            "type": "boolean",
-            "nullable": true,
-            "description": "Indicates whether the venue is fully open access",
-            "example": false
-          },
-          "works_count": {
-            "type": "integer",
-            "example": 1487
-          },
-          "issn": {
-            "type": "string",
-            "nullable": true,
-            "example": "0002-7294",
-            "description": "Print ISSN"
-          },
-          "eissn": {
-            "type": "string",
-            "nullable": true,
-            "example": "1548-1433",
-            "description": "Electronic ISSN"
-          },
-          "scopus_source_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "Scopus source identifier"
-          },
-          "scopus_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "Scopus venue ID"
-          },
-          "wikidata_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "Wikidata entity ID"
-          },
-          "openalex_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "OpenAlex ID"
-          },
-          "homepage_url": {
-            "type": "string",
-            "nullable": true,
-            "example": "http://www.jps.auckland.ac.nz"
           },
           "aggregation_type": {
             "type": "string",
             "nullable": true,
             "example": "journal"
           },
-          "coverage_start_year": {
-            "type": "integer",
-            "nullable": true,
-            "example": 1984
-          },
-          "coverage_end_year": {
-            "type": "integer",
-            "nullable": true,
-            "example": 2025
-          },
           "country_code": {
             "type": "string",
             "nullable": true,
-            "example": "NZ"
+            "example": "US"
           },
-          "is_in_doaj": {
+          "homepage_url": {
+            "type": "string",
+            "nullable": true,
+            "example": "http://www.culanth.org/"
+          },
+          "open_access": {
             "type": "boolean",
             "nullable": true,
-            "example": false
-          },
-          "is_indexed_in_scopus": {
-            "type": "boolean",
-            "nullable": true,
-            "description": "Whether the venue is indexed in Scopus"
-          },
-          "cited_by_count": {
-            "type": "integer",
-            "nullable": true,
-            "description": "Total citations received by works in this venue"
-          },
-          "h_index": {
-            "type": "integer",
-            "nullable": true,
-            "description": "H-index of the venue"
-          },
-          "i10_index": {
-            "type": "integer",
-            "nullable": true,
-            "description": "i10-index of the venue"
-          },
-          "two_year_mean_citedness": {
-            "type": "number",
-            "nullable": true,
-            "description": "Two-year mean citedness score"
+            "description": "Declared open-access policy (fully OA)",
+            "example": true
           },
           "open_access_percentage": {
             "type": "number",
             "nullable": true,
-            "description": "Percentage of open access works"
+            "description": "Measured percentage of open-access publications",
+            "example": 0
           },
-          "identifiers": {
-            "type": "object",
-            "properties": {
-              "issn": {
-                "type": "string",
-                "nullable": true,
-                "example": "0002-7294"
-              },
-              "eissn": {
-                "type": "string",
-                "nullable": true,
-                "example": "1548-1433"
-              },
-              "scopus_source_id": {
-                "type": "string",
-                "nullable": true
-              },
-              "external": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "example": {
-                  "WIKIDATA": "https://www.wikidata.org/entity/Q15760156",
-                  "OPENALEX": "https://openalex.org/S189780351"
-                }
-              }
-            }
+          "coverage_start_year": {
+            "type": "integer",
+            "nullable": true,
+            "example": 1986
+          },
+          "coverage_end_year": {
+            "type": "integer",
+            "nullable": true,
+            "example": 2026
+          },
+          "works_count": {
+            "type": "integer",
+            "example": 1107
+          },
+          "cited_by_count": {
+            "type": "integer",
+            "example": 35836
           },
           "publisher": {
             "type": "object",
+            "nullable": true,
+            "description": "Publishing organization linked from organizations",
             "properties": {
               "id": {
                 "type": "integer",
                 "nullable": true,
-                "example": 42
+                "example": 693663
               },
               "name": {
                 "type": "string",
                 "nullable": true,
-                "example": "Wiley-Blackwell"
+                "example": "Wiley"
               },
               "type": {
                 "type": "string",
@@ -1361,22 +1278,191 @@
               }
             }
           },
-          "summary_snapshot": {
+          "identifiers": {
             "type": "object",
-            "nullable": true,
-            "description": "Pre-computed summary metrics snapshot",
-            "additionalProperties": true
+            "description": "External identifier block. The same fields are NOT repeated at the top level.",
+            "properties": {
+              "issn": {
+                "type": "string",
+                "nullable": true,
+                "example": "0886-7356"
+              },
+              "eissn": {
+                "type": "string",
+                "nullable": true,
+                "example": "1548-1360"
+              },
+              "scopus_id": {
+                "type": "string",
+                "nullable": true,
+                "example": "32383"
+              },
+              "wikidata_id": {
+                "type": "string",
+                "nullable": true
+              },
+              "openalex_id": {
+                "type": "string",
+                "nullable": true,
+                "example": "S22506700"
+              },
+              "scielo_id": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          },
+          "indexing": {
+            "type": "object",
+            "description": "Indexing and validation flags.",
+            "properties": {
+              "is_in_doaj": {
+                "type": "boolean",
+                "nullable": true,
+                "example": true
+              },
+              "is_in_scielo": {
+                "type": "boolean",
+                "nullable": true,
+                "example": false
+              },
+              "is_indexed_in_scopus": {
+                "type": "boolean",
+                "nullable": true,
+                "example": true
+              },
+              "validation_status": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "PENDING",
+                  "VALIDATED",
+                  "NOT_FOUND",
+                  "FAILED"
+                ],
+                "example": "VALIDATED"
+              }
+            }
+          },
+          "metrics": {
+            "type": "object",
+            "description": "Bibliometric indicators for the venue.",
+            "properties": {
+              "impact_factor": {
+                "type": "number",
+                "nullable": true,
+                "example": 3.519
+              },
+              "citescore": {
+                "type": "number",
+                "nullable": true,
+                "example": 3.9
+              },
+              "sjr": {
+                "type": "number",
+                "nullable": true,
+                "example": 0.983
+              },
+              "snip": {
+                "type": "number",
+                "nullable": true,
+                "example": 1.686
+              },
+              "h_index": {
+                "type": "integer",
+                "nullable": true,
+                "example": 72
+              },
+              "i10_index": {
+                "type": "integer",
+                "nullable": true,
+                "example": 807
+              },
+              "two_yr_mean_citedness": {
+                "type": "number",
+                "nullable": true,
+                "example": 1.57143
+              }
+            }
+          },
+          "ranking": {
+            "type": "object",
+            "description": "Global ranking surface with per-component breakdown and LLM assessment.",
+            "properties": {
+              "score": {
+                "type": "number",
+                "nullable": true,
+                "description": "Global ranking score (aka global_ranking_score)",
+                "example": 26.107
+              },
+              "components": {
+                "type": "object",
+                "properties": {
+                  "subject": {
+                    "type": "number",
+                    "nullable": true,
+                    "example": 10
+                  },
+                  "snip": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "oa": {
+                    "type": "number",
+                    "nullable": true,
+                    "example": 0.2
+                  },
+                  "authorship": {
+                    "type": "number",
+                    "nullable": true,
+                    "example": 2
+                  },
+                  "affiliation": {
+                    "type": "number",
+                    "nullable": true,
+                    "example": 2
+                  },
+                  "citation": {
+                    "type": "number",
+                    "nullable": true,
+                    "example": 1.907
+                  },
+                  "llm": {
+                    "type": "number",
+                    "nullable": true,
+                    "example": 10
+                  }
+                }
+              },
+              "llm": {
+                "type": "object",
+                "properties": {
+                  "relevance": {
+                    "type": "integer",
+                    "nullable": true,
+                    "minimum": 0,
+                    "maximum": 5,
+                    "example": 5
+                  },
+                  "justification": {
+                    "type": "string",
+                    "nullable": true,
+                    "example": "Core venue for ethnographic and anthropological research"
+                  }
+                }
+              }
+            }
           },
           "subjects": {
             "type": "array",
-            "description": "Subjects associated with the venue",
+            "description": "Top subjects associated with the venue (pre-sorted; already capped at the top 10 on detail).",
             "items": {
               "type": "object",
               "properties": {
                 "subject_id": {
                   "type": "integer",
                   "nullable": true,
-                  "example": 1205
+                  "example": 1989273
                 },
                 "term": {
                   "type": "string",
@@ -1386,25 +1472,17 @@
                   "type": "number",
                   "format": "float",
                   "nullable": true,
-                  "example": 0.92
+                  "example": 1
+                },
+                "vocabulary": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "lang": {
+                  "type": "string",
+                  "nullable": true
                 }
               }
-            }
-          },
-          "terms": {
-            "type": "array",
-            "description": "Ordered list of subject terms extracted for the venue",
-            "items": {
-              "type": "string",
-              "example": "Anthropology"
-            }
-          },
-          "keywords": {
-            "type": "array",
-            "description": "Deduplicated subject terms normalized for keyword usage",
-            "items": {
-              "type": "string",
-              "example": "anthropology"
             }
           }
         }

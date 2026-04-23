@@ -177,11 +177,6 @@ router.get(
       .optional({ values: 'falsy' })
       .isInt({ min: 0 })
       .withMessage('active_in_year must be a non-negative integer'),
-    query('include_legacy')
-      .optional()
-      .isBoolean()
-      .withMessage('include_legacy must be a boolean')
-      .toBoolean(),
     query('min_id')
       .optional()
       .isInt({ min: 1 })
@@ -319,12 +314,7 @@ router.get(
     query('offset')
       .optional()
       .isInt({ min: 0 })
-      .withMessage('Offset must be a non-negative integer'),
-    query('include_legacy')
-      .optional()
-      .isBoolean()
-      .withMessage('include_legacy must be a boolean')
-      .toBoolean()
+      .withMessage('Offset must be a non-negative integer')
   ],
   enhancedValidationHandler,
   venuesController.searchVenues
@@ -385,10 +375,10 @@ router.get(
       .isBoolean()
       .withMessage('include_top_authors must be a boolean')
       .toBoolean(),
-    query('include_legacy')
+    query('include_recent_works')
       .optional()
       .isBoolean()
-      .withMessage('include_legacy must be a boolean')
+      .withMessage('include_recent_works must be a boolean')
       .toBoolean()
   ],
   enhancedValidationHandler,

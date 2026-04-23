@@ -52,7 +52,6 @@ class VenuesController {
         limit: req.query.limit !== undefined ? req.query.limit : 20,
         offset: req.query.offset
       });
-      const includeLegacyMetrics = parseBooleanParam(req.query.include_legacy, false);
       const minId = parseIntegerParam(req.query.min_id);
 
       const options = {
@@ -61,7 +60,6 @@ class VenuesController {
         search: req.query.search,
         sortBy: req.query.sortBy ?? req.query.sort_by,
         sortOrder: req.query.sortOrder ?? req.query.sort_order,
-        includeLegacyMetrics,
         min_id: minId,
         coverage_from: req.query.coverage_from,
         coverage_to: req.query.coverage_to,
@@ -76,10 +74,11 @@ class VenuesController {
 
       const includes = {
         ...(result.meta?.includes || {}),
-        legacy_metrics: includeLegacyMetrics,
-        subjects: true,
-        terms: true,
-        keywords: true
+        identifiers: true,
+        indexing: true,
+        metrics: true,
+        ranking: true,
+        subjects: true
       };
 
       const meta = {
@@ -91,8 +90,7 @@ class VenuesController {
         total: result.pagination?.total,
         limit: result.pagination?.limit,
         type: options.type,
-        search: options.search,
-        includeLegacyMetrics
+        search: options.search
       });
 
       return res.success(result.data, {
@@ -129,17 +127,15 @@ class VenuesController {
       const includeSubjects = parseBooleanParam(req.query.include_subjects, true);
       const includeYearly = parseBooleanParam(req.query.include_yearly, true);
       const includeTopAuthors = parseBooleanParam(req.query.include_top_authors, true);
-      const includeLegacyMetrics = parseBooleanParam(req.query.include_legacy, true);
       const includeRecentWorks = parseBooleanParam(req.query.include_recent_works, true);
 
       const result = await venuesService.getVenueById(id, {
         includeSubjects,
         includeYearly,
         includeTopAuthors,
-        includeLegacyMetrics,
         includeRecentWorks
       });
-      
+
       if (!result) {
         return res.fail(`Venue with ID ${id} not found`, {
           statusCode: 404,
@@ -151,12 +147,13 @@ class VenuesController {
       const meta = {
         ...(result.meta || {}),
         includes: {
+          identifiers: true,
+          indexing: true,
+          metrics: true,
+          ranking: true,
           subjects: includeSubjects,
-          terms: includeSubjects,
-          keywords: includeSubjects,
           yearly_stats: includeYearly,
           top_authors: includeTopAuthors,
-          legacy_metrics: includeLegacyMetrics,
           recent_works: includeRecentWorks
         }
       };
@@ -288,22 +285,20 @@ class VenuesController {
         offset: req.query.offset
       });
 
-      const includeLegacyMetrics = parseBooleanParam(req.query.include_legacy, false);
-
       const options = {
         ...pagination,
-        type: req.query.type,
-        includeLegacyMetrics
+        type: req.query.type
       };
 
       const result = await venuesService.searchVenues(trimmedQuery, options);
-      
+
       const searchIncludes = {
         ...(result.meta?.includes || {}),
-        legacy_metrics: includeLegacyMetrics,
-        subjects: true,
-        terms: true,
-        keywords: true
+        identifiers: true,
+        indexing: true,
+        metrics: true,
+        ranking: true,
+        subjects: true
       };
 
       const meta = {

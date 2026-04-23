@@ -406,7 +406,7 @@ describe('Courses & Instructors', () => {
 });
 
 describe('DTOs structure', () => {
-  test('Venue DTO includes explicit IDs', () => {
+  test('Venue DTO groups identifiers, metrics, ranking and indexing into dedicated blocks', () => {
     const { formatVenueListItem } = require('../src/dto/venue.dto');
     const input = {
       id: 1,
@@ -417,13 +417,48 @@ describe('DTOs structure', () => {
       wikidata_id: 'Q123',
       openalex_id: 'V123',
       issn: '1111-2222',
-      eissn: '3333-4444'
+      eissn: '3333-4444',
+      impact_factor: 3.2,
+      h_index: 42,
+      citescore: 2.8,
+      sjr: 1.1,
+      snip: 0.9,
+      is_in_doaj: 1,
+      is_in_scielo: 0,
+      is_indexed_in_scopus: 1,
+      validation_status: 'VALIDATED',
+      global_ranking_score: 15.5,
+      score_breakdown: { total: 15.5, subject: 5, oa: 0.5, authorship: 1, affiliation: 2, citation: 3, llm: 4, llm_relevance: 5, llm_justification: 'core' }
     };
     const out = formatVenueListItem(input);
-    expect(out).toHaveProperty('scopus_id', '12345');
-    expect(out).toHaveProperty('wikidata_id', 'Q123');
-    expect(out).toHaveProperty('openalex_id', 'V123');
-    expect(out).toHaveProperty('abbreviated_name', 'T. Venue');
+
+    expect(out.abbreviated_name).toBe('T. Venue');
+    expect(out.identifiers).toEqual({
+      issn: '1111-2222',
+      eissn: '3333-4444',
+      scopus_id: '12345',
+      wikidata_id: 'Q123',
+      openalex_id: 'V123',
+      scielo_id: null
+    });
+    expect(out.metrics).toMatchObject({ impact_factor: 3.2, h_index: 42, citescore: 2.8, sjr: 1.1, snip: 0.9 });
+    expect(out.indexing).toEqual({ is_in_doaj: true, is_in_scielo: false, is_indexed_in_scopus: true, validation_status: 'VALIDATED' });
+    expect(out.ranking).toMatchObject({ score: 15.5 });
+    expect(out.ranking.components).toMatchObject({ subject: 5, oa: 0.5, citation: 3, llm: 4 });
+    expect(out.ranking.llm).toEqual({ relevance: 5, justification: 'core' });
+
+    expect(out).not.toHaveProperty('issn');
+    expect(out).not.toHaveProperty('eissn');
+    expect(out).not.toHaveProperty('scopus_id');
+    expect(out).not.toHaveProperty('impact_factor');
+    expect(out).not.toHaveProperty('h_index');
+    expect(out).not.toHaveProperty('global_ranking_score');
+    expect(out).not.toHaveProperty('score_breakdown');
+    expect(out).not.toHaveProperty('legacy_metrics');
+    expect(out).not.toHaveProperty('terms');
+    expect(out).not.toHaveProperty('keywords');
+    expect(out).not.toHaveProperty('top_subjects');
+    expect(out).not.toHaveProperty('is_in_doaj');
   });
 
   test('Person DTO includes explicit IDs and name_variations', () => {
