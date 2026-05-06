@@ -36,6 +36,7 @@ ssl/*.crt
 
 # Deploy scripts
 rsync.sh
+init.sh
 
 # Node-related
 node_modules/
