@@ -64,6 +64,17 @@ describe('Integration smoke (real DB)', () => {
       assert.equal(body.data.id, 5);
       assert.ok(Array.isArray(body.data.publications), 'publications must be array');
       assert.ok(!('publication' in body.data), 'legacy publication block must be gone');
+      assert.ok('primary_publication_id' in body.data, 'primary_publication_id must be present');
+      assert.ok('primary_publication' in body.data, 'primary_publication must be present');
+      assert.ok('files' in body.data && Array.isArray(body.data.files), 'work-level files[] must be present');
+      assert.ok(body.data.file_summary && typeof body.data.file_summary === 'object', 'file_summary block must be present');
+      assert.ok('year_range' in body.data, 'year_range must be present');
+      assert.ok('venues' in body.data && Array.isArray(body.data.venues), 'venues aggregation must be present');
+      if (body.data.publications.length > 0) {
+        const head = body.data.publications[0];
+        assert.ok(head._links && head._links.self, 'each publication entry must expose _links.self');
+        assert.ok('is_primary' in head, 'each publication entry must expose is_primary');
+      }
     });
 
     test('GET /publications exposes identifiers+files', async () => {

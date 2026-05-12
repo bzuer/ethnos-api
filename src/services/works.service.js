@@ -4,8 +4,70 @@ const SphinxService = require('./sphinx.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
-const { authorsFromJson, subjectsFromJson: baseSubjectsFromJson, parseJsonColumn } = require('../dto/helpers');
+const {
+  authorsFromJson,
+  subjectsFromJson: baseSubjectsFromJson,
+  parseJsonColumn,
+  toOptionalBoolean,
+  toOptionalInteger,
+  normalizeType,
+  normalizeVenue
+} = require('../dto/helpers');
 const { formatPublicationEntry } = require('../dto/publication.dto');
+
+const WORK_LEVEL_FILE_CAP = 50;
+
+const buildAggregatedFileEntry = (file, publicationId) => {
+  if (!file || typeof file !== 'object') return null;
+  return {
+    file_id: toOptionalInteger(file.id ?? file.file_id),
+    publication_id: toOptionalInteger(publicationId),
+    md5: file.md5 || null,
+    format: normalizeType(file.format || file.file_format),
+    size: file.size === null || file.size === undefined ? null : Number(file.size),
+    pages: toOptionalInteger(file.pages),
+    language: file.language || null,
+    version: file.version || null,
+    role: normalizeType(file.role || file.file_role) || 'MAIN',
+    libgen_id: toOptionalInteger(file.libgen_id),
+    scimag_id: toOptionalInteger(file.scimag_id),
+    openacess_id: file.openacess_id || null,
+    best_oa_url: file.best_oa_url || null,
+    verification: normalizeType(file.verification || file.verification_status),
+    download_count: toOptionalInteger(file.downloads ?? file.download_count) || 0
+  };
+};
+
+const FILE_ROLE_PRIORITY = { MAIN: 0, SUPPLEMENT: 1, COVER: 2, PREVIEW: 3 };
+const FILE_VERIFICATION_PRIORITY = { VERIFIED: 0, PENDING: 1, FAILED: 2, CORRUPTED: 3 };
+
+const sortAggregatedFiles = (files = []) =>
+  [...files].sort((a, b) => {
+    const ra = FILE_ROLE_PRIORITY[a.role] ?? 99;
+    const rb = FILE_ROLE_PRIORITY[b.role] ?? 99;
+    if (ra !== rb) return ra - rb;
+    const va = FILE_VERIFICATION_PRIORITY[a.verification] ?? 99;
+    const vb = FILE_VERIFICATION_PRIORITY[b.verification] ?? 99;
+    if (va !== vb) return va - vb;
+    return (b.publication_id || 0) - (a.publication_id || 0);
+  });
+
+const pickPrimaryPublicationRow = (rows = []) => {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const scored = rows.map((row, index) => ({
+    row,
+    index,
+    year: parseInt(row.publication_year, 10) || 0,
+    hasFiles: row.has_files === 1 || row.has_files === true ? 1 : 0,
+    publicationId: parseInt(row.publication_id, 10) || 0
+  }));
+  scored.sort((a, b) => {
+    if (b.year !== a.year) return b.year - a.year;
+    if (b.hasFiles !== a.hasFiles) return b.hasFiles - a.hasFiles;
+    return b.publicationId - a.publicationId;
+  });
+  return scored[0].row;
+};
 const { withTimeout } = require('../utils/db');
 
 const subjectsFromJson = (value) =>
@@ -154,7 +216,7 @@ class WorksService {
   async getWorkById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
-    const cacheKey = `work:v2:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `work:v3:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -665,7 +727,8 @@ class WorksService {
         w.social_media_mentions,
         w.news_mentions,
         w.created_at,
-        w.updated_at
+        w.updated_at,
+        w.metrics_last_updated
       FROM works w
       WHERE w.id = ?
       LIMIT 1
@@ -826,7 +889,156 @@ class WorksService {
       publicationsTotal = parseInt(countRow?.total) || cappedPublicationRows.length;
     }
 
-    const publicationEntries = cappedPublicationRows.map(formatPublicationEntry);
+    const primaryRow = pickPrimaryPublicationRow(cappedPublicationRows);
+    const primaryPublicationId = primaryRow ? parseInt(primaryRow.publication_id, 10) || null : null;
+
+    const publicationEntries = cappedPublicationRows.map(row => {
+      const entry = formatPublicationEntry(row);
+      entry.is_primary = primaryPublicationId !== null && entry.id === primaryPublicationId;
+      return entry;
+    });
+
+    const aggregatedFiles = [];
+    let totalFilesAcrossPublications = 0;
+    let totalDownloadCount = 0;
+    let publicationsWithFilesCount = 0;
+    let publicationsOpenAccessCount = 0;
+    let publicationsPeerReviewedCount = 0;
+    let bestOaUrl = null;
+    const formatBreakdown = Object.create(null);
+    const roleBreakdown = Object.create(null);
+    const venueAgg = new Map();
+    const yearsSet = new Set();
+
+    for (const row of cappedPublicationRows) {
+      if (row.open_access === 1) publicationsOpenAccessCount += 1;
+      if (row.peer_reviewed === 1) publicationsPeerReviewedCount += 1;
+      if (row.publication_year && row.publication_year > 0) yearsSet.add(row.publication_year);
+
+      if (row.venue_id) {
+        const key = row.venue_id;
+        const existing = venueAgg.get(key);
+        if (existing) {
+          existing.publication_count += 1;
+          if (row.publication_year && row.publication_year > existing.latest_year) {
+            existing.latest_year = row.publication_year;
+          }
+        } else {
+          venueAgg.set(key, {
+            id: parseInt(row.venue_id, 10) || null,
+            name: row.venue_name || row.venue_abbreviated_name || null,
+            abbreviated_name: row.venue_abbreviated_name || null,
+            type: normalizeType(row.venue_type),
+            issn: row.issn || null,
+            eissn: row.eissn || null,
+            scopus_id: row.venue_scopus_id || null,
+            wikidata_id: row.venue_wikidata_id || null,
+            openalex_id: row.venue_openalex_id || null,
+            publication_count: 1,
+            latest_year: row.publication_year || null
+          });
+        }
+      }
+
+      const parsedFiles = parseJsonColumn(row.files_json);
+      if (!Array.isArray(parsedFiles) || parsedFiles.length === 0) continue;
+      publicationsWithFilesCount += 1;
+      totalFilesAcrossPublications += parsedFiles.length;
+      for (const rawFile of parsedFiles) {
+        const file = buildAggregatedFileEntry(rawFile, row.publication_id);
+        if (!file) continue;
+        totalDownloadCount += file.download_count || 0;
+        if (file.format) formatBreakdown[file.format] = (formatBreakdown[file.format] || 0) + 1;
+        if (file.role) roleBreakdown[file.role] = (roleBreakdown[file.role] || 0) + 1;
+        if (!bestOaUrl && file.best_oa_url) bestOaUrl = file.best_oa_url;
+        if (aggregatedFiles.length < WORK_LEVEL_FILE_CAP) {
+          aggregatedFiles.push(file);
+        }
+      }
+    }
+
+    const orderedFiles = sortAggregatedFiles(aggregatedFiles);
+
+    const fileSummary = {
+      files_returned: orderedFiles.length,
+      files_total: totalFilesAcrossPublications,
+      files_truncated: totalFilesAcrossPublications > orderedFiles.length,
+      publications_with_files: publicationsWithFilesCount,
+      total_download_count: totalDownloadCount,
+      best_oa_url: bestOaUrl,
+      by_format: formatBreakdown,
+      by_role: roleBreakdown,
+      has_scimag: cappedPublicationRows.some(row => row.has_scimag_file === 1),
+      has_libgen: cappedPublicationRows.some(row => row.has_libgen_file === 1),
+      has_open_access: publicationsOpenAccessCount > 0 || Boolean(bestOaUrl)
+    };
+
+    const venues = Array.from(venueAgg.values())
+      .filter(entry => entry.name || entry.abbreviated_name)
+      .sort((a, b) => {
+        if (b.publication_count !== a.publication_count) return b.publication_count - a.publication_count;
+        return (b.latest_year || 0) - (a.latest_year || 0);
+      });
+
+    const yearsArr = Array.from(yearsSet).sort((a, b) => a - b);
+    const yearRange = yearsArr.length
+      ? { earliest: yearsArr[0], latest: yearsArr[yearsArr.length - 1] }
+      : { earliest: null, latest: null };
+
+    const primaryEntry = primaryPublicationId !== null
+      ? publicationEntries.find(entry => entry.id === primaryPublicationId) || null
+      : null;
+
+    const primaryPublication = primaryEntry
+      ? {
+          id: primaryEntry.id,
+          doi: primaryEntry.identifiers?.doi || null,
+          publication_year: primaryEntry.publication_year,
+          publication_date: primaryEntry.publication_date,
+          volume: primaryEntry.volume,
+          issue: primaryEntry.issue,
+          pages: primaryEntry.pages,
+          open_access: primaryEntry.open_access,
+          peer_reviewed: primaryEntry.peer_reviewed,
+          has_files: primaryEntry.has_files,
+          venue: primaryEntry.venue,
+          publisher: primaryEntry.publisher,
+          source: primaryEntry.source,
+          license_url: primaryEntry.license_url,
+          license_version: primaryEntry.license_version,
+          _links: primaryEntry._links
+        }
+      : null;
+
+    const distinctLanguages = Array.from(
+      new Set(cappedPublicationRows.map(row => row.language).filter(Boolean))
+    );
+
+    const latestSummaryUpdatedAt = cappedPublicationRows.reduce((acc, row) => {
+      if (!row.summary_updated_at) return acc;
+      const ts = new Date(row.summary_updated_at).getTime();
+      if (!Number.isFinite(ts)) return acc;
+      if (!acc || ts > acc) return ts;
+      return acc;
+    }, null);
+
+    const workAggregations = {
+      primary_publication_id: primaryPublicationId,
+      primary_publication: primaryPublication,
+      publication_year: primaryEntry ? primaryEntry.publication_year : null,
+      doi: primaryEntry ? primaryEntry.identifiers?.doi || null : null,
+      venue: primaryEntry ? primaryEntry.venue : null,
+      open_access: publicationsOpenAccessCount > 0,
+      peer_reviewed: publicationsPeerReviewedCount > 0,
+      has_files: publicationsWithFilesCount > 0,
+      files: orderedFiles,
+      file_summary: fileSummary,
+      year_range: yearRange,
+      venues,
+      languages: distinctLanguages,
+      summary_updated_at: latestSummaryUpdatedAt ? new Date(latestSummaryUpdatedAt).toISOString() : null
+    };
+
 
     const metricsData = {
       citation_count: workData.citation_count,
@@ -835,7 +1047,15 @@ class WorksService {
       download_count: workData.download_count,
       view_count: workData.view_count,
       social_media_mentions: workData.social_media_mentions,
-      news_mentions: workData.news_mentions
+      news_mentions: workData.news_mentions,
+      publications_count: publicationsTotal,
+      publications_with_files_count: publicationsWithFilesCount,
+      publications_open_access_count: publicationsOpenAccessCount,
+      publications_peer_reviewed_count: publicationsPeerReviewedCount,
+      distinct_venues_count: venues.length,
+      total_files_count: totalFilesAcrossPublications,
+      total_files_download_count: totalDownloadCount,
+      metrics_last_updated: workData.metrics_last_updated || null
     };
 
     if (!subjectsData || subjectsData.length === 0) {
@@ -1014,6 +1234,23 @@ class WorksService {
       language: workData.language,
       created_at: workData.created_at,
       updated_at: workData.updated_at,
+
+      publication_year: workAggregations.publication_year,
+      doi: workAggregations.doi,
+      open_access: workAggregations.open_access,
+      peer_reviewed: workAggregations.peer_reviewed,
+      has_files: workAggregations.has_files,
+      venue: workAggregations.venue,
+      languages: workAggregations.languages,
+      year_range: workAggregations.year_range,
+      summary_updated_at: workAggregations.summary_updated_at,
+
+      primary_publication_id: workAggregations.primary_publication_id,
+      primary_publication: workAggregations.primary_publication,
+
+      files: workAggregations.files,
+      file_summary: workAggregations.file_summary,
+      venues: workAggregations.venues,
 
       publications: publicationEntries,
       publications_total: publicationsTotal,

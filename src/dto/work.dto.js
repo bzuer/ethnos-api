@@ -202,33 +202,99 @@ function formatWorkDetails(work = {}) {
       }, {})
     : {};
 
-  const metrics = work.metrics && typeof work.metrics === 'object'
-    ? {
-        citation_count: toOptionalInteger(work.metrics.citation_count) || 0,
-        reference_count: toOptionalInteger(work.metrics.reference_count) || 0,
-        download_count: toOptionalInteger(work.metrics.download_count),
-        view_count: toOptionalInteger(work.metrics.view_count),
-        altmetric_score:
-          work.metrics.altmetric_score === null || work.metrics.altmetric_score === undefined
-            ? null
-            : Number(work.metrics.altmetric_score),
-        social_media_mentions: toOptionalInteger(work.metrics.social_media_mentions),
-        news_mentions: toOptionalInteger(work.metrics.news_mentions)
-      }
-    : {
-        citation_count: 0,
-        reference_count: 0,
-        download_count: null,
-        view_count: null,
-        altmetric_score: null,
-        social_media_mentions: null,
-        news_mentions: null
-      };
+  const metricsSource = work.metrics && typeof work.metrics === 'object' ? work.metrics : {};
+  const metrics = {
+    citation_count: toOptionalInteger(metricsSource.citation_count) || 0,
+    reference_count: toOptionalInteger(metricsSource.reference_count) || 0,
+    download_count: toOptionalInteger(metricsSource.download_count),
+    view_count: toOptionalInteger(metricsSource.view_count),
+    altmetric_score:
+      metricsSource.altmetric_score === null || metricsSource.altmetric_score === undefined
+        ? null
+        : Number(metricsSource.altmetric_score),
+    social_media_mentions: toOptionalInteger(metricsSource.social_media_mentions),
+    news_mentions: toOptionalInteger(metricsSource.news_mentions),
+    publications_count: toOptionalInteger(metricsSource.publications_count),
+    publications_with_files_count: toOptionalInteger(metricsSource.publications_with_files_count),
+    publications_open_access_count: toOptionalInteger(metricsSource.publications_open_access_count),
+    publications_peer_reviewed_count: toOptionalInteger(metricsSource.publications_peer_reviewed_count),
+    distinct_venues_count: toOptionalInteger(metricsSource.distinct_venues_count),
+    total_files_count: toOptionalInteger(metricsSource.total_files_count),
+    total_files_download_count: toOptionalInteger(metricsSource.total_files_download_count),
+    metrics_last_updated: metricsSource.metrics_last_updated || null
+  };
 
   const publicationsTotal = work.publications_total !== undefined && work.publications_total !== null
     ? toOptionalInteger(work.publications_total)
     : publications.length;
   const publicationsHasMore = work.publications_has_more === true;
+
+  const venuesList = Array.isArray(work.venues)
+    ? work.venues.map(entry => ({
+        id: toOptionalInteger(entry.id),
+        name: entry.name || null,
+        abbreviated_name: entry.abbreviated_name || null,
+        type: entry.type ? normalizeType(entry.type) : null,
+        issn: entry.issn || null,
+        eissn: entry.eissn || null,
+        scopus_id: entry.scopus_id || null,
+        wikidata_id: entry.wikidata_id || null,
+        openalex_id: entry.openalex_id || null,
+        publication_count: toOptionalInteger(entry.publication_count) || 0,
+        latest_year: toOptionalInteger(entry.latest_year)
+      }))
+    : [];
+
+  const filesList = Array.isArray(work.files)
+    ? work.files.map(file => ({
+        file_id: toOptionalInteger(file.file_id),
+        publication_id: toOptionalInteger(file.publication_id),
+        md5: file.md5 || null,
+        format: normalizeType(file.format),
+        size: file.size === null || file.size === undefined ? null : Number(file.size),
+        pages: toOptionalInteger(file.pages),
+        language: file.language || null,
+        version: file.version || null,
+        role: normalizeType(file.role) || 'MAIN',
+        libgen_id: toOptionalInteger(file.libgen_id),
+        scimag_id: toOptionalInteger(file.scimag_id),
+        openacess_id: file.openacess_id || null,
+        best_oa_url: file.best_oa_url || null,
+        verification: normalizeType(file.verification),
+        download_count: toOptionalInteger(file.download_count) || 0
+      }))
+    : [];
+
+  const fileSummary = work.file_summary && typeof work.file_summary === 'object'
+    ? {
+        files_returned: toOptionalInteger(work.file_summary.files_returned) || 0,
+        files_total: toOptionalInteger(work.file_summary.files_total) || 0,
+        files_truncated: work.file_summary.files_truncated === true,
+        publications_with_files: toOptionalInteger(work.file_summary.publications_with_files) || 0,
+        total_download_count: toOptionalInteger(work.file_summary.total_download_count) || 0,
+        best_oa_url: work.file_summary.best_oa_url || null,
+        by_format: (work.file_summary.by_format && typeof work.file_summary.by_format === 'object') ? work.file_summary.by_format : {},
+        by_role: (work.file_summary.by_role && typeof work.file_summary.by_role === 'object') ? work.file_summary.by_role : {},
+        has_scimag: work.file_summary.has_scimag === true,
+        has_libgen: work.file_summary.has_libgen === true,
+        has_open_access: work.file_summary.has_open_access === true
+      }
+    : null;
+
+  const yearRange = work.year_range && typeof work.year_range === 'object'
+    ? {
+        earliest: toOptionalInteger(work.year_range.earliest),
+        latest: toOptionalInteger(work.year_range.latest)
+      }
+    : { earliest: null, latest: null };
+
+  const primaryPublication = work.primary_publication && typeof work.primary_publication === 'object'
+    ? work.primary_publication
+    : null;
+
+  const languages = Array.isArray(work.languages)
+    ? Array.from(new Set(work.languages.filter(Boolean)))
+    : [];
 
   return {
     id: toOptionalInteger(work.id),
@@ -237,6 +303,23 @@ function formatWorkDetails(work = {}) {
     abstract: work.abstract || null,
     type: normalizeType(work.type || work.work_type),
     language: work.language || null,
+    publication_year: toOptionalInteger(work.publication_year),
+    doi: work.doi || null,
+    open_access: toOptionalBoolean(work.open_access),
+    peer_reviewed: toOptionalBoolean(work.peer_reviewed),
+    has_files: toOptionalBoolean(work.has_files),
+    venue: work.venue || null,
+    year_range: yearRange,
+    languages,
+    summary_updated_at: work.summary_updated_at || null,
+
+    primary_publication_id: toOptionalInteger(work.primary_publication_id),
+    primary_publication: primaryPublication,
+
+    files: filesList,
+    file_summary: fileSummary,
+    venues: venuesList,
+
     publications,
     publications_total: publicationsTotal,
     publications_has_more: publicationsHasMore,

@@ -323,12 +323,25 @@ router.get('/', validateWorksQuery, worksController.getWorks);
  *       Returns the detailed payload for a work. The response embeds **all
  *       publications of the work** as `publications[]` (capped at 50, with
  *       `publications_total` and `publications_has_more` flags). Each entry
- *       carries its own `identifiers`, `venue`, `publisher`, `files`, and
- *       `_links.self`. The legacy single `publication`/`venue`/`publisher`/`files`/`licenses`
- *       blocks have been removed (Phase 6 breaking change). Aggregated
- *       `identifiers` (union of every publication's identifier set) remains
- *       at the work level for backward reference. The cache key was bumped
- *       from `work:complete:*` to `work:v2:*`.
+ *       carries its own `identifiers`, `venue`, `publisher`, `files`,
+ *       `_links.self`, plus an `is_primary` boolean flagging the work's
+ *       primary publication. Work-level aggregations expose `primary_publication_id`,
+ *       a `primary_publication` summary, top-level `publication_year` /
+ *       `doi` / `open_access` / `peer_reviewed` / `has_files` / `venue`,
+ *       a `year_range` block (`earliest` / `latest`), a distinct `venues[]`
+ *       roll-up (publication_count and latest_year per venue), a flat
+ *       `files[]` aggregation (capped at 50, each entry carries the parent
+ *       `publication_id`), and a `file_summary` block (totals, by_format,
+ *       by_role, best_oa_url, has_scimag / has_libgen / has_open_access).
+ *       The `metrics` block was extended with `publications_count`,
+ *       `publications_with_files_count`, `publications_open_access_count`,
+ *       `publications_peer_reviewed_count`, `distinct_venues_count`,
+ *       `total_files_count`, `total_files_download_count`, and
+ *       `metrics_last_updated`. Aggregated `identifiers` (union of every
+ *       publication's identifier set) remains at the work level. The
+ *       legacy single `publication`/`publisher`/`licenses` blocks remain
+ *       gone (Phase 6 breaking change). The cache key was bumped from
+ *       `work:v2:*` to `work:v3:*`.
  *     tags: [Works]
  *     parameters:
  *       - in: path
@@ -382,6 +395,133 @@ router.get('/', validateWorksQuery, worksController.getWorks);
  *                     language:
  *                       type: string
  *                       nullable: true
+ *                     publication_year:
+ *                       type: integer
+ *                       nullable: true
+ *                       description: Year of the primary publication (latest, files-bearing tiebreaker).
+ *                     doi:
+ *                       type: string
+ *                       nullable: true
+ *                       description: DOI of the primary publication, surfaced at the work level for convenience.
+ *                     open_access:
+ *                       type: boolean
+ *                       nullable: true
+ *                       description: True if any publication of this work is open access.
+ *                     peer_reviewed:
+ *                       type: boolean
+ *                       nullable: true
+ *                       description: True if any publication of this work is peer-reviewed.
+ *                     has_files:
+ *                       type: boolean
+ *                       nullable: true
+ *                       description: True if any publication of this work has files attached.
+ *                     venue:
+ *                       type: object
+ *                       nullable: true
+ *                       description: Venue of the primary publication.
+ *                     year_range:
+ *                       type: object
+ *                       properties:
+ *                         earliest:
+ *                           type: integer
+ *                           nullable: true
+ *                         latest:
+ *                           type: integer
+ *                           nullable: true
+ *                     languages:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                     summary_updated_at:
+ *                       type: string
+ *                       format: date-time
+ *                       nullable: true
+ *                     primary_publication_id:
+ *                       type: integer
+ *                       nullable: true
+ *                     primary_publication:
+ *                       type: object
+ *                       nullable: true
+ *                       description: Compact summary of the primary publication (id, doi, year, venue, publisher, has_files, open_access, peer_reviewed, _links.self).
+ *                     files:
+ *                       type: array
+ *                       description: Flat aggregation of files across publications (capped at 50). Each entry carries the parent `publication_id`.
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           file_id:
+ *                             type: integer
+ *                             nullable: true
+ *                           publication_id:
+ *                             type: integer
+ *                             nullable: true
+ *                           format:
+ *                             type: string
+ *                             nullable: true
+ *                           role:
+ *                             type: string
+ *                             nullable: true
+ *                           size:
+ *                             type: integer
+ *                             nullable: true
+ *                           pages:
+ *                             type: integer
+ *                             nullable: true
+ *                           language:
+ *                             type: string
+ *                             nullable: true
+ *                           md5:
+ *                             type: string
+ *                             nullable: true
+ *                           libgen_id:
+ *                             type: integer
+ *                             nullable: true
+ *                           scimag_id:
+ *                             type: integer
+ *                             nullable: true
+ *                           openacess_id:
+ *                             type: string
+ *                             nullable: true
+ *                           best_oa_url:
+ *                             type: string
+ *                             nullable: true
+ *                           verification:
+ *                             type: string
+ *                             nullable: true
+ *                           download_count:
+ *                             type: integer
+ *                     file_summary:
+ *                       type: object
+ *                       nullable: true
+ *                       properties:
+ *                         files_returned:
+ *                           type: integer
+ *                         files_total:
+ *                           type: integer
+ *                         files_truncated:
+ *                           type: boolean
+ *                         publications_with_files:
+ *                           type: integer
+ *                         total_download_count:
+ *                           type: integer
+ *                         best_oa_url:
+ *                           type: string
+ *                           nullable: true
+ *                         by_format:
+ *                           type: object
+ *                         by_role:
+ *                           type: object
+ *                         has_scimag:
+ *                           type: boolean
+ *                         has_libgen:
+ *                           type: boolean
+ *                         has_open_access:
+ *                           type: boolean
+ *                     venues:
+ *                       type: array
+ *                       description: Distinct venues across all publications of the work, with publication_count and latest_year per entry.
+ *                       items:
+ *                         type: object
  *                     publications:
  *                       type: array
  *                       items:
@@ -389,6 +529,8 @@ router.get('/', validateWorksQuery, worksController.getWorks);
  *                         properties:
  *                           id:
  *                             type: integer
+ *                           is_primary:
+ *                             type: boolean
  *                           identifiers:
  *                             type: object
  *                           publication_year:
@@ -431,6 +573,12 @@ router.get('/', validateWorksQuery, worksController.getWorks);
  *                       type: object
  *                     metrics:
  *                       type: object
+ *                       description: |
+ *                         Work-level metrics extended with `publications_count`,
+ *                         `publications_with_files_count`, `publications_open_access_count`,
+ *                         `publications_peer_reviewed_count`, `distinct_venues_count`,
+ *                         `total_files_count`, `total_files_download_count`, and
+ *                         `metrics_last_updated`.
  *                     funding:
  *                       type: array
  *                       items:

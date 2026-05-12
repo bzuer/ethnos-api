@@ -254,6 +254,7 @@ function formatPublicationEntry(row = {}) {
   delete detail.siblings;
   delete detail.citations;
   delete detail.references;
+  detail._links = detail.id !== null ? { self: `/publications/${detail.id}` } : null;
   return detail;
 }
 

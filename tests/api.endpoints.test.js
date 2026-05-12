@@ -564,12 +564,101 @@ describe('DTOs structure', () => {
     expect(details.identifiers.doi).toContain('10.1/a');
     expect(details.identifiers.pmid).toContain('123456');
     expect(details).not.toHaveProperty('publication');
-    expect(details).not.toHaveProperty('venue');
-    expect(details).not.toHaveProperty('files');
+    expect(details).toHaveProperty('primary_publication_id');
+    expect(details).toHaveProperty('primary_publication');
+    expect(details).toHaveProperty('files');
+    expect(Array.isArray(details.files)).toBe(true);
+    expect(details).toHaveProperty('file_summary');
+    expect(details).toHaveProperty('venues');
+    expect(Array.isArray(details.venues)).toBe(true);
+    expect(details).toHaveProperty('year_range');
 
     const listItem = formatWorkListItem(work);
     expect(listItem.venue).toHaveProperty('name', 'Journal of Tests');
     expect(listItem.venue).toHaveProperty('abbreviated_name', 'J. Tests');
+  });
+
+  test('Work DTO aggregates primary publication, files, venues, and year range', () => {
+    const { formatWorkDetails } = require('../src/dto/work.dto');
+    const details = formatWorkDetails({
+      id: 9,
+      title: 'Aggregated Work',
+      primary_publication_id: 22,
+      primary_publication: {
+        id: 22,
+        doi: '10.9/b',
+        publication_year: 2024,
+        venue: { id: 7, name: 'Venue B' },
+        has_files: true,
+        open_access: true,
+        peer_reviewed: true,
+        _links: { self: '/publications/22' }
+      },
+      publication_year: 2024,
+      doi: '10.9/b',
+      open_access: true,
+      peer_reviewed: true,
+      has_files: true,
+      venue: { id: 7, name: 'Venue B' },
+      year_range: { earliest: 2010, latest: 2024 },
+      languages: ['en', 'pt'],
+      summary_updated_at: '2026-05-01T00:00:00.000Z',
+      venues: [
+        { id: 7, name: 'Venue B', publication_count: 2, latest_year: 2024 },
+        { id: 8, name: 'Venue A', publication_count: 1, latest_year: 2010 }
+      ],
+      files: [
+        {
+          file_id: 101,
+          publication_id: 22,
+          format: 'PDF',
+          role: 'MAIN',
+          download_count: 5,
+          best_oa_url: 'https://oa.example.org/22.pdf'
+        }
+      ],
+      file_summary: {
+        files_returned: 1,
+        files_total: 1,
+        files_truncated: false,
+        publications_with_files: 1,
+        total_download_count: 5,
+        best_oa_url: 'https://oa.example.org/22.pdf',
+        by_format: { PDF: 1 },
+        by_role: { MAIN: 1 },
+        has_scimag: false,
+        has_libgen: false,
+        has_open_access: true
+      },
+      metrics: {
+        citation_count: 12,
+        reference_count: 3,
+        publications_count: 2,
+        publications_with_files_count: 1,
+        distinct_venues_count: 2,
+        total_files_count: 1,
+        total_files_download_count: 5
+      }
+    });
+
+    expect(details.primary_publication_id).toBe(22);
+    expect(details.primary_publication.doi).toBe('10.9/b');
+    expect(details.publication_year).toBe(2024);
+    expect(details.doi).toBe('10.9/b');
+    expect(details.open_access).toBe(true);
+    expect(details.peer_reviewed).toBe(true);
+    expect(details.has_files).toBe(true);
+    expect(details.year_range).toEqual({ earliest: 2010, latest: 2024 });
+    expect(details.languages).toEqual(['en', 'pt']);
+    expect(details.venues).toHaveLength(2);
+    expect(details.venues[0]).toHaveProperty('publication_count', 2);
+    expect(details.files).toHaveLength(1);
+    expect(details.files[0]).toHaveProperty('publication_id', 22);
+    expect(details.file_summary).toHaveProperty('best_oa_url', 'https://oa.example.org/22.pdf');
+    expect(details.file_summary.by_format).toEqual({ PDF: 1 });
+    expect(details.metrics).toHaveProperty('publications_count', 2);
+    expect(details.metrics).toHaveProperty('distinct_venues_count', 2);
+    expect(details.metrics).toHaveProperty('total_files_download_count', 5);
   });
 
   test('Publication entry exposes openaccess identifier while keeping legacy openacess alias', () => {
