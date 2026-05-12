@@ -216,7 +216,7 @@ class WorksService {
   async getWorkById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
-    const cacheKey = `work:v3:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `work:v4:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -887,6 +887,68 @@ class WorksService {
         { replacements: [id], type: sequelize.QueryTypes.SELECT }
       );
       publicationsTotal = parseInt(countRow?.total) || cappedPublicationRows.length;
+    }
+
+    const liveFilesByPub = new Map();
+    let liveFilesQuerySucceeded = false;
+    const pubIdsForFiles = cappedPublicationRows
+      .map(row => parseInt(row.publication_id, 10))
+      .filter(Number.isFinite);
+    if (pubIdsForFiles.length > 0) {
+      try {
+        const placeholders = pubIdsForFiles.map(() => '?').join(',');
+        const liveFiles = await sequelize.query(`
+          SELECT
+            f.id,
+            f.publication_id,
+            f.md5,
+            f.file_format AS format,
+            f.file_size AS size,
+            f.pages,
+            f.language,
+            f.version,
+            f.file_role AS role,
+            f.libgen_id,
+            f.scimag_id,
+            f.openacess_id,
+            f.best_oa_url,
+            f.verification_status AS verification,
+            f.download_count AS downloads
+          FROM files f
+          WHERE f.publication_id IN (${placeholders})
+          ORDER BY f.publication_id ASC,
+                   FIELD(f.file_role,'MAIN','SUPPLEMENT','COVER','PREVIEW'),
+                   f.id ASC
+          LIMIT 500
+        `, {
+          replacements: pubIdsForFiles,
+          type: sequelize.QueryTypes.SELECT
+        });
+        liveFilesQuerySucceeded = true;
+        for (const fileRow of liveFiles) {
+          const pubId = parseInt(fileRow.publication_id, 10);
+          if (!Number.isFinite(pubId)) continue;
+          const bucket = liveFilesByPub.get(pubId) || [];
+          bucket.push(fileRow);
+          liveFilesByPub.set(pubId, bucket);
+        }
+      } catch (liveFilesError) {
+        logger.warn('Live files JOIN for work failed; falling back to files_json', {
+          work_id: id,
+          error: liveFilesError.message
+        });
+      }
+    }
+
+    if (liveFilesQuerySucceeded) {
+      for (const row of cappedPublicationRows) {
+        const pubId = parseInt(row.publication_id, 10);
+        const liveFiles = liveFilesByPub.get(pubId) || [];
+        row.files_json = liveFiles;
+        row.has_files = liveFiles.length > 0 ? 1 : 0;
+        row.has_scimag_file = liveFiles.some(f => f.scimag_id !== null && f.scimag_id !== undefined) ? 1 : 0;
+        row.has_libgen_file = liveFiles.some(f => f.libgen_id !== null && f.libgen_id !== undefined) ? 1 : 0;
+      }
     }
 
     const primaryRow = pickPrimaryPublicationRow(cappedPublicationRows);

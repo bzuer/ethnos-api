@@ -99,7 +99,7 @@ class PublicationsService {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
 
-    const cacheKey = `publication:${id}:v1:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `publication:${id}:v2:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -168,6 +168,43 @@ class PublicationsService {
     `, { replacements: [id], type: sequelize.QueryTypes.SELECT });
 
     if (!row) return null;
+
+    try {
+      const liveFiles = await sequelize.query(`
+        SELECT
+          f.id,
+          f.publication_id,
+          f.md5,
+          f.file_format AS format,
+          f.file_size AS size,
+          f.pages,
+          f.language,
+          f.version,
+          f.file_role AS role,
+          f.libgen_id,
+          f.scimag_id,
+          f.openacess_id,
+          f.best_oa_url,
+          f.verification_status AS verification,
+          f.download_count AS downloads
+        FROM files f
+        WHERE f.publication_id = ?
+        ORDER BY FIELD(f.file_role,'MAIN','SUPPLEMENT','COVER','PREVIEW'), f.id ASC
+        LIMIT 200
+      `, {
+        replacements: [id],
+        type: sequelize.QueryTypes.SELECT
+      });
+      row.files_json = liveFiles;
+      row.has_files = liveFiles.length > 0 ? 1 : 0;
+      row.has_scimag_file = liveFiles.some(f => f.scimag_id !== null && f.scimag_id !== undefined) ? 1 : 0;
+      row.has_libgen_file = liveFiles.some(f => f.libgen_id !== null && f.libgen_id !== undefined) ? 1 : 0;
+    } catch (liveFilesError) {
+      logger.warn('Live files JOIN for publication failed; falling back to files_json', {
+        publication_id: id,
+        error: liveFilesError.message
+      });
+    }
 
     const siblings = await sequelize.query(`
       SELECT
