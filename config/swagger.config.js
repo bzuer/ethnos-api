@@ -571,10 +571,7 @@ const options = {
                 properties: {
                   funder_id: { type: 'integer', example: 4567 },
                   funder_name: { type: 'string', example: 'National Science Foundation' },
-                  grant_number: { type: 'string', nullable: true, example: 'NSF-123456' },
-                  program_name: { type: 'string', nullable: true, example: 'Computer and Information Science and Engineering' },
-                  amount: { type: 'number', nullable: true, example: 150000.00 },
-                  currency: { type: 'string', nullable: true, example: 'USD' }
+                  grant_number: { type: 'string', nullable: true, example: 'NSF-123456' }
                 }
               }
             },

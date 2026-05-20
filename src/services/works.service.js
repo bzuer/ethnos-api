@@ -788,10 +788,7 @@ class WorksService {
       SELECT 
         f.funder_id,
         o.name AS funder_name,
-        f.grant_number,
-        f.program_name,
-        f.amount,
-        f.currency
+        f.grant_number
       FROM funding f
       JOIN organizations o ON o.id = f.funder_id
       WHERE f.work_id = ?

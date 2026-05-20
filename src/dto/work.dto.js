@@ -182,13 +182,7 @@ function formatWorkDetails(work = {}) {
     ? work.funding.map(item => ({
         funder_id: item.funder_id || null,
         funder_name: item.funder_name || null,
-        grant_number: item.grant_number || null,
-        program_name: item.program_name || null,
-        amount:
-          item.amount === null || item.amount === undefined
-            ? null
-            : Number(item.amount),
-        currency: item.currency || null
+        grant_number: item.grant_number || null
       }))
     : [];
 

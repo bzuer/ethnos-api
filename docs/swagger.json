@@ -862,21 +862,6 @@
                   "type": "string",
                   "nullable": true,
                   "example": "NSF-123456"
-                },
-                "program_name": {
-                  "type": "string",
-                  "nullable": true,
-                  "example": "Computer and Information Science and Engineering"
-                },
-                "amount": {
-                  "type": "number",
-                  "nullable": true,
-                  "example": 150000
-                },
-                "currency": {
-                  "type": "string",
-                  "nullable": true,
-                  "example": "USD"
                 }
               }
             }
