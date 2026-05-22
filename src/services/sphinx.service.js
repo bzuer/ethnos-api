@@ -45,15 +45,12 @@ class SphinxService {
             if (hasSearchTerm) {
                 matchParts.push(this._escapeMatchTerm(trimmedQuery));
             }
-            if (filters.venue_name) {
-                matchParts.push(`@venue_search ${this._escapeMatchTerm(filters.venue_name)}`);
-            }
-            if (filters.author) {
-                matchParts.push(`@authors_search ${this._escapeMatchTerm(filters.author)}`);
-            }
-            if (filters.subject) {
-                matchParts.push(`@subjects_search ${this._escapeMatchTerm(filters.subject)}`);
-            }
+            const venueClause = this._buildFieldMatchClause('venue_search', filters.venue_name);
+            if (venueClause) matchParts.push(venueClause);
+            const authorClause = this._buildFieldMatchClause('authors_search', filters.author);
+            if (authorClause) matchParts.push(authorClause);
+            const subjectClause = this._buildFieldMatchClause('subjects_search', filters.subject);
+            if (subjectClause) matchParts.push(subjectClause);
 
             let sql;
             if (matchParts.length > 0) {
@@ -223,15 +220,12 @@ class SphinxService {
             if (hasSearchTerm) {
                 matchParts.push(this._escapeMatchTerm(trimmedQuery));
             }
-            if (filters.venue_name) {
-                matchParts.push(`@venue_search ${this._escapeMatchTerm(filters.venue_name)}`);
-            }
-            if (filters.author) {
-                matchParts.push(`@authors_search ${this._escapeMatchTerm(filters.author)}`);
-            }
-            if (filters.subject) {
-                matchParts.push(`@subjects_search ${this._escapeMatchTerm(filters.subject)}`);
-            }
+            const venueClause = this._buildFieldMatchClause('venue_search', filters.venue_name);
+            if (venueClause) matchParts.push(venueClause);
+            const authorClause = this._buildFieldMatchClause('authors_search', filters.author);
+            if (authorClause) matchParts.push(authorClause);
+            const subjectClause = this._buildFieldMatchClause('subjects_search', filters.subject);
+            if (subjectClause) matchParts.push(subjectClause);
 
             let sql;
             const columns = `id, work_id, venue_id, publisher_id, publication_year, work_type, language, open_access, peer_reviewed, has_files, work_citation_count, work_reference_count, publication_download_count`;
@@ -1083,6 +1077,17 @@ class SphinxService {
             .replace(/\\/g, '\\')
             .replace(/([()|\-!@~&\/?^$=])/g, '\\$1')
             .trim();
+    }
+
+    _buildFieldMatchClause(field, term) {
+        if (typeof term !== 'string') return null;
+        const cleaned = term.replace(/"/g, '').trim();
+        if (!cleaned) return null;
+        const escaped = this._escapeMatchTerm(cleaned);
+        if (!escaped) return null;
+        return /\s/.test(escaped)
+            ? `@${field} (${escaped})`
+            : `@${field} ${escaped}`;
     }
 
     _formatMatchExpression(term) {

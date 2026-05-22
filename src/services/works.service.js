@@ -1363,7 +1363,14 @@ class WorksService {
     const customOrderClause = resolveWorksOrderClause(filters?.sort_by ?? filters?.sortBy, filters?.sort_order ?? filters?.sortOrder);
     const trimmed = (search || '').trim();
     const hasContent = Boolean(trimmed);
-    const hasMetadata = Boolean(venue_name || author || subject);
+
+    const metadataTokens = [venue_name, author, subject]
+      .map(value => (typeof value === 'string' ? value.replace(/["\\]/g, '').trim() : ''))
+      .filter(Boolean)
+      .flatMap(value => value.split(/\s+/).filter(Boolean).map(token => `+${token}`));
+    const metadataBooleanExpr = metadataTokens.join(' ');
+    const hasMetadata = metadataTokens.length > 0;
+
     if (!hasContent && !hasMetadata) {
       return { data: [], pagination: createPagination(page, limit, 0) };
     }
@@ -1378,10 +1385,9 @@ class WorksService {
       filterParams.push(trimmed);
     }
 
-    const metadataTerms = [venue_name, author, subject].filter(Boolean).join(' ');
-    if (metadataTerms) {
+    if (hasMetadata) {
       whereConditions.push('MATCH(sp.authors_search, sp.venue_search, sp.subjects_search) AGAINST (? IN BOOLEAN MODE)');
-      filterParams.push(metadataTerms);
+      filterParams.push(metadataBooleanExpr);
     }
 
     if (type) {
@@ -1419,12 +1425,12 @@ class WorksService {
 
     const relevanceExpr = hasContent
       ? 'MAX(MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE))'
-      : (metadataTerms
+      : (hasMetadata
         ? 'MAX(MATCH(sp.authors_search, sp.venue_search, sp.subjects_search) AGAINST (? IN BOOLEAN MODE))'
         : '0');
     const innerRelevanceParams = hasContent
       ? [trimmed]
-      : (metadataTerms ? [metadataTerms] : []);
+      : (hasMetadata ? [metadataBooleanExpr] : []);
 
     const innerOrderForFallback = customOrderClause
       ? `MAX(sp.work_citation_count) ${customOrderClause.includes('ASC') ? 'ASC' : 'DESC'}, relevance DESC, sp.work_id DESC`

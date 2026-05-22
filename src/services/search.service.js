@@ -18,7 +18,7 @@ class SearchService {
     const trimmedQuery = (query || '').trim();
     const includeFacets = filters.include_facets === true;
 
-    const cacheKey = `search:works:v2:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}:${includeFacets}`;
+    const cacheKey = `search:works:v3:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}:${includeFacets}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
