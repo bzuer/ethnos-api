@@ -43,8 +43,9 @@ router.get('/readiness', requireInternalAccessKey, catchAsync(async (req, res) =
  * /health/liveness:
  *   get:
  *     summary: Kubernetes liveness probe
- *     description: Basic health check to verify the service is running and responsive. Always returns success if the service is operational.
+ *     description: Basic health check to verify the service is running and responsive. Always returns success if the service is operational. Public endpoint - no access key required.
  *     tags: [Health]
+ *     security: []
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'

@@ -10,7 +10,8 @@ const options = {
         'REST API for academic bibliographic research: works, publications, persons, institutions, venues, courses, citations, collaborations and system health.',
         '',
         '## Conventions',
-        '- Public endpoints. Administrative and metrics routes require the `x-access-key` header (see the `XAccessKey` security scheme).',
+        '- Every endpoint requires the `x-access-key` header (see the `XAccessKey` security scheme). Public exceptions: `/health/liveness`, `/docs`, `/docs.json`, `/docs.yaml`, `/openapi.yaml`, `/openapi.yml`.',
+        '- Authenticated requests bypass rate limiting; unauthenticated requests are rejected with 401 before any handler runs.',
         '- Read-only by design. The only mutating endpoint is `POST /security/unblock/{ip}`.',
         '- Standard response envelope: `{ status, data, pagination?, meta? }`. Errors: `{ status: "error", message, code, timestamp }`.',
         '- Pagination accepts `page/limit` and `offset/limit` interchangeably.',
@@ -46,7 +47,7 @@ const options = {
           type: 'apiKey',
           in: 'header',
           name: 'x-access-key',
-          description: 'Internal access key required for protected endpoints (security, dashboard, health except /liveness)'
+          description: 'Access key required on every endpoint. Aliases: `x-access-key`, `x-internal-key`, `x-api-key`. Public exceptions: `/health/liveness`, `/docs`, `/docs.json`, `/docs.yaml`, `/openapi.yaml`, `/openapi.yml`.'
         }
       },
       schemas: {
@@ -4092,6 +4093,9 @@ const options = {
         }
       }
     },
+    security: [
+      { XAccessKey: [] }
+    ],
     tags: [
       { name: 'Health', description: 'Liveness, readiness, and runtime metrics probes.' },
       { name: 'Security', description: 'Security headers, rate-limit stats, and IP management. Requires `x-access-key`.' },

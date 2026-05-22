@@ -3,18 +3,55 @@ const { logger } = require('./errorHandler');
 const DEFAULT_HEADER_NAMES = ['x-access-key', 'x-internal-key', 'x-api-key'];
 const DEFAULT_QUERY_KEYS = ['access_key', 'accessKey', 'api_key'];
 
-const resolveAccessKey = (envVars = []) => {
+const DEFAULT_ACCEPTED_ENV_VARS = [
+  'API_KEY',
+  'INTERNAL_ACCESS_KEY',
+  'SECURITY_ACCESS_KEY',
+  'API_ACCESS_KEY',
+  'ETHNOS_API_KEY',
+  'ETHNOS_API_ACCESS_KEY',
+  'API_SECRET_KEY',
+  'ETHNOS_API_KEY_2',
+];
+
+const collectAcceptedKeys = (envVars = []) => {
+  const keys = new Set();
   for (const envVar of envVars) {
-    if (process.env[envVar]) {
-      return { value: process.env[envVar], source: envVar };
+    const value = process.env[envVar];
+    if (value && typeof value === 'string') {
+      keys.add(value);
     }
   }
-  return { value: null, source: envVars[0] };
+  return keys;
+};
+
+const extractProvidedKey = (req, headerNames, queryParamNames) => {
+  for (const header of headerNames) {
+    const value = req.get(header);
+    if (value) return value;
+  }
+  for (const queryKey of queryParamNames) {
+    const value = req.query?.[queryKey];
+    if (value) return value;
+  }
+  return null;
+};
+
+const hasValidAccessKey = (req, options = {}) => {
+  const {
+    envVars = DEFAULT_ACCEPTED_ENV_VARS,
+    headerNames = DEFAULT_HEADER_NAMES,
+    queryParamNames = DEFAULT_QUERY_KEYS,
+  } = options;
+  const accepted = collectAcceptedKeys(envVars);
+  if (accepted.size === 0) return false;
+  const provided = extractProvidedKey(req, headerNames, queryParamNames);
+  return Boolean(provided) && accepted.has(provided);
 };
 
 const createAccessKeyGuard = (options = {}) => {
   const {
-    envVars = ['INTERNAL_ACCESS_KEY'],
+    envVars = DEFAULT_ACCEPTED_ENV_VARS,
     context = 'internal endpoint',
     headerNames = DEFAULT_HEADER_NAMES,
     queryParamNames = DEFAULT_QUERY_KEYS,
@@ -25,10 +62,10 @@ const createAccessKeyGuard = (options = {}) => {
   }
 
   return (req, res, next) => {
-    const { value: accessKey, source } = resolveAccessKey(envVars);
+    const acceptedKeys = collectAcceptedKeys(envVars);
 
-    if (!accessKey) {
-      logger.error(`${context} access denied: missing configuration (${source})`);
+    if (acceptedKeys.size === 0) {
+      logger.error(`${context} access denied: no access keys configured (checked ${envVars.join(', ')})`);
       return res.status(503).json({
         status: 'error',
         message: 'Access key not configured',
@@ -37,13 +74,9 @@ const createAccessKeyGuard = (options = {}) => {
       });
     }
 
-    const providedKey = headerNames.reduce((found, header) => (
-      found || req.get(header)
-    ), null) || queryParamNames.reduce((found, queryKey) => (
-      found || req.query?.[queryKey]
-    ), null);
+    const providedKey = extractProvidedKey(req, headerNames, queryParamNames);
 
-    if (!providedKey || providedKey !== accessKey) {
+    if (!providedKey || !acceptedKeys.has(providedKey)) {
       logger.warn(`${context} access denied: invalid or missing key`, {
         ip: req.ip,
         path: req.originalUrl,
@@ -58,24 +91,21 @@ const createAccessKeyGuard = (options = {}) => {
       });
     }
 
+    req.accessKeyAuthenticated = true;
     return next();
   };
 };
 
 const requireInternalAccessKey = createAccessKeyGuard({
-  envVars: [
-    'API_KEY',
-    'INTERNAL_ACCESS_KEY',
-    'SECURITY_ACCESS_KEY',
-    'API_ACCESS_KEY',
-    'ETHNOS_API_KEY',
-    'ETHNOS_API_ACCESS_KEY',
-    'API_SECRET_KEY',
-  ],
+  envVars: DEFAULT_ACCEPTED_ENV_VARS,
   context: 'internal API',
 });
 
 module.exports = {
   createAccessKeyGuard,
   requireInternalAccessKey,
+  hasValidAccessKey,
+  DEFAULT_ACCEPTED_ENV_VARS,
+  DEFAULT_HEADER_NAMES,
+  DEFAULT_QUERY_KEYS,
 };

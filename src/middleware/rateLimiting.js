@@ -2,6 +2,7 @@ const rateLimit = require('express-rate-limit');
 const slowDown = require('express-slow-down');
 const { logger } = require('./errorHandler');
 const { ERROR_CODES } = require('../utils/responseBuilder');
+const { hasValidAccessKey } = require('./accessKey');
 
 try { require('dotenv').config({ path: '/etc/node-backend.env' }); } catch (_) {}
 
@@ -23,7 +24,12 @@ const maxDelayMs = parseIntSafe(process.env.SLOW_DOWN_MAX, 1000);
 
 const disableRateLimiting = (process.env.RATE_LIMIT_DISABLED || 'true').toLowerCase() !== 'false';
 const noopLimiter = (_req, _res, next) => next();
-const shouldSkipRateLimit = (req) => disableRateLimiting || isLocalRequest(req);
+const shouldSkipRateLimit = (req) => (
+  disableRateLimiting
+  || req?.accessKeyAuthenticated === true
+  || hasValidAccessKey(req)
+  || isLocalRequest(req)
+);
 
 const isLocalRequest = (req) => {
   const ip = req.ip || '';

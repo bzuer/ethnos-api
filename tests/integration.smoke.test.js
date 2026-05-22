@@ -5,7 +5,18 @@ const { describe, test, after, before } = require('node:test');
 const assert = require('node:assert/strict');
 
 const BASE_URL = process.env.INTEGRATION_BASE_URL || `http://localhost:${process.env.PORT || '1210'}`;
-const ACCESS_KEY = process.env.INTEGRATION_ACCESS_KEY || '';
+const ACCESS_KEY = (
+  process.env.INTEGRATION_ACCESS_KEY
+  || process.env.API_KEY
+  || process.env.INTERNAL_ACCESS_KEY
+  || process.env.SECURITY_ACCESS_KEY
+  || process.env.API_ACCESS_KEY
+  || process.env.ETHNOS_API_KEY
+  || process.env.ETHNOS_API_ACCESS_KEY
+  || process.env.API_SECRET_KEY
+  || process.env.ETHNOS_API_KEY_2
+  || ''
+);
 
 const fetchJson = async (path, { headers = {} } = {}) => {
   const url = `${BASE_URL}${path}`;
@@ -37,6 +48,14 @@ const assertSuccess = (result, label) => {
   return result.body;
 };
 
+const fetchRaw = async (path, { headers = {} } = {}) => {
+  const url = `${BASE_URL}${path}`;
+  const res = await fetch(url, { headers: { accept: 'application/json', ...headers } });
+  let body = null;
+  try { body = await res.json(); } catch (_) { body = null; }
+  return { status: res.status, body, url };
+};
+
 describe('Integration smoke (real DB)', () => {
   before(async () => {
     const health = await fetchJson('/health/liveness');
@@ -45,6 +64,35 @@ describe('Integration smoke (real DB)', () => {
         `Integration smoke requires a running API at ${BASE_URL}. Set INTEGRATION_BASE_URL to override. Received status ${health.status}.`
       );
     }
+    if (!ACCESS_KEY) {
+      throw new Error(
+        'Integration smoke requires an access key. Set INTEGRATION_ACCESS_KEY (or any of API_KEY / INTERNAL_ACCESS_KEY / ETHNOS_API_KEY / ETHNOS_API_KEY_2).'
+      );
+    }
+  });
+
+  describe('Access key enforcement', () => {
+    test('GET /works without key returns 401', async () => {
+      const result = await fetchRaw('/works?limit=1');
+      assert.equal(result.status, 401, `expected 401, got ${result.status}`);
+      assert.equal(result.body?.code, 'UNAUTHORIZED');
+    });
+
+    test('GET /health/liveness stays public', async () => {
+      const result = await fetchRaw('/health/liveness');
+      assert.equal(result.status, 200);
+      assert.equal(result.body?.status, 'success');
+    });
+
+    test('GET /docs.json stays public', async () => {
+      const result = await fetchRaw('/docs.json');
+      assert.equal(result.status, 200);
+    });
+
+    test('GET /metrics/annual with key returns 200', async () => {
+      const body = assertSuccess(await fetchJson('/metrics/annual?limit=1'), 'metrics/annual with key');
+      assert.ok(Array.isArray(body.data));
+    });
   });
 
   describe('Core listings', () => {
@@ -170,28 +218,28 @@ describe('Integration smoke (real DB)', () => {
     });
   });
 
-  describe('Metrics (requires access key)', () => {
-    test('GET /metrics/annual', { skip: !ACCESS_KEY }, async () => {
+  describe('Metrics', () => {
+    test('GET /metrics/annual', async () => {
       const body = assertSuccess(await fetchJson('/metrics/annual?limit=3'), 'metrics/annual');
       assert.ok(Array.isArray(body.data));
     });
 
-    test('GET /metrics/venues', { skip: !ACCESS_KEY }, async () => {
+    test('GET /metrics/venues', async () => {
       const body = assertSuccess(await fetchJson('/metrics/venues?limit=3'), 'metrics/venues');
       assert.ok(Array.isArray(body.data));
     });
 
-    test('GET /metrics/institutions', { skip: !ACCESS_KEY }, async () => {
+    test('GET /metrics/institutions', async () => {
       const body = assertSuccess(await fetchJson('/metrics/institutions?limit=3'), 'metrics/institutions');
       assert.ok(Array.isArray(body.data));
     });
 
-    test('GET /metrics/persons', { skip: !ACCESS_KEY }, async () => {
+    test('GET /metrics/persons', async () => {
       const body = assertSuccess(await fetchJson('/metrics/persons?limit=3'), 'metrics/persons');
       assert.ok(Array.isArray(body.data));
     });
 
-    test('GET /metrics/collaborations', { skip: !ACCESS_KEY }, async () => {
+    test('GET /metrics/collaborations', async () => {
       const body = assertSuccess(await fetchJson('/metrics/collaborations?limit=3'), 'metrics/collaborations');
       assert.ok(Array.isArray(body.data));
     });

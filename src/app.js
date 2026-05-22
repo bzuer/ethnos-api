@@ -111,7 +111,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-const { 
+const {
   generalLimiter,
   searchLimiter,
   speedLimiter,
@@ -119,11 +119,34 @@ const {
   relationalLimiter,
   honeypotMiddleware
 } = require('./middleware/rateLimiting');
+const { requireInternalAccessKey } = require('./middleware/accessKey');
 
 app.use(honeypotMiddleware);
 
 app.use('/', generalLimiter);
 app.use('/', speedLimiter);
+
+const PUBLIC_PATH_EXACT = new Set([
+  '/health/liveness',
+  '/docs.json',
+  '/docs.yaml',
+  '/openapi.yaml',
+  '/openapi.yml',
+]);
+
+const PUBLIC_PATH_PREFIXES = ['/docs'];
+
+const isPublicPath = (path) => {
+  if (PUBLIC_PATH_EXACT.has(path)) return true;
+  return PUBLIC_PATH_PREFIXES.some((prefix) => (
+    path === prefix || path.startsWith(`${prefix}/`)
+  ));
+};
+
+const globalAccessKeyGuard = (req, res, next) => {
+  if (isPublicPath(req.path)) return next();
+  return requireInternalAccessKey(req, res, next);
+};
 
 app.use(compression());
 
@@ -146,6 +169,8 @@ app.use(requestTimeout({ timeoutMs: 0 }));
 app.use(performanceMonitoring);
 
 homepageStatsService.refresh();
+
+app.use(globalAccessKeyGuard);
 
 app.get('/', (req, res) => {
   const homepageStats = homepageStatsService.getSnapshot();
@@ -177,7 +202,8 @@ app.get('/', (req, res) => {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
       search_engine: 'Sphinx integrated (18-26ms search performance)',
       cache: 'Redis with 30min TTL',
-      rate_limiting: 'Disabled'
+      rate_limiting: 'Disabled for authenticated requests',
+      authentication: 'X-Access-Key required for every endpoint except /health/liveness and /docs*'
     },
     main_categories: {
       search_discovery: {
@@ -224,8 +250,8 @@ app.get('/', (req, res) => {
     },
     technical_features: {
       search_performance: 'Sphinx: 18-26ms queries, total endpoint response: 20-2000ms (institutions search disabled for optimal performance)',
-      authentication: 'Not required - Public API',
-      rate_limits: 'Disabled',
+      authentication: 'X-Access-Key required on every endpoint (header: x-access-key | x-internal-key | x-api-key). Public paths: /health/liveness, /docs, /docs.json, /docs.yaml, /openapi.yaml, /openapi.yml.',
+      rate_limits: 'No limit for authenticated requests',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
       cache_ttl: '30 minutes',
       security: 'XSS protection, SQL injection prevention, abuse detection'

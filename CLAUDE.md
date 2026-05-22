@@ -63,11 +63,12 @@ Three denormalized tables are built by `sp_orchestrate_all_summaries(batch_size)
 - On `summary_publications`-backed listings (`/works`, `/search/works`, `/publications`), `pagination.total` is best-effort: the count is bounded by a 20 000-row sample with a 2 s server-side budget (`SET STATEMENT max_statement_time`). When the sample is hit or the budget fires, the response falls back to an estimate and sets `meta.pagination_total_exact = false`. Clients that need an exact count must detect that flag (and/or rely on the `data.length < limit` terminator on the last page).
 
 ## Security and Internal Access
-- Protected endpoints require the `X-Access-Key` header (case-insensitive: `x-access-key`, `x-internal-key`, `x-api-key`).
-- Middleware: `src/middleware/accessKey.js`.
-  - `requireInternalAccessKey` checks env vars in order: `API_KEY`, `INTERNAL_ACCESS_KEY`, `SECURITY_ACCESS_KEY`, `API_ACCESS_KEY`, `ETHNOS_API_KEY`, `ETHNOS_API_ACCESS_KEY`, `API_SECRET_KEY`.
-  - `createAccessKeyGuard` produces guards for specific contexts.
-- OpenAPI declares `securitySchemes.XAccessKey`.
+- **Every endpoint requires the `X-Access-Key` header.** Aliases (case-insensitive): `x-access-key`, `x-internal-key`, `x-api-key`. Query-string aliases: `access_key`, `accessKey`, `api_key`. Mounted globally in `src/app.js` as `globalAccessKeyGuard` (delegates to `requireInternalAccessKey`).
+- **Public exceptions** (no key needed): `/health/liveness`, `/docs`, `/docs.json`, `/docs.yaml`, `/openapi.yaml`, `/openapi.yml`. Everything else — including `/`, `/health/readiness`, `/health/metrics`, every domain listing (`/works`, `/publications`, `/persons`, `/venues`, `/institutions`, `/search/*`, `/metrics/*`, `/dashboard/*`, `/bibliographies`, `/courses`, `/instructors`, `/signatures`, `/subjects`, `/security/*`, citations, collaborations) and the DOI resolver regex — rejects with 401 when the key is missing or invalid.
+- **Multiple keys are accepted.** `requireInternalAccessKey` collects values from every configured env var and accepts any match: `API_KEY`, `INTERNAL_ACCESS_KEY`, `SECURITY_ACCESS_KEY`, `API_ACCESS_KEY`, `ETHNOS_API_KEY`, `ETHNOS_API_ACCESS_KEY`, `API_SECRET_KEY`, `ETHNOS_API_KEY_2`. Add more keys by setting additional env vars on the same list. The middleware no longer prefers a single env var; any configured value works.
+- **Authenticated requests bypass rate limiting.** `shouldSkipRateLimit` in `src/middleware/rateLimiting.js` calls `hasValidAccessKey(req)` so any request carrying a valid key is exempt from `generalLimiter`, `searchLimiter`, `metricsLimiter`, `relationalLimiter`, and `speedLimiter` regardless of `RATE_LIMIT_DISABLED`. Per-route limiters (e.g. `searchLimiter` on `/search`) are kept in place as defense-in-depth for unauthenticated traffic, but unauthenticated traffic is rejected before reaching them.
+- Middleware: `src/middleware/accessKey.js` exports `requireInternalAccessKey`, `createAccessKeyGuard`, `hasValidAccessKey`, and `DEFAULT_ACCEPTED_ENV_VARS`.
+- OpenAPI declares `securitySchemes.XAccessKey` and applies it globally via the top-level `security: [{ XAccessKey: [] }]`. Public exceptions opt out per-operation with `security: []` (currently only `/health/liveness`).
 - Do not expose keys or sensitive data in responses, logs, or error payloads.
 
 ## Route Standards
