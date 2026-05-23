@@ -159,9 +159,9 @@ components:
           nullable: true
           example: 2023
           deprecated: true
-          description: Legacy alias from summary_publications. Returned only by
-            /works/showcase. Prefer publication_year in list payloads or
-            publication.year in detailed payloads.
+          description: Legacy alias kept for /works/showcase compatibility. Prefer
+            publication_year in list payloads or publication.year in detailed
+            payloads.
         work_type:
           type: string
           nullable: true
@@ -180,8 +180,7 @@ components:
             - OTHER
           example: ARTICLE
           deprecated: true
-          description: Legacy alias from summary_publications. Returned only by
-            /works/showcase. Prefer type.
+          description: Legacy alias kept for /works/showcase compatibility. Prefer type.
         type:
           type: string
           nullable: true
@@ -942,8 +941,8 @@ components:
           description: Author affiliation at time of publication
     Venue:
       type: object
-      description: Canonical venue payload backed by summary_venues. Identifiers,
-        bibliometric metrics, the global ranking surface and the
+      description: Canonical venue payload backed by the venues base table.
+        Identifiers, bibliometric metrics, the global ranking surface and the
         indexing/quality flags are grouped into dedicated blocks so clients can
         consume each domain without scanning top-level fields.
       properties:
@@ -3744,8 +3743,8 @@ tags:
     description: Canonical academic works (articles, books, chapters, theses,
       conferences). Listings surface the latest matching publication per work.
   - name: Publications
-    description: Per-publication view over `summary_publications`, including DOI
-      resolution and sibling navigation.
+    description: Per-publication view over the `publications` + `works` + `venues`
+      base tables, including DOI resolution and sibling navigation.
   - name: Persons
     description: "Researcher profiles: preferred name, identifiers, affiliations,
       publication history, collaborators."
@@ -3753,8 +3752,8 @@ tags:
     description: Institutional entities (universities, institutes, companies,
       government, NGOs) exposed at `/institutions`.
   - name: Venues
-    description: Journals, conferences, repositories, and book series. Backed by
-      `summary_venues` with ranking and bibliometric surface.
+    description: Journals, conferences, repositories, and book series. Backed by the
+      `venues` base table with ranking and bibliometric surface.
   - name: Citations
     description: Citation and reference relationships, per-work metrics, and
       citation-network traversal.
@@ -3781,13 +3780,20 @@ paths:
   /works:
     get:
       summary: Get list of academic works
-      description: |
-        Returns a paginated list of works backed by `summary_publications`.
+      description: >
+        Returns a paginated list of works backed by the `works` + `publications`
+        base tables.
+
         Filters apply with **`match_mode: "any_publication"`** semantics: a
+
         work appears in the result set if **any of its publications** matches
+
         the filter set. When a filter matches multiple siblings of the same
+
         work, the latest matching publication is the one displayed in the
+
         card (its venue, year, doi, etc.). The semantic is signalled in
+
         `meta.match_mode`.
       tags:
         - Works
@@ -3911,10 +3917,10 @@ paths:
     get:
       summary: Get works list optimized for browsing (showcase)
       description: >
-        High-performance endpoint for browsing works using
-        `summary_publications`
+        High-performance endpoint for browsing works using the `works` base
+        table joined
 
-        (one row per publication, latest pick per work). Filters apply with
+        to the latest publication per work. Filters apply with
 
         **`match_mode: "any_publication"`** semantics: a work appears in the
 
@@ -4033,7 +4039,7 @@ paths:
                     properties:
                       query_source:
                         type: string
-                        example: summary_publications
+                        example: works+publications
                       performance:
                         $ref: "#/components/schemas/PerformanceMeta"
   /works/{id}:
@@ -5393,9 +5399,9 @@ paths:
       summary: Search works using full-text search
       tags:
         - Search
-      description: Search academic works using MariaDB FULLTEXT against
-        summary_publications across title, subtitle, abstract, authors, venue,
-        and related metadata
+      description: Search academic works using MariaDB FULLTEXT against works
+        (ft_works_content + ft_works_metadata) with venue matching via
+        ft_venues_search.
       parameters:
         - name: q
           in: query
@@ -5872,8 +5878,8 @@ paths:
     get:
       summary: List publications
       description: >
-        Returns a paginated list of publications backed by
-        `summary_publications`.
+        Returns a paginated list of publications backed by `publications` +
+        `works` + `venues`.
 
         Filters can target the parent work (`work_type`, `language`, `work_id`)
 
@@ -5883,10 +5889,11 @@ paths:
 
         `doi`). Free-text queries (`q`) use MariaDB FULLTEXT against
 
-        `ft_summary_pubs_content`; metadata filters (`venue`, `author`,
-        `subject`)
+        `ft_works_content`; metadata filters (`venue`, `author`, `subject`)
 
-        use FULLTEXT against `ft_summary_pubs_metadata`.
+        use FULLTEXT against `ft_works_metadata` (authors + subjects) and
+
+        `ft_venues_search` (venue name + abbreviated name).
       tags:
         - Publications
       parameters:
@@ -5918,7 +5925,8 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
-          description: Free-text query against summary_publications FULLTEXT indexes
+          description: Free-text query against ft_works_content (full_title_normalized +
+            subjects_search)
           example: machine learning
         - in: query
           name: type
@@ -5975,13 +5983,13 @@ paths:
           schema:
             type: integer
             minimum: 1
-          description: Exact match against summary_publications.venue_id
+          description: Exact match against publications.venue_id
         - in: query
           name: publisher_id
           schema:
             type: integer
             minimum: 1
-          description: Exact match against summary_publications.publisher_id
+          description: Exact match against publications.publisher_id
         - in: query
           name: work_id
           schema:
@@ -5993,7 +6001,7 @@ paths:
           schema:
             type: string
             maxLength: 255
-          description: Exact DOI lookup (uses summary_publications.uq_summary_pubs_doi)
+          description: Exact DOI lookup (uses publications.doi unique key)
         - in: query
           name: author
           schema:
@@ -6081,19 +6089,13 @@ paths:
   /publications/{id}:
     get:
       summary: Get a publication by id
-      description: >
-        Returns a single publication identified by
-        `summary_publications.publication_id`.
-
+      description: |
+        Returns a single publication identified by `publications.id`.
         The response carries a nested `work` block (parent work fields), the
-
-        full identifier set from `publications`, embedded `files` parsed from
-
-        `files_json`, an array of `siblings` (other publications of the same
-
-        work, capped at 50), and optional `citations` / `references` blocks
-
-        hydrated from `work_references`.
+        full identifier set from `publications`, embedded `files` joined live
+        from the `files` base table, an array of `siblings` (other publications
+        of the same work, capped at 50), and optional `citations` / `references`
+        blocks hydrated from `work_references`.
       tags:
         - Publications
       parameters:
@@ -6103,7 +6105,7 @@ paths:
           schema:
             type: integer
             minimum: 1
-          description: summary_publications.publication_id
+          description: publications.id
           example: 123456
         - in: query
           name: include_citations
@@ -6539,7 +6541,7 @@ paths:
                         cited_by_count:
                           type: integer
                           description: Number of works citing this one (surfaced from
-                            summary_publications.work_citation_count).
+                            works.citation_count).
                         references_count:
                           type: integer
                           description: Number of references this work makes.

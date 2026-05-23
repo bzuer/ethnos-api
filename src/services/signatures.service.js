@@ -4,7 +4,6 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { formatSignatureListItem, formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
 const { formatPersonListItem } = require('../dto/person.dto');
-const { authorsFromJson } = require('../dto/helpers');
 
 class SignaturesService {
   async getAllSignatures(options = {}) {
@@ -307,28 +306,26 @@ class SignaturesService {
             w.language,
             w.subtitle,
             w.created_at,
-            sp.publication_year AS year,
-            sp.doi,
-            sp.venue_search AS journal,
-            sp.volume,
-            sp.issue,
-            sp.pages_text AS pages,
-            sp.open_access,
+            pub.year AS year,
+            pub.doi,
+            v.name AS journal,
+            pub.volume,
+            pub.issue,
+            pub.pages AS pages,
+            pub.open_access,
             a.role,
             a.position,
             a.is_corresponding,
-            sp.authors_json,
-            COALESCE(JSON_LENGTH(sp.authors_json), 0) AS total_authors
+            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
           FROM persons p
           INNER JOIN authorships a ON a.person_id = p.id
           INNER JOIN works w ON w.id = a.work_id
-          LEFT JOIN summary_publications sp ON sp.publication_id = (
-            SELECT MAX(publication_id)
-            FROM summary_publications
-            WHERE work_id = w.id
+          LEFT JOIN publications pub ON pub.id = (
+            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
           )
+          LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE p.signature_id = ?
-          ORDER BY COALESCE(sp.publication_year, 2024) DESC, a.work_id DESC
+          ORDER BY COALESCE(pub.year, 2024) DESC, a.work_id DESC
           LIMIT ? OFFSET ?
         `, {
           replacements: [signatureId, parseInt(limit), parseInt(offset)],
@@ -362,7 +359,29 @@ class SignaturesService {
       const total = countResult[0].total;
       const totalPages = Math.ceil(total / limit);
 
-      const items = works.map(work => ({
+      const workIds = Array.from(new Set(works.map(w => w.id).filter(Number.isFinite)));
+      const authorStringByWork = Object.create(null);
+      if (workIds.length > 0) {
+        const placeholders = workIds.map(() => '?').join(',');
+        const authorRows = await sequelize.query(`
+          SELECT a.work_id, p.preferred_name
+          FROM authorships a
+          INNER JOIN persons p ON p.id = a.person_id
+          WHERE a.work_id IN (${placeholders})
+          ORDER BY a.work_id, a.position
+        `, {
+          replacements: workIds,
+          type: sequelize.QueryTypes.SELECT
+        });
+        for (const row of authorRows) {
+          if (!authorStringByWork[row.work_id]) authorStringByWork[row.work_id] = [];
+          authorStringByWork[row.work_id].push(row.preferred_name);
+        }
+      }
+
+      const items = works.map(work => {
+        const names = authorStringByWork[work.id] || [];
+        return {
           id: work.id,
           title: work.title,
           subtitle: work.subtitle,
@@ -386,11 +405,12 @@ class SignaturesService {
             open_access: work.open_access === 1 || work.open_access === true
           },
           authors: {
-            total_count: work.total_authors || 0,
-            author_string: authorsFromJson(work.authors_json).join('; ') || null
+            total_count: parseInt(work.total_authors, 10) || names.length,
+            author_string: names.length ? names.join('; ') : null
           },
           created_at: work.created_at
-        }));
+        };
+      });
 
       const result = {
         data: items.map(formatSignatureWork),

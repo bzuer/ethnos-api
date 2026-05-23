@@ -9,7 +9,6 @@ const {
   formatInstructorBibliography,
   formatInstructorStatistics
 } = require('../dto/instructor.dto');
-const { authorsFromJson } = require('../dto/helpers');
 
 class InstructorsService {
   
@@ -369,17 +368,13 @@ class InstructorsService {
         w.work_type as document_type,
         pub.open_access,
         cb.reading_type,
-        COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as author_count,
-        sp_a.authors_json,
+        (SELECT COUNT(*) FROM authorships a WHERE a.work_id = w.id) AS author_count,
         COUNT(DISTINCT cb.course_id) as used_in_courses
       FROM works w
       JOIN course_bibliography cb ON w.id = cb.work_id
       JOIN course_instructors ci ON cb.course_id = ci.course_id
-      LEFT JOIN publications pub ON w.id = pub.work_id
-      LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
-        SELECT MAX(publication_id)
-        FROM summary_publications
-        WHERE work_id = w.id
+      LEFT JOIN publications pub ON pub.id = (
+        SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
       )
       WHERE ci.canonical_person_id = ?
     `;
@@ -402,7 +397,7 @@ class InstructorsService {
     }
 
     query += `
-      GROUP BY w.id, w.title, pub.year, w.language, w.work_type, cb.reading_type, sp_a.authors_json
+      GROUP BY w.id, w.title, pub.year, w.language, w.work_type, cb.reading_type
       ORDER BY used_in_courses DESC, pub.year DESC
       LIMIT ? OFFSET ?
     `;
@@ -410,11 +405,28 @@ class InstructorsService {
 
     const [bibliography] = await pool.execute(query, params);
 
+    const bibWorkIds = Array.from(new Set(bibliography.map(item => item.work_id).filter(Number.isFinite)));
+    const bibAuthorsByWork = {};
+    if (bibWorkIds.length > 0) {
+      const placeholders = bibWorkIds.map(() => '?').join(',');
+      const [authorRows] = await pool.execute(
+        `SELECT a.work_id, p.preferred_name
+           FROM authorships a
+           INNER JOIN persons p ON p.id = a.person_id
+           WHERE a.work_id IN (${placeholders})
+           ORDER BY a.work_id, a.position`,
+        bibWorkIds
+      );
+      for (const row of authorRows) {
+        if (!bibAuthorsByWork[row.work_id]) bibAuthorsByWork[row.work_id] = [];
+        bibAuthorsByWork[row.work_id].push(row.preferred_name);
+      }
+    }
+
     for (const item of bibliography) {
-      const authors = authorsFromJson(item.authors_json);
-      item.authors = authors;
-      item.first_author_name = authors[0] || null;
-      delete item.authors_json;
+      const names = bibAuthorsByWork[item.work_id] || [];
+      item.authors = names;
+      item.first_author_name = names[0] || null;
     }
 
     const countQuery = `
@@ -564,28 +576,24 @@ class InstructorsService {
 
     const mostUsedAuthorsQuery = `
       SELECT
-        sp_a.authors_json,
-        COUNT(DISTINCT cb.work_id) as usage_count,
-        COUNT(DISTINCT cb.course_id) as courses_count
+        p.id AS person_id,
+        p.preferred_name AS author_name,
+        COUNT(DISTINCT cb.work_id) AS usage_count,
+        COUNT(DISTINCT cb.course_id) AS courses_count
       FROM course_instructors ci
-      JOIN course_bibliography cb ON ci.course_id = cb.course_id
-      JOIN summary_publications sp_a ON sp_a.publication_id = (
-        SELECT MAX(publication_id)
-        FROM summary_publications
-        WHERE work_id = cb.work_id
-      )
+      INNER JOIN course_bibliography cb ON cb.course_id = ci.course_id
+      INNER JOIN authorships a ON a.work_id = cb.work_id
+      INNER JOIN persons p ON p.id = a.person_id
       WHERE ci.canonical_person_id = ?
-      GROUP BY sp_a.authors_json
-      ORDER BY usage_count DESC
+      GROUP BY p.id, p.preferred_name
+      ORDER BY usage_count DESC, courses_count DESC, p.preferred_name ASC
       LIMIT 15
     `;
 
     const [mostUsedAuthors] = await pool.execute(mostUsedAuthorsQuery, [personId]);
     mostUsedAuthors.forEach(row => {
-      const authors = authorsFromJson(row.authors_json);
-      row.author_string = authors.join('; ') || null;
-      row.first_author_name = authors[0] || null;
-      delete row.authors_json;
+      row.author_string = row.author_name || null;
+      row.first_author_name = row.author_name || null;
     });
 
     const subjectsExpertiseQuery = `

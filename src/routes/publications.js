@@ -123,13 +123,14 @@ const validatePublicationsQuery = [
  *   get:
  *     summary: List publications
  *     description: |
- *       Returns a paginated list of publications backed by `summary_publications`.
+ *       Returns a paginated list of publications backed by `publications` + `works` + `venues`.
  *       Filters can target the parent work (`work_type`, `language`, `work_id`)
  *       or the publication itself (`year_from`, `year_to`, `open_access`,
  *       `peer_reviewed`, `has_files`, `venue`, `venue_id`, `publisher_id`,
  *       `doi`). Free-text queries (`q`) use MariaDB FULLTEXT against
- *       `ft_summary_pubs_content`; metadata filters (`venue`, `author`, `subject`)
- *       use FULLTEXT against `ft_summary_pubs_metadata`.
+ *       `ft_works_content`; metadata filters (`venue`, `author`, `subject`)
+ *       use FULLTEXT against `ft_works_metadata` (authors + subjects) and
+ *       `ft_venues_search` (venue name + abbreviated name).
  *     tags: [Publications]
  *     parameters:
  *       - in: query
@@ -160,7 +161,7 @@ const validatePublicationsQuery = [
  *           type: string
  *           minLength: 1
  *           maxLength: 200
- *         description: Free-text query against summary_publications FULLTEXT indexes
+ *         description: Free-text query against ft_works_content (full_title_normalized + subjects_search)
  *         example: machine learning
  *       - in: query
  *         name: type
@@ -217,13 +218,13 @@ const validatePublicationsQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1
- *         description: Exact match against summary_publications.venue_id
+ *         description: Exact match against publications.venue_id
  *       - in: query
  *         name: publisher_id
  *         schema:
  *           type: integer
  *           minimum: 1
- *         description: Exact match against summary_publications.publisher_id
+ *         description: Exact match against publications.publisher_id
  *       - in: query
  *         name: work_id
  *         schema:
@@ -235,7 +236,7 @@ const validatePublicationsQuery = [
  *         schema:
  *           type: string
  *           maxLength: 255
- *         description: Exact DOI lookup (uses summary_publications.uq_summary_pubs_doi)
+ *         description: Exact DOI lookup (uses publications.doi unique key)
  *       - in: query
  *         name: author
  *         schema:
@@ -317,12 +318,12 @@ router.get('/', validatePublicationsQuery, publicationsController.getPublication
  *   get:
  *     summary: Get a publication by id
  *     description: |
- *       Returns a single publication identified by `summary_publications.publication_id`.
+ *       Returns a single publication identified by `publications.id`.
  *       The response carries a nested `work` block (parent work fields), the
- *       full identifier set from `publications`, embedded `files` parsed from
- *       `files_json`, an array of `siblings` (other publications of the same
- *       work, capped at 50), and optional `citations` / `references` blocks
- *       hydrated from `work_references`.
+ *       full identifier set from `publications`, embedded `files` joined live
+ *       from the `files` base table, an array of `siblings` (other publications
+ *       of the same work, capped at 50), and optional `citations` / `references`
+ *       blocks hydrated from `work_references`.
  *     tags: [Publications]
  *     parameters:
  *       - in: path
@@ -331,7 +332,7 @@ router.get('/', validatePublicationsQuery, publicationsController.getPublication
  *         schema:
  *           type: integer
  *           minimum: 1
- *         description: summary_publications.publication_id
+ *         description: publications.id
  *         example: 123456
  *       - in: query
  *         name: include_citations

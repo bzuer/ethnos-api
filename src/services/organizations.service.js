@@ -4,7 +4,6 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatOrganizationListItem, formatOrganizationDetails } = require('../dto/organization.dto');
-const { authorsFromJson } = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
 
 class OrganizationsService {
@@ -84,21 +83,16 @@ class OrganizationsService {
           pub.open_access,
           v.id AS venue_id,
           v.name AS venue_name,
-          sv.abbrev_search AS venue_abbreviated_name,
+          v.abbreviated_name AS venue_abbreviated_name,
           v.type AS venue_type,
-          sp_a.authors_json,
-          COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as author_count,
+          (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count,
           NULL as first_author_name
         FROM works w
         INNER JOIN authorships a ON w.id = a.work_id
-        LEFT JOIN publications pub ON w.id = pub.work_id
-        LEFT JOIN venues v ON pub.venue_id = v.id
-        LEFT JOIN summary_venues sv ON sv.venue_id = v.id
-        LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
-          SELECT MAX(publication_id)
-          FROM summary_publications
-          WHERE work_id = w.id
+        LEFT JOIN publications pub ON pub.id = (
+          SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
         )
+        LEFT JOIN venues v ON v.id = pub.venue_id
         WHERE a.affiliation_id = :id
         ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
         LIMIT 10
@@ -534,21 +528,16 @@ class OrganizationsService {
             pub.pages,
             v.id AS venue_id,
             v.name AS venue_name,
-            sv.abbrev_search AS venue_abbreviated_name,
+            v.abbreviated_name AS venue_abbreviated_name,
             v.type AS venue_type,
-            sp_a.authors_json,
-            COALESCE(JSON_LENGTH(sp_a.authors_json), 0) as author_count,
+            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count,
             NULL as first_author_name
           FROM works w
           INNER JOIN authorships a ON w.id = a.work_id
-          LEFT JOIN publications pub ON w.id = pub.work_id
-          LEFT JOIN venues v ON pub.venue_id = v.id
-          LEFT JOIN summary_venues sv ON sv.venue_id = v.id
-          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
-            SELECT MAX(publication_id)
-            FROM summary_publications
-            WHERE work_id = w.id
+          LEFT JOIN publications pub ON pub.id = (
+            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
           )
+          LEFT JOIN venues v ON v.id = pub.venue_id
           ${whereClause}
           ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
           LIMIT :limit OFFSET :offset
@@ -556,12 +545,14 @@ class OrganizationsService {
           replacements,
           type: sequelize.QueryTypes.SELECT
         }),
-        
+
         sequelize.query(`
           SELECT COUNT(DISTINCT w.id) as total
           FROM works w
           INNER JOIN authorships a ON w.id = a.work_id
-          LEFT JOIN publications pub ON w.id = pub.work_id
+          LEFT JOIN publications pub ON pub.id = (
+            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
+          )
           ${whereClause}
         `, {
           replacements: Object.fromEntries(
@@ -573,8 +564,28 @@ class OrganizationsService {
 
       const total = countResult[0].total;
 
+      const workIdsForAuthors = Array.from(new Set(works.map(w => w.id).filter(Number.isFinite)));
+      const authorsByWork = {};
+      if (workIdsForAuthors.length > 0) {
+        const placeholders = workIdsForAuthors.map(() => '?').join(',');
+        const authorRows = await sequelize.query(`
+          SELECT a.work_id, p.preferred_name
+          FROM authorships a
+          INNER JOIN persons p ON p.id = a.person_id
+          WHERE a.work_id IN (${placeholders})
+          ORDER BY a.work_id, a.position
+        `, {
+          replacements: workIdsForAuthors,
+          type: sequelize.QueryTypes.SELECT
+        });
+        for (const row of authorRows) {
+          if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
+          authorsByWork[row.work_id].push(row.preferred_name);
+        }
+      }
+
       const data = works.map(work => {
-        const authorsPreview = authorsFromJson(work.authors_json);
+        const authorsPreview = authorsByWork[work.id] || [];
 
         return {
           id: work.id,
@@ -598,7 +609,7 @@ class OrganizationsService {
             type: work.venue_type
           } : null,
           authors: {
-            author_count: work.author_count || authorsPreview.length,
+            author_count: parseInt(work.author_count, 10) || authorsPreview.length,
             first_author_name: work.first_author_name || authorsPreview[0] || null,
             authors_preview: authorsPreview.slice(0, 3)
           }

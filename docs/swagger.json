@@ -168,7 +168,7 @@
             "nullable": true,
             "example": 2023,
             "deprecated": true,
-            "description": "Legacy alias from summary_publications. Returned only by /works/showcase. Prefer publication_year in list payloads or publication.year in detailed payloads."
+            "description": "Legacy alias kept for /works/showcase compatibility. Prefer publication_year in list payloads or publication.year in detailed payloads."
           },
           "work_type": {
             "type": "string",
@@ -189,7 +189,7 @@
             ],
             "example": "ARTICLE",
             "deprecated": true,
-            "description": "Legacy alias from summary_publications. Returned only by /works/showcase. Prefer type."
+            "description": "Legacy alias kept for /works/showcase compatibility. Prefer type."
           },
           "type": {
             "type": "string",
@@ -1164,7 +1164,7 @@
       },
       "Venue": {
         "type": "object",
-        "description": "Canonical venue payload backed by summary_venues. Identifiers, bibliometric metrics, the global ranking surface and the indexing/quality flags are grouped into dedicated blocks so clients can consume each domain without scanning top-level fields.",
+        "description": "Canonical venue payload backed by the venues base table. Identifiers, bibliometric metrics, the global ranking surface and the indexing/quality flags are grouped into dedicated blocks so clients can consume each domain without scanning top-level fields.",
         "properties": {
           "id": {
             "type": "integer",
@@ -4912,7 +4912,7 @@
     },
     {
       "name": "Publications",
-      "description": "Per-publication view over `summary_publications`, including DOI resolution and sibling navigation."
+      "description": "Per-publication view over the `publications` + `works` + `venues` base tables, including DOI resolution and sibling navigation."
     },
     {
       "name": "Persons",
@@ -4924,7 +4924,7 @@
     },
     {
       "name": "Venues",
-      "description": "Journals, conferences, repositories, and book series. Backed by `summary_venues` with ranking and bibliometric surface."
+      "description": "Journals, conferences, repositories, and book series. Backed by the `venues` base table with ranking and bibliometric surface."
     },
     {
       "name": "Citations",
@@ -4967,7 +4967,7 @@
     "/works": {
       "get": {
         "summary": "Get list of academic works",
-        "description": "Returns a paginated list of works backed by `summary_publications`.\nFilters apply with **`match_mode: \"any_publication\"`** semantics: a\nwork appears in the result set if **any of its publications** matches\nthe filter set. When a filter matches multiple siblings of the same\nwork, the latest matching publication is the one displayed in the\ncard (its venue, year, doi, etc.). The semantic is signalled in\n`meta.match_mode`.\n",
+        "description": "Returns a paginated list of works backed by the `works` + `publications` base tables.\nFilters apply with **`match_mode: \"any_publication\"`** semantics: a\nwork appears in the result set if **any of its publications** matches\nthe filter set. When a filter matches multiple siblings of the same\nwork, the latest matching publication is the one displayed in the\ncard (its venue, year, doi, etc.). The semantic is signalled in\n`meta.match_mode`.\n",
         "tags": [
           "Works"
         ],
@@ -5132,7 +5132,7 @@
     "/works/showcase": {
       "get": {
         "summary": "Get works list optimized for browsing (showcase)",
-        "description": "High-performance endpoint for browsing works using `summary_publications`\n(one row per publication, latest pick per work). Filters apply with\n**`match_mode: \"any_publication\"`** semantics: a work appears in the\nresult if any of its publications matches the filter set, and the\ndisplayed publication is the latest matching one. Returns work-level\nfields plus derived browsing columns, including legacy aliases\n`work_type`/`year` for backward compatibility.\n",
+        "description": "High-performance endpoint for browsing works using the `works` base table joined\nto the latest publication per work. Filters apply with\n**`match_mode: \"any_publication\"`** semantics: a work appears in the\nresult if any of its publications matches the filter set, and the\ndisplayed publication is the latest matching one. Returns work-level\nfields plus derived browsing columns, including legacy aliases\n`work_type`/`year` for backward compatibility.\n",
         "tags": [
           "Works"
         ],
@@ -5280,7 +5280,7 @@
                       "properties": {
                         "query_source": {
                           "type": "string",
-                          "example": "summary_publications"
+                          "example": "works+publications"
                         },
                         "performance": {
                           "$ref": "#/components/schemas/PerformanceMeta"
@@ -7190,7 +7190,7 @@
         "tags": [
           "Search"
         ],
-        "description": "Search academic works using MariaDB FULLTEXT against summary_publications across title, subtitle, abstract, authors, venue, and related metadata",
+        "description": "Search academic works using MariaDB FULLTEXT against works (ft_works_content + ft_works_metadata) with venue matching via ft_venues_search.",
         "parameters": [
           {
             "name": "q",
@@ -7891,7 +7891,7 @@
     "/publications": {
       "get": {
         "summary": "List publications",
-        "description": "Returns a paginated list of publications backed by `summary_publications`.\nFilters can target the parent work (`work_type`, `language`, `work_id`)\nor the publication itself (`year_from`, `year_to`, `open_access`,\n`peer_reviewed`, `has_files`, `venue`, `venue_id`, `publisher_id`,\n`doi`). Free-text queries (`q`) use MariaDB FULLTEXT against\n`ft_summary_pubs_content`; metadata filters (`venue`, `author`, `subject`)\nuse FULLTEXT against `ft_summary_pubs_metadata`.\n",
+        "description": "Returns a paginated list of publications backed by `publications` + `works` + `venues`.\nFilters can target the parent work (`work_type`, `language`, `work_id`)\nor the publication itself (`year_from`, `year_to`, `open_access`,\n`peer_reviewed`, `has_files`, `venue`, `venue_id`, `publisher_id`,\n`doi`). Free-text queries (`q`) use MariaDB FULLTEXT against\n`ft_works_content`; metadata filters (`venue`, `author`, `subject`)\nuse FULLTEXT against `ft_works_metadata` (authors + subjects) and\n`ft_venues_search` (venue name + abbreviated name).\n",
         "tags": [
           "Publications"
         ],
@@ -7935,7 +7935,7 @@
               "minLength": 1,
               "maxLength": 200
             },
-            "description": "Free-text query against summary_publications FULLTEXT indexes",
+            "description": "Free-text query against ft_works_content (full_title_normalized + subjects_search)",
             "example": "machine learning"
           },
           {
@@ -8019,7 +8019,7 @@
               "type": "integer",
               "minimum": 1
             },
-            "description": "Exact match against summary_publications.venue_id"
+            "description": "Exact match against publications.venue_id"
           },
           {
             "in": "query",
@@ -8028,7 +8028,7 @@
               "type": "integer",
               "minimum": 1
             },
-            "description": "Exact match against summary_publications.publisher_id"
+            "description": "Exact match against publications.publisher_id"
           },
           {
             "in": "query",
@@ -8046,7 +8046,7 @@
               "type": "string",
               "maxLength": 255
             },
-            "description": "Exact DOI lookup (uses summary_publications.uq_summary_pubs_doi)"
+            "description": "Exact DOI lookup (uses publications.doi unique key)"
           },
           {
             "in": "query",
@@ -8168,7 +8168,7 @@
     "/publications/{id}": {
       "get": {
         "summary": "Get a publication by id",
-        "description": "Returns a single publication identified by `summary_publications.publication_id`.\nThe response carries a nested `work` block (parent work fields), the\nfull identifier set from `publications`, embedded `files` parsed from\n`files_json`, an array of `siblings` (other publications of the same\nwork, capped at 50), and optional `citations` / `references` blocks\nhydrated from `work_references`.\n",
+        "description": "Returns a single publication identified by `publications.id`.\nThe response carries a nested `work` block (parent work fields), the\nfull identifier set from `publications`, embedded `files` joined live\nfrom the `files` base table, an array of `siblings` (other publications\nof the same work, capped at 50), and optional `citations` / `references`\nblocks hydrated from `work_references`.\n",
         "tags": [
           "Publications"
         ],
@@ -8181,7 +8181,7 @@
               "type": "integer",
               "minimum": 1
             },
-            "description": "summary_publications.publication_id",
+            "description": "publications.id",
             "example": 123456
           },
           {
@@ -8807,7 +8807,7 @@
                           },
                           "cited_by_count": {
                             "type": "integer",
-                            "description": "Number of works citing this one (surfaced from summary_publications.work_citation_count)."
+                            "description": "Number of works citing this one (surfaced from works.citation_count)."
                           },
                           "references_count": {
                             "type": "integer",

@@ -80,7 +80,7 @@ const validateWorksQuery = [
  *   get:
  *     summary: Get list of academic works
  *     description: |
- *       Returns a paginated list of works backed by `summary_publications`.
+ *       Returns a paginated list of works backed by the `works` + `publications` base tables.
  *       Filters apply with **`match_mode: "any_publication"`** semantics: a
  *       work appears in the result set if **any of its publications** matches
  *       the filter set. When a filter matches multiple siblings of the same
@@ -200,8 +200,8 @@ const validateWorksQuery = [
  *   get:
  *     summary: Get works list optimized for browsing (showcase)
  *     description: |
- *       High-performance endpoint for browsing works using `summary_publications`
- *       (one row per publication, latest pick per work). Filters apply with
+ *       High-performance endpoint for browsing works using the `works` base table joined
+ *       to the latest publication per work. Filters apply with
  *       **`match_mode: "any_publication"`** semantics: a work appears in the
  *       result if any of its publications matches the filter set, and the
  *       displayed publication is the latest matching one. Returns work-level
@@ -306,7 +306,7 @@ const validateWorksQuery = [
  *                   properties:
  *                     query_source:
  *                       type: string
- *                       example: summary_publications
+ *                       example: works+publications
  *                     performance:
  *                       $ref: '#/components/schemas/PerformanceMeta'
  */

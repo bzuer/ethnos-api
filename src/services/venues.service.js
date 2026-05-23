@@ -4,12 +4,9 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatVenueListItem, formatVenueDetails } = require('../dto/venue.dto');
 const { withTimeout } = require('../utils/db');
-const { parseJsonColumn } = require('../dto/helpers');
 
 const toInt = (value, fallback = 0) => {
-  if (value === null || value === undefined) {
-    return fallback;
-  }
+  if (value === null || value === undefined) return fallback;
   const parsed = parseInt(value, 10);
   return Number.isNaN(parsed) ? fallback : parsed;
 };
@@ -32,101 +29,89 @@ const toNullableBoolean = (value) => {
   return Number(value) === 1;
 };
 
-const SUMMARY_SORT_FIELDS = {
-  id: 'sv.venue_id',
-  name: 'sv.name_search',
-  type: 'sv.venue_type',
-  works_count: 'COALESCE(sv.total_publications_count, 0)',
-  cited_by_count: 'COALESCE(sv.total_cited_by_count, 0)',
-  impact_factor: 'sv.impact_factor',
-  h_index: 'sv.h_index',
-  score: 'sv.global_ranking_score',
-  ranking: 'sv.global_ranking_score',
-  coverage_start_year: 'sv.coverage_start_year',
-  coverage_end_year: 'sv.coverage_end_year',
-  oldest: 'sv.coverage_start_year',
-  newest: 'sv.coverage_end_year'
+const BASE_SORT_FIELDS = {
+  id: 'v.id',
+  name: 'v.name',
+  type: 'v.type',
+  works_count: 'COALESCE(v.works_count, 0)',
+  cited_by_count: 'COALESCE(v.cited_by_count, 0)',
+  impact_factor: 'v.impact_factor',
+  h_index: 'v.h_index',
+  score: 'v.total_score',
+  ranking: 'v.total_score',
+  coverage_start_year: 'v.coverage_start_year',
+  coverage_end_year: 'v.coverage_end_year',
+  oldest: 'v.coverage_start_year',
+  newest: 'v.coverage_end_year'
 };
 
-const SUMMARY_BASE_SELECT = `
-  sv.venue_id AS id,
-  sv.name_search AS name,
-  sv.abbrev_search AS abbreviated_name,
-  sv.venue_type AS type,
-  sv.publisher_search AS publisher_name,
-  sv.country_code AS country_code,
-  sv.issn AS issn,
-  sv.eissn AS eissn,
-  sv.scopus_id AS scopus_id,
-  sv.open_access_status AS open_access_status,
-  sv.total_publications_count AS works_count,
-  sv.total_cited_by_count AS cited_by_count,
-  sv.open_access_percentage AS open_access_percentage,
-  sv.coverage_start_year AS coverage_start_year,
-  sv.coverage_end_year AS coverage_end_year,
-  sv.global_ranking_score AS global_ranking_score,
-  sv.score_breakdown_json AS score_breakdown_json,
-  sv.impact_factor AS impact_factor,
-  sv.citescore AS citescore,
-  sv.sjr AS sjr,
-  sv.snip AS snip,
-  sv.h_index AS h_index,
-  sv.i10_index AS i10_index,
-  sv.two_yr_mean_citedness AS two_yr_mean_citedness,
-  sv.is_in_doaj AS is_in_doaj,
-  sv.is_in_scielo AS is_in_scielo,
-  sv.is_indexed_in_scopus AS is_indexed_in_scopus,
-  sv.homepage_url AS homepage_url,
-  sv.top_subjects_json AS top_subjects_json,
-  sv.top_publications_json AS top_publications_json,
-  sv.validation_status AS validation_status,
-  sv.summary_updated_at AS summary_updated_at,
-  v.aggregation_type AS aggregation_type,
-  v.open_access AS open_access,
-  v.wikidata_id AS wikidata_id,
-  v.openalex_id AS openalex_id,
-  v.scielo_id AS scielo_id,
-  v.created_at AS created_at,
-  v.updated_at AS updated_at,
-  v.last_validated_at AS last_validated_at,
-  v.llm_relevance AS llm_relevance,
-  v.llm_justification AS llm_justification,
+const BASE_SELECT = `
+  v.id AS id,
+  v.name,
+  v.abbreviated_name,
+  v.type,
+  v.aggregation_type,
+  v.open_access,
+  v.country_code,
+  v.homepage_url,
+  v.issn,
+  v.eissn,
+  v.scopus_id,
+  v.wikidata_id,
+  v.openalex_id,
+  v.scielo_id,
+  v.coverage_start_year,
+  v.coverage_end_year,
+  v.works_count,
+  v.cited_by_count,
+  v.impact_factor,
+  v.citescore,
+  v.sjr,
+  v.snip,
+  v.h_index,
+  v.i10_index,
+  v.\`2yr_mean_citedness\` AS two_yr_mean_citedness,
+  v.is_in_doaj,
+  v.is_in_scielo,
+  v.is_indexed_in_scopus,
+  v.validation_status,
+  v.total_score,
+  v.subject_score,
+  v.oa_score,
+  v.authorship_score,
+  v.affiliation_score,
+  v.citation_score,
+  v.llm_score,
+  v.llm_relevance,
+  v.llm_justification,
+  v.last_validated_at,
+  v.created_at,
+  v.updated_at,
   pub.id AS publisher_org_id,
   pub.name AS publisher_org_name,
   pub.type AS publisher_org_type,
   pub.country_code AS publisher_org_country
 `;
 
-const SUMMARY_BASE_JOIN = `
-  FROM summary_venues sv
-  LEFT JOIN venues v ON v.id = sv.venue_id
-  LEFT JOIN organizations pub ON pub.id = sv.publisher_id
+const BASE_FROM = `
+  FROM venues v
+  LEFT JOIN organizations pub ON pub.id = v.publisher_id
 `;
 
-const mapSummaryRow = (row) => {
+const buildScoreBreakdown = (row) => ({
+  total: toNullableFloat(row.total_score),
+  subject: toNullableFloat(row.subject_score),
+  oa: toNullableFloat(row.oa_score),
+  authorship: toNullableFloat(row.authorship_score),
+  affiliation: toNullableFloat(row.affiliation_score),
+  citation: toNullableFloat(row.citation_score),
+  llm: toNullableFloat(row.llm_score),
+  llm_relevance: row.llm_relevance ?? null,
+  llm_justification: row.llm_justification ?? null
+});
+
+const mapVenueRow = (row) => {
   if (!row) return null;
-
-  const scoreBreakdown = parseJsonColumn(row.score_breakdown_json);
-  const topSubjectsRaw = parseJsonColumn(row.top_subjects_json);
-  const topPublicationsRaw = parseJsonColumn(row.top_publications_json);
-  const topSubjects = Array.isArray(topSubjectsRaw) ? topSubjectsRaw : [];
-  const topPublications = Array.isArray(topPublicationsRaw) ? topPublicationsRaw : [];
-
-  const subjects = topSubjects
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object') return null;
-      const term = entry.term || entry.name || null;
-      if (!term) return null;
-      return {
-        subject_id: entry.id ?? entry.subject_id ?? null,
-        term,
-        score: toNullableFloat(entry.score),
-        vocabulary: entry.vocabulary || null,
-        lang: entry.lang || null
-      };
-    })
-    .filter(Boolean);
-
   return {
     id: toInt(row.id, null),
     name: row.name || null,
@@ -134,7 +119,7 @@ const mapSummaryRow = (row) => {
     type: row.type || null,
     aggregation_type: row.aggregation_type || null,
     open_access: toNullableBoolean(row.open_access),
-    open_access_status: toNullableBoolean(row.open_access_status),
+    open_access_status: toNullableBoolean(row.open_access),
     country_code: row.country_code || null,
     homepage_url: row.homepage_url || null,
     issn: row.issn || null,
@@ -147,7 +132,7 @@ const mapSummaryRow = (row) => {
     coverage_end_year: toNullableInt(row.coverage_end_year),
     works_count: toInt(row.works_count, 0),
     cited_by_count: toInt(row.cited_by_count, 0),
-    open_access_percentage: toNullableFloat(row.open_access_percentage),
+    open_access_percentage: null,
     impact_factor: toNullableFloat(row.impact_factor),
     citescore: toNullableFloat(row.citescore),
     sjr: toNullableFloat(row.sjr),
@@ -159,37 +144,34 @@ const mapSummaryRow = (row) => {
     is_in_scielo: toNullableBoolean(row.is_in_scielo),
     is_indexed_in_scopus: toNullableBoolean(row.is_indexed_in_scopus),
     validation_status: row.validation_status || null,
-    global_ranking_score: toNullableFloat(row.global_ranking_score),
-    score_breakdown: scoreBreakdown && typeof scoreBreakdown === 'object' ? scoreBreakdown : null,
+    global_ranking_score: toNullableFloat(row.total_score),
+    score_breakdown: buildScoreBreakdown(row),
     llm_relevance: row.llm_relevance ?? null,
     llm_justification: row.llm_justification ?? null,
-    summary_updated_at: row.summary_updated_at || null,
+    summary_updated_at: row.updated_at || null,
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
     last_validated_at: row.last_validated_at || null,
-    publisher: (row.publisher_org_id || row.publisher_name) ? {
+    publisher: (row.publisher_org_id || row.publisher_org_name) ? {
       id: row.publisher_org_id ?? null,
-      name: row.publisher_org_name || row.publisher_name || null,
+      name: row.publisher_org_name || null,
       type: row.publisher_org_type || null,
       country_code: row.publisher_org_country || null
     } : null,
-    subjects,
-    top_publications: topPublications
+    subjects: [],
+    top_publications: []
   };
 };
 
 class VenuesService {
-  async _loadSummaryRows(venueIds = []) {
+  async _loadVenueRows(venueIds = []) {
     const uniqueIds = Array.from(new Set((venueIds || []).filter(Boolean)));
     if (uniqueIds.length === 0) return [];
-
     const sql = `
-      SELECT
-        ${SUMMARY_BASE_SELECT}
-      ${SUMMARY_BASE_JOIN}
-      WHERE sv.venue_id IN (:venueIds)
+      SELECT ${BASE_SELECT}
+      ${BASE_FROM}
+      WHERE v.id IN (:venueIds)
     `;
-
     return sequelize.query(withTimeout(sql), {
       replacements: { venueIds: uniqueIds },
       type: sequelize.QueryTypes.SELECT
@@ -197,15 +179,81 @@ class VenuesService {
   }
 
   async _loadVenuesByIds(venueIds = []) {
-    const rows = await this._loadSummaryRows(venueIds);
+    const rows = await this._loadVenueRows(venueIds);
     const map = new Map();
     for (const row of rows) {
-      const mapped = mapSummaryRow(row);
+      const mapped = mapVenueRow(row);
       if (mapped && mapped.id != null) {
         map.set(mapped.id, mapped);
       }
     }
     return map;
+  }
+
+  async _loadTopSubjects(venueIds = [], limit = 10) {
+    const map = new Map();
+    const uniqueIds = Array.from(new Set((venueIds || []).filter(Boolean)));
+    if (uniqueIds.length === 0) return map;
+    const rows = await sequelize.query(withTimeout(`
+      SELECT
+        vs.venue_id,
+        s.id AS subject_id,
+        s.term,
+        s.vocabulary,
+        s.lang,
+        vs.score
+      FROM venue_subjects vs
+      INNER JOIN subjects s ON s.id = vs.subject_id
+      WHERE vs.venue_id IN (:venueIds)
+      ORDER BY vs.venue_id, vs.score DESC, s.term ASC
+    `), {
+      replacements: { venueIds: uniqueIds },
+      type: sequelize.QueryTypes.SELECT
+    });
+    for (const row of rows) {
+      const bucket = map.get(row.venue_id) || [];
+      if (bucket.length >= limit) continue;
+      bucket.push({
+        subject_id: toNullableInt(row.subject_id),
+        term: row.term || null,
+        score: toNullableFloat(row.score),
+        vocabulary: row.vocabulary || null,
+        lang: row.lang || null
+      });
+      map.set(row.venue_id, bucket);
+    }
+    return map;
+  }
+
+  async _loadTopPublications(venueId, limit = 10) {
+    if (!venueId) return [];
+    const rows = await sequelize.query(withTimeout(`
+      SELECT
+        p.id AS publication_id,
+        p.work_id,
+        p.year AS publication_year,
+        p.doi,
+        p.open_access,
+        w.title,
+        w.citation_count
+      FROM publications p
+      INNER JOIN works w ON w.id = p.work_id
+      WHERE p.venue_id = :venueId
+      ORDER BY COALESCE(w.citation_count, 0) DESC, p.year DESC, p.id DESC
+      LIMIT :lim
+    `), {
+      replacements: { venueId, lim: limit },
+      type: sequelize.QueryTypes.SELECT
+    });
+    return rows.map(row => ({
+      publication_id: toNullableInt(row.publication_id),
+      work_id: toNullableInt(row.work_id),
+      title: row.title || null,
+      publication_year: toNullableInt(row.publication_year),
+      doi: row.doi || null,
+      open_access: toNullableBoolean(row.open_access),
+      citation_count: toInt(row.citation_count, 0)
+    }));
   }
 
   async _loadYearlyStats(venueIds = []) {
@@ -351,7 +399,6 @@ class VenuesService {
         replacements: { workIds },
         type: sequelize.QueryTypes.SELECT
       });
-
       for (const row of authorRows) {
         if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
         authorsByWork[row.work_id].push({
@@ -393,7 +440,7 @@ class VenuesService {
     const currentOffset = Math.max(0, parseInt(pagination.offset, 10) || 0);
     const type = options.type;
 
-    const cacheKey = `venues:search:v2:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
+    const cacheKey = `venues:search:v3:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info(`Venues search "${query}" retrieved from cache`);
@@ -407,37 +454,42 @@ class VenuesService {
   }
 
   async _searchVenuesMariaDB(query, { page, limit, offset, type }) {
-    const where = ['(sv.name_search LIKE :term OR sv.abbrev_search LIKE :term OR sv.issn LIKE :term OR sv.eissn LIKE :term OR sv.publisher_search LIKE :term)'];
+    const where = ['(v.name LIKE :term OR v.abbreviated_name LIKE :term OR v.issn LIKE :term OR v.eissn LIKE :term OR pub.name LIKE :term)'];
     const replacements = { term: `%${query}%`, lim: limit, off: offset };
 
     if (type) {
-      where.push('sv.venue_type = :type');
+      where.push('v.type = :type');
       replacements.type = type;
     }
 
     const whereClause = `WHERE ${where.join(' AND ')}`;
     const listSql = `
-      SELECT
-        ${SUMMARY_BASE_SELECT}
-      ${SUMMARY_BASE_JOIN}
+      SELECT ${BASE_SELECT}
+      ${BASE_FROM}
       ${whereClause}
-      ORDER BY COALESCE(sv.global_ranking_score, 0) DESC, sv.name_search ASC
+      ORDER BY COALESCE(v.total_score, 0) DESC, v.name ASC
       LIMIT :lim OFFSET :off
     `;
-    const countSql = `SELECT COUNT(*) AS total ${SUMMARY_BASE_JOIN} ${whereClause}`;
+    const countSql = `SELECT COUNT(*) AS total ${BASE_FROM} ${whereClause}`;
 
     const [rows, countRows] = await Promise.all([
       sequelize.query(withTimeout(listSql), { replacements, type: sequelize.QueryTypes.SELECT }),
       sequelize.query(withTimeout(countSql), { replacements, type: sequelize.QueryTypes.SELECT })
     ]);
 
+    const venueIds = rows.map(r => r.id).filter(Boolean);
+    const subjectsMap = await this._loadTopSubjects(venueIds, 5);
+
     const venues = rows
-      .map(mapSummaryRow)
+      .map(mapVenueRow)
       .filter(Boolean)
-      .map((venue) => formatVenueListItem(venue));
+      .map((venue) => {
+        venue.subjects = subjectsMap.get(venue.id) || [];
+        return formatVenueListItem(venue);
+      });
 
     const total = toInt(countRows?.[0]?.total, 0);
-    const meta = { source: 'summary_venues', query };
+    const meta = { source: 'venues', query };
     if (type) meta.filters = { type };
 
     return {
@@ -456,7 +508,7 @@ class VenuesService {
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v4:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v5:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -506,53 +558,53 @@ class VenuesService {
     const replacements = { lim: limit, off: offset };
 
     if (Number.isInteger(min_id) && min_id > 0) {
-      where.push('sv.venue_id >= :minId');
+      where.push('v.id >= :minId');
       replacements.minId = min_id;
     }
 
     if (type) {
-      where.push('sv.venue_type = :type');
+      where.push('v.type = :type');
       replacements.type = type;
     }
 
     if (search && String(search).trim()) {
-      where.push('(sv.name_search LIKE :term OR sv.abbrev_search LIKE :term OR sv.issn LIKE :term OR sv.eissn LIKE :term OR sv.publisher_search LIKE :term)');
+      where.push('(v.name LIKE :term OR v.abbreviated_name LIKE :term OR v.issn LIKE :term OR v.eissn LIKE :term OR pub.name LIKE :term)');
       replacements.term = `%${String(search).trim()}%`;
     }
 
     if (coverageFrom !== null) {
-      where.push('sv.coverage_start_year >= :coverageFrom');
+      where.push('v.coverage_start_year >= :coverageFrom');
       replacements.coverageFrom = coverageFrom;
     }
     if (coverageTo !== null) {
-      where.push('sv.coverage_end_year <= :coverageTo');
+      where.push('v.coverage_end_year <= :coverageTo');
       replacements.coverageTo = coverageTo;
     }
     if (coverageStartFrom !== null) {
-      where.push('sv.coverage_start_year >= :coverageStartFrom');
+      where.push('v.coverage_start_year >= :coverageStartFrom');
       replacements.coverageStartFrom = coverageStartFrom;
     }
     if (coverageStartTo !== null) {
-      where.push('sv.coverage_start_year <= :coverageStartTo');
+      where.push('v.coverage_start_year <= :coverageStartTo');
       replacements.coverageStartTo = coverageStartTo;
     }
     if (coverageEndFrom !== null) {
-      where.push('sv.coverage_end_year >= :coverageEndFrom');
+      where.push('v.coverage_end_year >= :coverageEndFrom');
       replacements.coverageEndFrom = coverageEndFrom;
     }
     if (coverageEndTo !== null) {
-      where.push('sv.coverage_end_year <= :coverageEndTo');
+      where.push('v.coverage_end_year <= :coverageEndTo');
       replacements.coverageEndTo = coverageEndTo;
     }
     if (activeInYear !== null) {
-      where.push('sv.coverage_start_year <= :activeInYear AND sv.coverage_end_year >= :activeInYear');
+      where.push('v.coverage_start_year <= :activeInYear AND v.coverage_end_year >= :activeInYear');
       replacements.activeInYear = activeInYear;
     }
 
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const requestedSortBy = typeof sortBy === 'string' && sortBy.trim() ? sortBy.trim().toLowerCase() : null;
-    const normalizedSortBy = requestedSortBy && SUMMARY_SORT_FIELDS[requestedSortBy] ? requestedSortBy : 'score';
-    const sortField = SUMMARY_SORT_FIELDS[normalizedSortBy];
+    const normalizedSortBy = requestedSortBy && BASE_SORT_FIELDS[requestedSortBy] ? requestedSortBy : 'score';
+    const sortField = BASE_SORT_FIELDS[normalizedSortBy];
     const descByDefault = new Set(['score', 'ranking', 'impact_factor', 'citescore', 'sjr', 'snip', 'works_count', 'cited_by_count', 'h_index', 'i10_index', 'coverage_end_year', 'newest']);
     const ascByDefault = new Set(['coverage_start_year', 'oldest']);
     const requestedOrder = typeof sortOrder === 'string' ? sortOrder.trim().toUpperCase() : '';
@@ -566,28 +618,33 @@ class VenuesService {
       : '';
 
     const listSql = `
-      SELECT
-        ${SUMMARY_BASE_SELECT}
-      ${SUMMARY_BASE_JOIN}
+      SELECT ${BASE_SELECT}
+      ${BASE_FROM}
       ${whereClause}
-      ORDER BY ${sortNullGuard}${sortField} ${sortOrderFinal}, COALESCE(sv.global_ranking_score, 0) DESC, sv.name_search ASC
+      ORDER BY ${sortNullGuard}${sortField} ${sortOrderFinal}, COALESCE(v.total_score, 0) DESC, v.name ASC
       LIMIT :lim OFFSET :off
     `;
-    const countSql = `SELECT COUNT(*) AS total ${SUMMARY_BASE_JOIN} ${whereClause}`;
+    const countSql = `SELECT COUNT(*) AS total ${BASE_FROM} ${whereClause}`;
 
     const [rows, countRows] = await Promise.all([
       sequelize.query(withTimeout(listSql), { replacements, type: sequelize.QueryTypes.SELECT }),
       sequelize.query(withTimeout(countSql), { replacements, type: sequelize.QueryTypes.SELECT })
     ]);
 
+    const venueIds = rows.map(r => r.id).filter(Boolean);
+    const subjectsMap = await this._loadTopSubjects(venueIds, 5);
+
     const venues = rows
-      .map(mapSummaryRow)
+      .map(mapVenueRow)
       .filter(Boolean)
-      .map((venue) => formatVenueListItem(venue));
+      .map((venue) => {
+        venue.subjects = subjectsMap.get(venue.id) || [];
+        return formatVenueListItem(venue);
+      });
 
     const total = toInt(countRows?.[0]?.total, 0);
     const meta = {
-      source: 'summary_venues',
+      source: 'venues',
       sort: {
         by: normalizedSortBy,
         order: sortOrderFinal
@@ -618,7 +675,7 @@ class VenuesService {
     const includeTopAuthors = options.includeTopAuthors !== false;
     const includeRecentWorks = options.includeRecentWorks !== false;
 
-    const cacheKey = `venue:v3:${venueId}:${JSON.stringify({
+    const cacheKey = `venue:v4:${venueId}:${JSON.stringify({
       includeSubjects,
       includeYearly,
       includeTopAuthors,
@@ -633,31 +690,35 @@ class VenuesService {
 
     const venueMap = await this._loadVenuesByIds([venueId]);
     const venue = venueMap.get(venueId);
-    if (!venue) {
-      return null;
-    }
+    if (!venue) return null;
 
-    const yearlyStatsPromise = includeYearly ? this._loadYearlyStats([venueId]) : Promise.resolve(new Map());
-    const topAuthorsPromise = includeTopAuthors ? this._loadTopAuthors([venueId]) : Promise.resolve(new Map());
-    const recentWorksPromise = includeRecentWorks ? this._loadRecentWorks(venueId) : Promise.resolve([]);
-
-    const [yearlyMap, topAuthorsMap, recentWorks] = await Promise.all([
-      yearlyStatsPromise.catch((err) => {
+    const [subjectsMap, yearlyMap, topAuthorsMap, recentWorks, topPublications] = await Promise.all([
+      includeSubjects ? this._loadTopSubjects([venueId], 10).catch((err) => {
+        logger.warn(`Top subjects failed for venue ${venueId}: ${err.message}`);
+        return new Map();
+      }) : Promise.resolve(new Map()),
+      includeYearly ? this._loadYearlyStats([venueId]).catch((err) => {
         logger.warn(`Yearly stats failed for venue ${venueId}: ${err.message}`);
         return new Map();
-      }),
-      topAuthorsPromise.catch((err) => {
+      }) : Promise.resolve(new Map()),
+      includeTopAuthors ? this._loadTopAuthors([venueId]).catch((err) => {
         logger.warn(`Top authors failed for venue ${venueId}: ${err.message}`);
         return new Map();
-      }),
-      recentWorksPromise.catch((err) => {
+      }) : Promise.resolve(new Map()),
+      includeRecentWorks ? this._loadRecentWorks(venueId).catch((err) => {
         logger.warn(`Recent works failed for venue ${venueId}: ${err.message}`);
+        return [];
+      }) : Promise.resolve([]),
+      this._loadTopPublications(venueId, 10).catch((err) => {
+        logger.warn(`Top publications failed for venue ${venueId}: ${err.message}`);
         return [];
       })
     ]);
 
+    venue.subjects = subjectsMap.get(venueId) || [];
     venue.yearly_stats = yearlyMap.get(venueId) || [];
     venue.top_authors = topAuthorsMap.get(venueId) || [];
+    venue.top_publications = topPublications;
 
     const formatted = formatVenueDetails(venue, {
       includeSubjects,
@@ -705,11 +766,11 @@ class VenuesService {
       case 'cited_by_count':
       case 'citation_count':
       case 'citations':
-        orderClause = `COALESCE(sp.work_citation_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
+        orderClause = `COALESCE(w.citation_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
         break;
       case 'references_count':
       case 'reference_count':
-        orderClause = `COALESCE(sp.work_reference_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
+        orderClause = `COALESCE(w.reference_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
         break;
       case 'publication_year':
       case 'year':
@@ -719,7 +780,7 @@ class VenuesService {
         orderClause = 'p.year DESC, w.id DESC';
     }
 
-    const cacheKey = `venue:${venueId}:works:v2:${JSON.stringify({ page, limit, offset, year, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
+    const cacheKey = `venue:${venueId}:works:v3:${JSON.stringify({ page, limit, offset, year, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
 
     const cached = await cacheService.get(cacheKey);
     if (cached) {
@@ -742,23 +803,15 @@ class VenuesService {
       replacements.yearTo = yearTo;
     }
     if (citedByMin !== null) {
-      where.push('COALESCE(sp.work_citation_count, 0) >= :citedByMin');
+      where.push('COALESCE(w.citation_count, 0) >= :citedByMin');
       replacements.citedByMin = citedByMin;
     }
     if (citedByMax !== null) {
-      where.push('COALESCE(sp.work_citation_count, 0) <= :citedByMax');
+      where.push('COALESCE(w.citation_count, 0) <= :citedByMax');
       replacements.citedByMax = citedByMax;
     }
 
     const whereClause = `WHERE ${where.join(' AND ')}`;
-
-    const summaryJoin = `
-      LEFT JOIN summary_publications sp ON sp.publication_id = (
-        SELECT MAX(publication_id)
-        FROM summary_publications
-        WHERE work_id = w.id
-      )
-    `;
 
     const listSql = `
       SELECT
@@ -776,11 +829,10 @@ class VenuesService {
         p.open_access,
         p.peer_reviewed,
         p.publication_date,
-        sp.work_citation_count,
-        sp.work_reference_count
+        w.citation_count AS work_citation_count,
+        w.reference_count AS work_reference_count
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
-      ${summaryJoin}
       ${whereClause}
       ORDER BY ${orderClause}
       LIMIT :lim OFFSET :off
@@ -790,7 +842,6 @@ class VenuesService {
       SELECT COUNT(*) AS total
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
-      ${summaryJoin}
       ${whereClause}
     `;
 
@@ -874,7 +925,7 @@ class VenuesService {
   }
 
   async getVenueStatistics() {
-    const cacheKey = 'venues:statistics:v2';
+    const cacheKey = 'venues:statistics:v3';
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venue statistics retrieved from cache');
@@ -884,10 +935,10 @@ class VenuesService {
     const [row] = await sequelize.query(withTimeout(`
       SELECT
         COUNT(*) AS total_venues,
-        SUM(CASE WHEN venue_type = 'JOURNAL' THEN 1 ELSE 0 END) AS journals,
-        SUM(CASE WHEN venue_type = 'CONFERENCE' THEN 1 ELSE 0 END) AS conferences,
-        SUM(CASE WHEN venue_type = 'REPOSITORY' THEN 1 ELSE 0 END) AS repositories,
-        SUM(CASE WHEN venue_type = 'BOOK_SERIES' THEN 1 ELSE 0 END) AS book_series,
+        SUM(CASE WHEN type = 'JOURNAL' THEN 1 ELSE 0 END) AS journals,
+        SUM(CASE WHEN type = 'CONFERENCE' THEN 1 ELSE 0 END) AS conferences,
+        SUM(CASE WHEN type = 'REPOSITORY' THEN 1 ELSE 0 END) AS repositories,
+        SUM(CASE WHEN type = 'BOOK_SERIES' THEN 1 ELSE 0 END) AS book_series,
         SUM(CASE WHEN impact_factor IS NOT NULL THEN 1 ELSE 0 END) AS with_impact_factor,
         AVG(impact_factor) AS avg_impact_factor,
         MAX(impact_factor) AS max_impact_factor,
@@ -895,8 +946,8 @@ class VenuesService {
         SUM(CASE WHEN is_in_doaj = 1 THEN 1 ELSE 0 END) AS in_doaj,
         SUM(CASE WHEN is_in_scielo = 1 THEN 1 ELSE 0 END) AS in_scielo,
         SUM(CASE WHEN is_indexed_in_scopus = 1 THEN 1 ELSE 0 END) AS in_scopus,
-        AVG(global_ranking_score) AS avg_ranking_score
-      FROM summary_venues
+        AVG(total_score) AS avg_ranking_score
+      FROM venues
     `), {
       type: sequelize.QueryTypes.SELECT
     });

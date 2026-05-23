@@ -153,7 +153,7 @@ const options = {
               nullable: true,
               example: 2023,
               deprecated: true,
-              description: 'Legacy alias from summary_publications. Returned only by /works/showcase. Prefer publication_year in list payloads or publication.year in detailed payloads.'
+              description: 'Legacy alias kept for /works/showcase compatibility. Prefer publication_year in list payloads or publication.year in detailed payloads.'
             },
             work_type: {
               type: 'string',
@@ -161,7 +161,7 @@ const options = {
               enum: ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'],
               example: 'ARTICLE',
               deprecated: true,
-              description: 'Legacy alias from summary_publications. Returned only by /works/showcase. Prefer type.'
+              description: 'Legacy alias kept for /works/showcase compatibility. Prefer type.'
             },
             type: {
               type: 'string',
@@ -827,7 +827,7 @@ const options = {
         },
         Venue: {
           type: 'object',
-          description: 'Canonical venue payload backed by summary_venues. Identifiers, bibliometric metrics, the global ranking surface and the indexing/quality flags are grouped into dedicated blocks so clients can consume each domain without scanning top-level fields.',
+          description: 'Canonical venue payload backed by the venues base table. Identifiers, bibliometric metrics, the global ranking surface and the indexing/quality flags are grouped into dedicated blocks so clients can consume each domain without scanning top-level fields.',
           properties: {
             id: { type: 'integer', example: 1012134 },
             name: { type: 'string', example: 'Cultural Anthropology', description: 'Official name of the venue' },
@@ -4101,10 +4101,10 @@ const options = {
       { name: 'Security', description: 'Security headers, rate-limit stats, and IP management. Requires `x-access-key`.' },
       { name: 'Search', description: 'Full-text search across works, publications, and persons using MariaDB FULLTEXT indexes, plus autocomplete and popular-terms helpers.' },
       { name: 'Works', description: 'Canonical academic works (articles, books, chapters, theses, conferences). Listings surface the latest matching publication per work.' },
-      { name: 'Publications', description: 'Per-publication view over `summary_publications`, including DOI resolution and sibling navigation.' },
+      { name: 'Publications', description: 'Per-publication view over the `publications` + `works` + `venues` base tables, including DOI resolution and sibling navigation.' },
       { name: 'Persons', description: 'Researcher profiles: preferred name, identifiers, affiliations, publication history, collaborators.' },
       { name: 'Institutions', description: 'Institutional entities (universities, institutes, companies, government, NGOs) exposed at `/institutions`.' },
-      { name: 'Venues', description: 'Journals, conferences, repositories, and book series. Backed by `summary_venues` with ranking and bibliometric surface.' },
+      { name: 'Venues', description: 'Journals, conferences, repositories, and book series. Backed by the `venues` base table with ranking and bibliometric surface.' },
       { name: 'Citations', description: 'Citation and reference relationships, per-work metrics, and citation-network traversal.' },
       { name: 'Collaborations', description: 'Co-authorship analysis, collaborator lookup, collaboration networks, and top-collaborator rankings.' },
       { name: 'Courses', description: 'Academic courses with instructors, bibliography, and subject coverage.' },

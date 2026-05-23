@@ -2,7 +2,6 @@ const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
 const { formatBibliographyItem, formatBibliographyCourseUsage } = require('../dto/bibliography.dto');
-const { authorsFromJson } = require('../dto/helpers');
 
 class BibliographyService {
   
@@ -81,20 +80,18 @@ class BibliographyService {
         w.language,
         w.work_type AS document_type,
         COALESCE(bm.author_count, 0) AS author_count,
-        bm.authors_json,
         COALESCE(bm.instructors, '') AS instructors
       FROM course_bibliography cb
       JOIN courses c ON cb.course_id = c.id
       JOIN works w ON cb.work_id = w.id
       LEFT JOIN (
-        SELECT 
+        SELECT
           cb.course_id,
           cb.work_id,
           latest.publication_year,
           latest.open_access,
-          COALESCE(JSON_LENGTH(sp_a.authors_json), 0) AS author_count,
-          sp_a.authors_json,
-        GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') AS instructors
+          (SELECT COUNT(*) FROM authorships a WHERE a.work_id = cb.work_id) AS author_count,
+          GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') AS instructors
         FROM course_bibliography cb
         LEFT JOIN (
           SELECT p.work_id, p.year AS publication_year, p.open_access
@@ -105,14 +102,9 @@ class BibliographyService {
             GROUP BY work_id
           ) latest_pub ON latest_pub.work_id = p.work_id AND latest_pub.max_year = p.year
         ) latest ON cb.work_id = latest.work_id
-        LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
-          SELECT MAX(publication_id)
-          FROM summary_publications
-          WHERE work_id = cb.work_id
-        )
         LEFT JOIN course_instructors ci ON cb.course_id = ci.course_id
         LEFT JOIN persons p ON ci.canonical_person_id = p.id
-        GROUP BY cb.course_id, cb.work_id, sp_a.authors_json, latest.publication_year, latest.open_access
+        GROUP BY cb.course_id, cb.work_id, latest.publication_year, latest.open_access
       ) bm ON cb.course_id = bm.course_id AND cb.work_id = bm.work_id
       WHERE 1=1
     `;
@@ -174,7 +166,7 @@ class BibliographyService {
       GROUP BY cb.course_id, cb.work_id, cb.reading_type, cb.week_number, cb.notes,
                c.code, c.name, c.year, c.semester, c.program_id,
                w.title, bm.publication_year, w.language, w.work_type,
-               bm.author_count, bm.authors_json, bm.instructors
+               bm.author_count, bm.instructors
     `;
 
     const paginatedQuery = `${groupedQuery}
@@ -184,11 +176,27 @@ class BibliographyService {
     const [bibliography] = await pool.execute(paginatedQuery, [...params, limitValue, offsetValue]);
 
     if (bibliography.length > 0) {
+      const workIds = Array.from(new Set(bibliography.map(item => item.work_id).filter(Number.isFinite)));
+      const authorsByWork = {};
+      if (workIds.length > 0) {
+        const placeholders = workIds.map(() => '?').join(',');
+        const [authorRows] = await pool.execute(
+          `SELECT a.work_id, p.preferred_name
+             FROM authorships a
+             INNER JOIN persons p ON p.id = a.person_id
+             WHERE a.work_id IN (${placeholders})
+             ORDER BY a.work_id, a.position`,
+          workIds
+        );
+        for (const row of authorRows) {
+          if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
+          authorsByWork[row.work_id].push(row.preferred_name);
+        }
+      }
       bibliography.forEach(item => {
-        const authors = authorsFromJson(item.authors_json);
-        item.authors = authors;
-        item.first_author_name = authors[0] || null;
-        delete item.authors_json;
+        const names = authorsByWork[item.work_id] || [];
+        item.authors = names;
+        item.first_author_name = names[0] || null;
         if (item.open_access !== undefined) {
           item.open_access = item.open_access === 1 || item.open_access === true;
         }

@@ -6,7 +6,7 @@ Public RESTful API for academic bibliographic research with high-performance sea
 
 ## System Status
 
-Production-ready system with 79 documented endpoints (per OpenAPI), MariaDB FULLTEXT search against `summary_publications` (`ft_summary_pubs_content`, `ft_summary_pubs_metadata`), Redis caching, and standardized response envelopes.
+Production-ready system with 79 documented endpoints (per OpenAPI), MariaDB FULLTEXT search against the base tables (`works.ft_works_content`, `works.ft_works_metadata`, `venues.ft_venues_search`, `persons.ft_persons_names`), Redis caching, and standardized response envelopes. The legacy `summary_*` denormalized layer was dissolved in 2026-05-23.
 
 ## Database Schema
 
@@ -147,12 +147,13 @@ Deploy sequence:
 
 ## Search Engine
 
-All full-text search runs against MariaDB FULLTEXT indexes:
-- `ft_summary_pubs_content` over `summary_publications.title_search` + `abstract_search` for the free-text `q`.
-- `ft_summary_pubs_metadata` over `summary_publications.authors_search` + `venue_search` + `subjects_search` for `author` / `venue` / `subject` filters (AND-scoped via `+token` BOOLEAN MODE).
-- `persons` / `signatures` tables for person searches.
+All full-text search runs against MariaDB FULLTEXT indexes pinned on the base tables:
+- `works.ft_works_content` over `full_title_normalized` + `subjects_search` for the free-text `q`.
+- `works.ft_works_metadata` over `authors_search` + `subjects_search` for `author` / `subject` filters (AND-scoped via `+token` BOOLEAN MODE).
+- `venues.ft_venues_search` over `name` + `abbreviated_name` for the `venue_name` filter and venue search.
+- `persons.ft_persons_names` over `preferred_name` + `given_names` + `family_name` for person searches.
 
-There is no Sphinx daemon, RT index, or external indexer process. Listings backed by `summary_publications` always report `meta.engine = "MariaDB"`.
+There is no Sphinx daemon, RT index, external indexer process, or `summary_*` denormalized layer. Every listing reports `meta.engine = "MariaDB"`.
 
 ## Testing
 

@@ -8,7 +8,6 @@ const {
   formatBibliographyEntry,
   formatCourseSubject
 } = require('../dto/course.dto');
-const { authorsFromJson } = require('../dto/helpers');
 
 class CoursesService {
   
@@ -335,25 +334,21 @@ class CoursesService {
     const { reading_type, week_number, limit = 20, offset = 0 } = filters;
 
     let query = `
-      SELECT 
+      SELECT
         cb.course_id,
         cb.work_id,
         cb.reading_type,
         cb.week_number,
         cb.notes,
         w.title,
-        p.year as publication_year,
+        pub.year as publication_year,
         w.language,
         w.work_type as document_type,
-        p.open_access,
-        sp_a.authors_json
+        pub.open_access
       FROM course_bibliography cb
       JOIN works w ON cb.work_id = w.id
-      LEFT JOIN publications p ON w.id = p.work_id
-      LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
-        SELECT MAX(publication_id)
-        FROM summary_publications
-        WHERE work_id = w.id
+      LEFT JOIN publications pub ON pub.id = (
+        SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
       )
       WHERE cb.course_id = ?
     `;
@@ -375,13 +370,30 @@ class CoursesService {
 
     const [bibliography] = await pool.execute(query, params);
 
+    const workIds = Array.from(new Set(bibliography.map(item => item.work_id).filter(Number.isFinite)));
+    const authorsByWork = {};
+    if (workIds.length > 0) {
+      const placeholders = workIds.map(() => '?').join(',');
+      const [authorRows] = await pool.execute(
+        `SELECT a.work_id, p.preferred_name
+           FROM authorships a
+           INNER JOIN persons p ON p.id = a.person_id
+           WHERE a.work_id IN (${placeholders})
+           ORDER BY a.work_id, a.position`,
+        workIds
+      );
+      for (const row of authorRows) {
+        if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
+        authorsByWork[row.work_id].push(row.preferred_name);
+      }
+    }
+
     for (const item of bibliography) {
-      const authors = authorsFromJson(item.authors_json);
-      item.authors = authors;
-      item.author_count = authors.length;
-      item.first_author_name = authors[0] || null;
-      item.author_string = authors.join('; ') || null;
-      delete item.authors_json;
+      const names = authorsByWork[item.work_id] || [];
+      item.authors = names;
+      item.author_count = names.length;
+      item.first_author_name = names[0] || null;
+      item.author_string = names.length ? names.join('; ') : null;
     }
 
     const countQuery = `

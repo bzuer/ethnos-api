@@ -3,32 +3,29 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination } = require('../utils/pagination');
 const { formatCitationWork } = require('../dto/citations.dto');
-const { parseJsonColumn } = require('../dto/helpers');
 
 const fetchWorkSummaryByIds = async (workIds) => {
   if (!workIds || workIds.length === 0) return {};
   const placeholders = workIds.map(() => '?').join(',');
   const rows = await sequelize.query(
-    `SELECT sp.work_id,
-            sp.title_search AS title,
-            sp.publication_year AS year,
-            sp.work_type,
-            sp.venue_search AS venue_name,
-            sv.abbrev_search AS venue_abbrev,
-            sp.doi,
-            sp.authors_json
-       FROM summary_publications sp
-       LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
-       INNER JOIN (
-         SELECT work_id, MAX(publication_id) AS pub_id
-         FROM summary_publications
-         WHERE work_id IN (${placeholders})
-         GROUP BY work_id
-       ) latest ON latest.pub_id = sp.publication_id`,
+    `SELECT
+       w.id AS work_id,
+       w.title,
+       w.work_type,
+       p.year,
+       p.doi,
+       v.name AS venue_name,
+       v.abbreviated_name AS venue_abbrev,
+       (SELECT COUNT(*) FROM authorships a WHERE a.work_id = w.id) AS authors_count
+     FROM works w
+     LEFT JOIN publications p ON p.id = (
+       SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
+     )
+     LEFT JOIN venues v ON v.id = p.venue_id
+     WHERE w.id IN (${placeholders})`,
     { replacements: workIds, type: sequelize.QueryTypes.SELECT }
   );
   return rows.reduce((acc, row) => {
-    const authors = parseJsonColumn(row.authors_json);
     acc[row.work_id] = {
       title: row.title || null,
       year: row.year || null,
@@ -36,7 +33,7 @@ const fetchWorkSummaryByIds = async (workIds) => {
       venue_name: row.venue_name || null,
       venue_abbrev: row.venue_abbrev || null,
       doi: row.doi || null,
-      authors_count: Array.isArray(authors) ? authors.length : 0
+      authors_count: parseInt(row.authors_count, 10) || 0
     };
     return acc;
   }, {});

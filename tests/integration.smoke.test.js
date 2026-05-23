@@ -164,10 +164,10 @@ describe('Integration smoke (real DB)', () => {
       assert.ok(Array.isArray(body.data));
     });
 
-    test('GET /venues exposes summary_venues surface', async () => {
+    test('GET /venues exposes venues base-table surface', async () => {
       const body = assertSuccess(await fetchJson('/venues?limit=2'), 'GET /venues');
       assert.ok(Array.isArray(body.data));
-      assert.equal(body.meta?.source, 'summary_venues');
+      assert.equal(body.meta?.source, 'venues');
       if (body.data.length > 0) {
         const venue = body.data[0];
         assert.ok(venue.identifiers && typeof venue.identifiers === 'object', 'identifiers block');

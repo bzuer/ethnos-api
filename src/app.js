@@ -199,7 +199,7 @@ app.get('/', (req, res) => {
     },
     system_status: {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
-      search_engine: 'MariaDB FULLTEXT against summary_publications / summary_venues / persons',
+      search_engine: 'MariaDB FULLTEXT against works (ft_works_content, ft_works_metadata) / venues (ft_venues_search) / persons (ft_persons_names)',
       cache: 'Redis with 30min TTL',
       rate_limiting: 'Disabled for authenticated requests',
       authentication: 'X-Access-Key required for every endpoint except /health/liveness and /docs*'
@@ -248,7 +248,7 @@ app.get('/', (req, res) => {
       collected_at: homepageStats?.collected_at || null
     },
     technical_features: {
-      search_performance: 'MariaDB FULLTEXT indexes on summary_publications / persons drive search; institutions search disabled for optimal performance',
+      search_performance: 'MariaDB FULLTEXT indexes on works (ft_works_content + ft_works_metadata) and persons (ft_persons_names) drive search; institutions search disabled for optimal performance',
       authentication: 'X-Access-Key required on every endpoint (header: x-access-key | x-internal-key | x-api-key). Public paths: /health/liveness, /docs, /docs.json, /docs.yaml, /openapi.yaml, /openapi.yml.',
       rate_limits: 'No limit for authenticated requests',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
@@ -454,7 +454,7 @@ const startServer = async () => {
       logger.info(`Server running on port ${PORT}`);
       logger.info(`API Bibliografica ${process.env.NODE_ENV || 'development'} mode`);
       logger.info(`Health check: http://localhost:${PORT}/health`);
-      logger.info('Search engine: MariaDB FULLTEXT against summary_publications / summary_venues / persons');
+      logger.info('Search engine: MariaDB FULLTEXT against works (ft_works_content, ft_works_metadata) / venues (ft_venues_search) / persons (ft_persons_names)');
     });
 
     server.on('error', (error) => {

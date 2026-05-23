@@ -93,7 +93,7 @@ const validateWorksSearch = [
  *   get:
  *     summary: Search works using full-text search
  *     tags: [Search]
- *     description: Search academic works using MariaDB FULLTEXT against summary_publications across title, subtitle, abstract, authors, venue, and related metadata
+ *     description: Search academic works using MariaDB FULLTEXT against works (ft_works_content + ft_works_metadata) with venue matching via ft_venues_search.
  *     parameters:
  *       - name: q
  *         in: query
@@ -610,9 +610,9 @@ router.get('/health', async (req, res, next) => {
     return res.success({
       search_engine: 'MariaDB',
       indexes: {
-        works: 'ft_summary_pubs_content (title_search, abstract_search), ft_summary_pubs_metadata (authors_search, venue_search, subjects_search)',
-        venues: 'summary_venues LIKE-based search',
-        persons: 'persons LIKE/FT search'
+        works: 'ft_works_content (full_title_normalized + subjects_search), ft_works_metadata (authors_search + subjects_search), ft_works_authors_content (full_title_normalized + authors_search + subjects_search)',
+        venues: 'ft_venues_search (name + abbreviated_name)',
+        persons: 'ft_persons_names (preferred_name + given_names + family_name)'
       },
       endpoints: {
         basic_search: '/search/works',

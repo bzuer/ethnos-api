@@ -4,7 +4,6 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
-const { authorsFromJson } = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
 
 class PersonsService {
@@ -72,7 +71,7 @@ class PersonsService {
       };
 
       const recentWorks = await sequelize.query(withTimeout(`
-        SELECT 
+        SELECT
           w.id,
           w.title,
           w.subtitle,
@@ -86,13 +85,14 @@ class PersonsService {
           a.position,
           v.id as venue_id,
           v.name as venue_name,
-          sv.abbrev_search as venue_abbreviated_name,
+          v.abbreviated_name as venue_abbreviated_name,
           v.type as venue_type
         FROM authorships a
         INNER JOIN works w ON a.work_id = w.id
-        LEFT JOIN publications pub ON w.id = pub.work_id
-        LEFT JOIN venues v ON pub.venue_id = v.id
-        LEFT JOIN summary_venues sv ON sv.venue_id = v.id
+        LEFT JOIN publications pub ON pub.id = (
+          SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
+        )
+        LEFT JOIN venues v ON v.id = pub.venue_id
         WHERE a.person_id = :id
         ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
         LIMIT 10
@@ -427,11 +427,11 @@ class PersonsService {
       case 'cited_by_count':
       case 'citation_count':
       case 'citations':
-        orderClause = `COALESCE(sp_a.work_citation_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
+        orderClause = `COALESCE(w.citation_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
         break;
       case 'references_count':
       case 'reference_count':
-        orderClause = `COALESCE(sp_a.work_reference_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
+        orderClause = `COALESCE(w.reference_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
         break;
       case 'publication_year':
       case 'year':
@@ -459,19 +459,19 @@ class PersonsService {
       }
 
       if (yearFrom !== null) {
-        whereConditions.push('COALESCE(pub.year, sp_a.publication_year) >= :yearFrom');
+        whereConditions.push('COALESCE(pub.year, 0) >= :yearFrom');
         replacements.yearFrom = yearFrom;
       }
       if (yearTo !== null) {
-        whereConditions.push('COALESCE(pub.year, sp_a.publication_year) <= :yearTo');
+        whereConditions.push('COALESCE(pub.year, 0) <= :yearTo');
         replacements.yearTo = yearTo;
       }
       if (citedByMin !== null) {
-        whereConditions.push('COALESCE(sp_a.work_citation_count, 0) >= :citedByMin');
+        whereConditions.push('COALESCE(w.citation_count, 0) >= :citedByMin');
         replacements.citedByMin = citedByMin;
       }
       if (citedByMax !== null) {
-        whereConditions.push('COALESCE(sp_a.work_citation_count, 0) <= :citedByMax');
+        whereConditions.push('COALESCE(w.citation_count, 0) <= :citedByMax');
         replacements.citedByMax = citedByMax;
       }
 
@@ -487,6 +487,8 @@ class PersonsService {
             w.work_type,
             w.language,
             w.created_at,
+            w.citation_count AS work_citation_count,
+            w.reference_count AS work_reference_count,
             a.role,
             a.position,
             a.is_corresponding,
@@ -495,25 +497,15 @@ class PersonsService {
             v.name as journal,
             pub.volume,
             pub.issue,
-          pub.pages,
-          sp_a.authors_json,
-          sp_a.work_citation_count,
-          sp_a.work_reference_count,
-          pub.open_access,
-          (
-            SELECT JSON_LENGTH(sp_a2.authors_json)
-            FROM summary_publications sp_a2
-            WHERE sp_a2.publication_id = sp_a.publication_id
-          ) as total_authors
+            pub.pages,
+            pub.open_access,
+            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
           FROM authorships a
           INNER JOIN works w ON a.work_id = w.id
-          LEFT JOIN publications pub ON w.id = pub.work_id
-          LEFT JOIN venues v ON pub.venue_id = v.id
-          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
-            SELECT MAX(publication_id)
-            FROM summary_publications
-            WHERE work_id = w.id
+          LEFT JOIN publications pub ON pub.id = (
+            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
           )
+          LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE ${whereClause}
           ORDER BY ${orderClause}
           LIMIT :limit OFFSET :offset
@@ -526,11 +518,8 @@ class PersonsService {
           SELECT COUNT(*) as total
           FROM authorships a
           INNER JOIN works w ON a.work_id = w.id
-          LEFT JOIN publications pub ON w.id = pub.work_id
-          LEFT JOIN summary_publications sp_a ON sp_a.publication_id = (
-            SELECT MAX(publication_id)
-            FROM summary_publications
-            WHERE work_id = w.id
+          LEFT JOIN publications pub ON pub.id = (
+            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
           )
           WHERE ${whereClause}
         `, {
@@ -557,38 +546,62 @@ class PersonsService {
       const total = countResult[0].total;
       const totalPages = Math.ceil(total / limit);
 
+      const workIds = works.map(w => w.id).filter(Number.isFinite);
+      let authorStringByWork = {};
+      if (workIds.length > 0) {
+        const placeholders = workIds.map(() => '?').join(',');
+        const authorRows = await sequelize.query(`
+          SELECT a.work_id, p.preferred_name
+          FROM authorships a
+          INNER JOIN persons p ON p.id = a.person_id
+          WHERE a.work_id IN (${placeholders})
+          ORDER BY a.work_id, a.position
+        `, {
+          replacements: workIds,
+          type: sequelize.QueryTypes.SELECT
+        });
+        for (const row of authorRows) {
+          const bucket = authorStringByWork[row.work_id] || [];
+          bucket.push(row.preferred_name);
+          authorStringByWork[row.work_id] = bucket;
+        }
+      }
+
       const result = {
-        data: works.map(work => ({
-          id: work.id,
-          title: work.title,
-          subtitle: work.subtitle,
-          abstract: work.abstract || null,
-          type: work.work_type,
-          language: work.language,
-          doi: work.doi,
-          publication_year: work.year !== undefined && work.year !== null ? parseInt(work.year, 10) : null,
-          open_access: work.open_access === 1 || work.open_access === true,
-          cited_by_count: parseInt(work.work_citation_count, 10) || 0,
-          references_count: parseInt(work.work_reference_count, 10) || 0,
-          authorship: {
-            role: work.role,
-            position: work.position,
-            is_corresponding: work.is_corresponding === 1
-          },
-          publication: {
-            year: work.year,
-            journal: work.journal,
-            volume: work.volume,
-            issue: work.issue,
-            pages: work.pages,
-            open_access: work.open_access === 1 || work.open_access === true
-          },
-          authors: {
-            total_count: work.total_authors || 0,
-            author_string: authorsFromJson(work.authors_json).join('; ') || null
-          },
-          created_at: work.created_at
-        })),
+        data: works.map(work => {
+          const authorNames = authorStringByWork[work.id] || [];
+          return {
+            id: work.id,
+            title: work.title,
+            subtitle: work.subtitle,
+            abstract: work.abstract || null,
+            type: work.work_type,
+            language: work.language,
+            doi: work.doi,
+            publication_year: work.year !== undefined && work.year !== null ? parseInt(work.year, 10) : null,
+            open_access: work.open_access === 1 || work.open_access === true,
+            cited_by_count: parseInt(work.work_citation_count, 10) || 0,
+            references_count: parseInt(work.work_reference_count, 10) || 0,
+            authorship: {
+              role: work.role,
+              position: work.position,
+              is_corresponding: work.is_corresponding === 1
+            },
+            publication: {
+              year: work.year,
+              journal: work.journal,
+              volume: work.volume,
+              issue: work.issue,
+              pages: work.pages,
+              open_access: work.open_access === 1 || work.open_access === true
+            },
+            authors: {
+              total_count: parseInt(work.total_authors, 10) || authorNames.length,
+              author_string: authorNames.length ? authorNames.join('; ') : null
+            },
+            created_at: work.created_at
+          };
+        }),
         pagination: createPagination(page, limit, total)
       };
 

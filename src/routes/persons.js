@@ -448,7 +448,7 @@ const validateSignaturesQuery = [
  *                         description: DOI identifier
  *                       cited_by_count:
  *                         type: integer
- *                         description: Number of works citing this one (surfaced from summary_publications.work_citation_count).
+ *                         description: Number of works citing this one (surfaced from works.citation_count).
  *                       references_count:
  *                         type: integer
  *                         description: Number of references this work makes.

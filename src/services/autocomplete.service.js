@@ -93,14 +93,14 @@ class AutocompleteService {
     }
 
 
-    async _fetchPublicationIdsByMatch(query, fetchLimit) {
+    async _fetchWorkIdsByMatch(query, fetchLimit) {
         const cappedLimit = Math.max(1, Math.min(parseInt(fetchLimit, 10) || 50, 500));
 
         try {
             const rows = await sequelize.query(
-                `SELECT sp.publication_id AS id
-                 FROM summary_publications sp
-                 WHERE MATCH(sp.title_search, sp.abstract_search) AGAINST (:q IN BOOLEAN MODE)
+                `SELECT w.id
+                 FROM works w
+                 WHERE MATCH(w.full_title_normalized, w.subjects_search) AGAINST (:q IN BOOLEAN MODE)
                  LIMIT :lim`,
                 {
                     replacements: { q: query, lim: cappedLimit },
@@ -118,16 +118,16 @@ class AutocompleteService {
 
     async getTitleSuggestions(query, limit) {
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
-        const ids = await this._fetchPublicationIdsByMatch(query, sanitizedLimit * 5);
+        const ids = await this._fetchWorkIdsByMatch(query, sanitizedLimit * 5);
         if (ids.length === 0) return [];
 
         const rows = await sequelize.query(
-            `SELECT title_search AS title, COUNT(*) AS relevance
-             FROM summary_publications
-             WHERE publication_id IN (:ids)
-               AND title_search != ''
-             GROUP BY title_search
-             ORDER BY relevance DESC, title_search ASC
+            `SELECT title, COUNT(*) AS relevance
+             FROM works
+             WHERE id IN (:ids)
+               AND title != ''
+             GROUP BY title
+             ORDER BY relevance DESC, title ASC
              LIMIT :limit`,
             {
                 replacements: { ids, limit: sanitizedLimit },
@@ -145,16 +145,18 @@ class AutocompleteService {
 
     async getAuthorSuggestions(query, limit) {
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
-        const ids = await this._fetchPublicationIdsByMatch(query, sanitizedLimit * 5);
+        const ids = await this._fetchWorkIdsByMatch(query, sanitizedLimit * 5);
         if (ids.length === 0) return [];
 
         const rows = await sequelize.query(
-            `SELECT authors_search AS author_string, COUNT(*) AS work_count
-             FROM summary_publications
-             WHERE publication_id IN (:ids)
-               AND authors_search IS NOT NULL
-               AND authors_search != ''
-             GROUP BY authors_search
+            `SELECT p.preferred_name AS author_name,
+                    COUNT(DISTINCT a.work_id) AS work_count
+             FROM authorships a
+             INNER JOIN persons p ON p.id = a.person_id
+             WHERE a.work_id IN (:ids)
+               AND p.preferred_name IS NOT NULL
+               AND p.preferred_name != ''
+             GROUP BY p.preferred_name
              ORDER BY work_count DESC
              LIMIT :limit`,
             {
@@ -166,18 +168,16 @@ class AutocompleteService {
         const queryLower = query.toLowerCase();
         const suggestions = [];
         for (const row of rows) {
-            const authors = (row.author_string || '').split(/[;,]\s*/).map(a => a.trim()).filter(Boolean);
-            for (const author of authors) {
-                if (!author.toLowerCase().includes(queryLower)) continue;
-                if (suggestions.find(s => s.text === author)) continue;
-                suggestions.push({
-                    text: author,
-                    type: 'author',
-                    work_count: parseInt(row.work_count, 10) || 0,
-                    preview: `${author} (${row.work_count} works)`
-                });
-                if (suggestions.length >= sanitizedLimit) break;
-            }
+            const author = (row.author_name || '').trim();
+            if (!author) continue;
+            if (!author.toLowerCase().includes(queryLower)) continue;
+            if (suggestions.find(s => s.text === author)) continue;
+            suggestions.push({
+                text: author,
+                type: 'author',
+                work_count: parseInt(row.work_count, 10) || 0,
+                preview: `${author} (${row.work_count} works)`
+            });
             if (suggestions.length >= sanitizedLimit) break;
         }
 
@@ -187,19 +187,18 @@ class AutocompleteService {
 
     async getVenueSuggestions(query, limit) {
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
-        const ids = await this._fetchPublicationIdsByMatch(query, sanitizedLimit * 5);
+        const ids = await this._fetchWorkIdsByMatch(query, sanitizedLimit * 5);
         if (ids.length === 0) return [];
 
         const rows = await sequelize.query(
-            `SELECT sp.venue_id,
-                    sv.name_search AS venue_name,
-                    sv.abbrev_search AS venue_abbrev,
-                    COUNT(*) AS work_count
-             FROM summary_publications sp
-             LEFT JOIN summary_venues sv ON sv.venue_id = sp.venue_id
-             WHERE sp.publication_id IN (:ids)
-               AND sp.venue_id IS NOT NULL
-             GROUP BY sp.venue_id, sv.name_search, sv.abbrev_search
+            `SELECT v.id AS venue_id,
+                    v.name AS venue_name,
+                    v.abbreviated_name AS venue_abbrev,
+                    COUNT(DISTINCT p.work_id) AS work_count
+             FROM publications p
+             INNER JOIN venues v ON v.id = p.venue_id
+             WHERE p.work_id IN (:ids)
+             GROUP BY v.id, v.name, v.abbreviated_name
              ORDER BY work_count DESC
              LIMIT :limit`,
             {
@@ -261,17 +260,18 @@ class AutocompleteService {
             const fetchLimit = sanitizedLimit * 3;
 
             const rows = await sequelize.query(`
-                SELECT LOWER(SUBSTRING_INDEX(SUBSTRING_INDEX(sp.title_search, ' ', numbers.n), ' ', -1)) AS term,
+                SELECT LOWER(SUBSTRING_INDEX(SUBSTRING_INDEX(w.title, ' ', numbers.n), ' ', -1)) AS term,
                        COUNT(*) AS frequency
-                FROM summary_publications sp
+                FROM works w
+                INNER JOIN publications p ON p.work_id = w.id
                 JOIN (
                     SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL
                     SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL
                     SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10
                 ) numbers
-                ON CHAR_LENGTH(sp.title_search) - CHAR_LENGTH(REPLACE(sp.title_search, ' ', '')) >= numbers.n - 1
-                WHERE sp.publication_year >= 2020
-                  AND CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(sp.title_search, ' ', numbers.n), ' ', -1)) > 3
+                ON CHAR_LENGTH(w.title) - CHAR_LENGTH(REPLACE(w.title, ' ', '')) >= numbers.n - 1
+                WHERE p.year >= 2020
+                  AND CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(w.title, ' ', numbers.n), ' ', -1)) > 3
                 GROUP BY term
                 HAVING frequency > 10
                 ORDER BY frequency DESC
