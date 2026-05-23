@@ -3,8 +3,6 @@ const { query } = require('express-validator');
 const router = express.Router();
 const searchController = require('../controllers/search.controller');
 const { commonValidations, enhancedValidationHandler } = require('../middleware/validation');
-const sphinxService = require('../services/sphinx.service');
-const sphinxHealthCheck = require('../services/sphinxHealthCheck.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { ERROR_CODES } = require('../utils/responseBuilder');
@@ -70,10 +68,6 @@ const validateWorksSearch = [
     .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 255 })
     .withMessage('subject must have between 2 and 255 characters'),
-  query('include_facets')
-    .optional({ values: 'falsy' })
-    .isIn(['1', '0', 'true', 'false'])
-    .withMessage('include_facets must be boolean-like (1/0/true/false)'),
   query('cited_by_min')
     .optional({ values: 'falsy' })
     .isInt({ min: 0 })
@@ -99,7 +93,7 @@ const validateWorksSearch = [
  *   get:
  *     summary: Search works using full-text search
  *     tags: [Search]
- *     description: Search academic works using Sphinx (with MariaDB fallback) across title, subtitle, abstract, authors, venue, and related metadata
+ *     description: Search academic works using MariaDB FULLTEXT against summary_publications across title, subtitle, abstract, authors, venue, and related metadata
  *     parameters:
  *       - name: q
  *         in: query
@@ -198,12 +192,6 @@ const validateWorksSearch = [
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
- *       - name: include_facets
- *         in: query
- *         description: When set, includes Sphinx-computed facets (requires Sphinx)
- *         schema:
- *           type: boolean
- *           default: false
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
@@ -480,9 +468,6 @@ const advancedSearch = async (req, res, next) => {
     const pagination = normalizePagination(req.query);
     const { limit, offset, page } = pagination;
 
-    const sphinxActive = String(process.env.SEARCH_ENGINE || 'SPHINX').toUpperCase() !== 'MARIADB';
-    const useSphinx = sphinxActive && !sphinxHealthCheck.rollbackActive;
-
     const toNonNegativeInt = (value) => {
       if (value === undefined || value === null || value === '') return undefined;
       const parsed = parseInt(value, 10);
@@ -508,14 +493,6 @@ const advancedSearch = async (req, res, next) => {
 
     const sortBy = req.query.sort_by ?? req.query.sortBy ?? null;
     const sortOrder = req.query.sort_order ?? req.query.sortOrder ?? null;
-    const sphinxOrderBy = (() => {
-      const dir = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'ASC' ? 'asc' : 'desc';
-      const key = (typeof sortBy === 'string' ? sortBy : '').toLowerCase();
-      if (['cited_by_count', 'citation_count', 'citations'].includes(key)) return `cited_by_count_${dir}`;
-      if (['publication_year', 'year'].includes(key)) return `publication_year_${dir}`;
-      if (key === 'relevance') return 'relevance';
-      return null;
-    })();
 
     Object.keys(filters).forEach((key) => {
       if (filters[key] === undefined || filters[key] === null || filters[key] === '') {
@@ -524,78 +501,42 @@ const advancedSearch = async (req, res, next) => {
     });
 
     const start = Date.now();
-    let engine = 'Sphinx';
-    let results = null;
-    if (useSphinx) {
-      try {
-        results = await sphinxService.searchWithFacets(query, filters, { limit, offset, orderBy: sphinxOrderBy });
-      } catch (sphinxError) {
-        logger.warn('Advanced search Sphinx path unavailable, falling back to MariaDB', {
-          error: sphinxError.message
-        });
-        results = null;
-        engine = 'MariaDB-fallback';
-      }
-    } else {
-      engine = 'MariaDB';
-    }
 
-    if (!results) {
-      const worksFilters = {
-        page,
-        limit,
-        offset,
-        search: query,
-        type: filters.work_type,
-        language: filters.language,
-        year_from: filters.year_from,
-        year_to: filters.year_to,
-        peer_reviewed: filters.peer_reviewed,
-        open_access: filters.open_access,
-        venue_name: filters.venue_name,
-        author: filters.author,
-        subject: filters.subject,
-        cited_by_min: filters.citation_count_min,
-        cited_by_max: filters.citation_count_max,
-        sort_by: sortBy,
-        sort_order: sortOrder
-      };
-      const fallback = await worksService.getWorks(worksFilters);
-      const controllerTime = Date.now() - start;
-      const data = {
-        results: fallback.data || [],
-        facets: {}
-      };
-      return res.success(data, {
-        pagination: fallback.pagination || createPagination(page, limit, data.results.length),
-        meta: {
-          query,
-          search_type: 'fulltext_faceted',
-          filters_applied: Object.keys(filters).length,
-          pagination_total_exact: fallback.meta?.pagination_total_exact ?? true,
-          performance: {
-            engine,
-            controller_time_ms: controllerTime
-          }
-        }
-      });
-    }
-
+    const worksFilters = {
+      page,
+      limit,
+      offset,
+      search: query,
+      type: filters.work_type,
+      language: filters.language,
+      year_from: filters.year_from,
+      year_to: filters.year_to,
+      peer_reviewed: filters.peer_reviewed,
+      open_access: filters.open_access,
+      venue_name: filters.venue_name,
+      author: filters.author,
+      subject: filters.subject,
+      cited_by_min: filters.citation_count_min,
+      cited_by_max: filters.citation_count_max,
+      sort_by: sortBy,
+      sort_order: sortOrder
+    };
+    const result = await worksService.getWorks(worksFilters);
     const controllerTime = Date.now() - start;
     const data = {
-      results: Array.isArray(results?.results) ? results.results : [],
-      facets: results?.facets || {}
+      results: result.data || [],
+      facets: {}
     };
 
     return res.success(data, {
-      pagination: createPagination(page, limit, results?.total || data.results.length),
+      pagination: result.pagination || createPagination(page, limit, data.results.length),
       meta: {
         query,
         search_type: 'fulltext_faceted',
         filters_applied: Object.keys(filters).length,
+        pagination_total_exact: result.meta?.pagination_total_exact ?? true,
         performance: {
-          engine,
-          query_time_ms: results?.query_time || null,
+          engine: 'MariaDB',
           controller_time_ms: controllerTime
         }
       }
@@ -666,20 +607,18 @@ router.get('/advanced', validateAdvancedSearch, enhancedValidationHandler, advan
  */
 router.get('/health', async (req, res, next) => {
   try {
-    const healthStatus = sphinxHealthCheck.getHealthStatus();
-    const sphinxStatus = await sphinxService.getStatus();
-
     return res.success({
-      search_engine: process.env.SEARCH_ENGINE || 'SPHINX',
-      sphinx: {
-        ...sphinxStatus,
-        health: healthStatus
+      search_engine: 'MariaDB',
+      indexes: {
+        works: 'ft_summary_pubs_content (title_search, abstract_search), ft_summary_pubs_metadata (authors_search, venue_search, subjects_search)',
+        venues: 'summary_venues LIKE-based search',
+        persons: 'persons LIKE/FT search'
       },
       endpoints: {
         basic_search: '/search/works',
         advanced_search: '/search/advanced',
-        sphinx_direct: '/metrics/sphinx/search',
-        sphinx_compare: '/metrics/sphinx/compare'
+        autocomplete: '/search/autocomplete',
+        popular_terms: '/search/popular'
       }
     });
   } catch (error) {
@@ -768,7 +707,7 @@ router.get('/autocomplete', async (req, res, next) => {
         type,
         limit: parsedLimit,
         performance: {
-          engine: 'Sphinx'
+          engine: 'MariaDB'
         }
       }
     });

@@ -1,5 +1,4 @@
 const { logger } = require('../middleware/errorHandler');
-const sphinxService = require('./sphinx.service');
 const redis = require('../config/redis');
 const { sequelize } = require('../models');
 
@@ -98,28 +97,6 @@ class AutocompleteService {
         const cappedLimit = Math.max(1, Math.min(parseInt(fetchLimit, 10) || 50, 500));
 
         try {
-            await sphinxService.ensureConnection();
-            const matchExpr = sphinxService.formatMatchQuery(query);
-            const sql = `SELECT id, WEIGHT() as weight
-                FROM publications_poc
-                WHERE MATCH(${matchExpr})
-                ORDER BY weight DESC
-                LIMIT ${cappedLimit}
-                OPTION max_matches=${cappedLimit}`;
-
-            return await new Promise((resolve, reject) => {
-                sphinxService.connection.query(sql, (error, results) => {
-                    if (error) {
-                        reject(error);
-                        return;
-                    }
-                    resolve((results || []).map(row => row.id).filter(Number.isFinite));
-                });
-            });
-        } catch (sphinxError) {
-            logger.warn('Autocomplete Sphinx path unavailable, falling back to MariaDB fulltext', {
-                error: sphinxError.message
-            });
             const rows = await sequelize.query(
                 `SELECT sp.publication_id AS id
                  FROM summary_publications sp
@@ -131,6 +108,11 @@ class AutocompleteService {
                 }
             );
             return rows.map(r => r.id).filter(Number.isFinite);
+        } catch (error) {
+            logger.warn('Autocomplete fulltext lookup failed; returning empty match set', {
+                error: error.message
+            });
+            return [];
         }
     }
 

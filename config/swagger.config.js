@@ -536,7 +536,7 @@ const options = {
             search_engine: {
               type: 'string',
               nullable: true,
-              example: 'sphinx',
+              example: 'MariaDB',
               description: 'Search engine used for the query (list items)'
             },
             identifiers: {
@@ -4099,7 +4099,7 @@ const options = {
     tags: [
       { name: 'Health', description: 'Liveness, readiness, and runtime metrics probes.' },
       { name: 'Security', description: 'Security headers, rate-limit stats, and IP management. Requires `x-access-key`.' },
-      { name: 'Search', description: 'Full-text search across works, publications, and persons. Sphinx-backed with MariaDB fallback, plus autocomplete and popular-terms helpers.' },
+      { name: 'Search', description: 'Full-text search across works, publications, and persons using MariaDB FULLTEXT indexes, plus autocomplete and popular-terms helpers.' },
       { name: 'Works', description: 'Canonical academic works (articles, books, chapters, theses, conferences). Listings surface the latest matching publication per work.' },
       { name: 'Publications', description: 'Per-publication view over `summary_publications`, including DOI resolution and sibling navigation.' },
       { name: 'Persons', description: 'Researcher profiles: preferred name, identifiers, affiliations, publication history, collaborators.' },
@@ -4112,7 +4112,7 @@ const options = {
       { name: 'Bibliography', description: 'Course bibliographies and their usage analysis.' },
       { name: 'Subjects', description: 'Subject taxonomy and subject-linked listings (works, courses).' },
       { name: 'Signatures', description: 'Name signatures and author-identity linkage.' },
-      { name: 'Metrics', description: 'Bibliometric analytics and Sphinx runtime metrics. Dashboard routes require `x-access-key`.' },
+      { name: 'Metrics', description: 'Bibliometric analytics and aggregate metrics. Dashboard routes require `x-access-key`.' },
       { name: 'Dashboard', description: 'Real-time dashboards for search, performance, trends, and alerts. Requires `x-access-key`.' }
     ]
   },

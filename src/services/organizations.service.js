@@ -2,7 +2,6 @@ const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
-const sphinxService = require('./sphinx.service');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatOrganizationListItem, formatOrganizationDetails } = require('../dto/organization.dto');
 const { authorsFromJson } = require('../dto/helpers');
@@ -212,15 +211,7 @@ class OrganizationsService {
       const countReplacements = {};
 
       if (search) {
-        const sphinxEnabled = String(process.env.SPHINX_ENABLED || 'true').toLowerCase() !== 'false';
         const term = (search || '').trim();
-        if (sphinxEnabled && term.length >= 2) {
-          try {
-            return await this.searchOrganizationsSphinx(term, { limit, offset, country_code, type });
-          } catch (e) {
-            logger.warn('Organizations Sphinx search failed in service; trying FULLTEXT', { error: e.message });
-          }
-        }
         try {
           return await this.searchOrganizationsFulltext(term, { limit, offset, country_code, type });
         } catch (e) {
@@ -342,82 +333,6 @@ class OrganizationsService {
     }
   }
 
-  
-  async searchOrganizationsSphinx(searchTerm, options = {}) {
-    const pagination = normalizePagination(options);
-    const { page, limit, offset } = pagination;
-    const { country_code, type } = options;
-    const cacheKey = `organizations:sphinx:${searchTerm}:${limit}:${offset}:${country_code || 'all'}:${type || 'all'}`;
-
-    try {
-      const cached = await cacheService.get(cacheKey);
-      if (cached) return cached;
-
-      const spx = await sphinxService.searchOrganizationIds(searchTerm, { limit, offset, country_code, type });
-      const ids = Array.isArray(spx?.ids) ? spx.ids : [];
-      const total = parseInt(spx?.total || 0, 10) || 0;
-
-      if (ids.length === 0) {
-        const empty = {
-          data: [],
-          pagination: createPagination(page, limit, total),
-          performance: {
-            engine: 'Sphinx',
-            query_type: 'search',
-            sphinx_query_ms: spx?.query_time || null,
-            hydrated: 0
-          },
-          meta: {
-            note: 'Sphinx returned no results; hydration skipped'
-          }
-        };
-        await cacheService.set(cacheKey, empty, 3600);
-        return empty;
-      }
-
-      const orderField = `FIELD(o.id, ${ids.map(() => '?').join(',')})`;
-      const hydrated = await sequelize.query(`
-        SELECT o.id, o.name, o.type, o.country_code, o.city, o.ror_id
-        FROM organizations o
-        WHERE o.id IN (${ids.map(() => '?').join(',')})
-        ORDER BY ${orderField}
-      `, { replacements: [...ids, ...ids], type: sequelize.QueryTypes.SELECT });
-
-      const formattedResults = (hydrated || []).map(org => formatOrganizationListItem({
-        ...org,
-        metrics: {
-          works_count: 0,
-          affiliated_authors_count: 0,
-          latest_publication_year: null,
-          first_publication_year: null
-        }
-      }));
-
-      const result = {
-        data: formattedResults,
-        pagination: createPagination(page, limit, total),
-        performance: {
-          engine: 'Sphinx+MariaDB',
-          query_type: 'search_hydrate',
-          sphinx_query_ms: spx?.query_time || null
-        }
-      };
-
-      await cacheService.set(cacheKey, result, 3600);
-      logger.info(`Organizations Sphinx search (IDs) cached: "${searchTerm}" - ${formattedResults.length} results`);
-      return result;
-
-    } catch (error) {
-      logger.error(`Sphinx organizations search failed for term "${searchTerm}":`, error);
-      try {
-        return await this.searchOrganizationsFulltext(searchTerm, options);
-      } catch (_) {
-        return await this.fallbackOrganizationsSearch(searchTerm, options);
-      }
-    }
-  }
-
-  
   async searchOrganizationsFulltext(searchTerm, options = {}) {
     const pagination = normalizePagination(options);
     const { page, limit, offset } = pagination;
@@ -544,7 +459,7 @@ class OrganizationsService {
         query_type: 'search_fallback'
       },
       meta: {
-        note: 'Using MariaDB fallback due to Sphinx error'
+        note: 'Using LIKE-based fallback (FULLTEXT search failed)'
       }
     };
   }

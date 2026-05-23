@@ -4,7 +4,7 @@ const request = createHttpClient(app);
 const { expectSuccessEnvelope, expectStandardError } = require('./helpers/expectations');
 
 describe('Search API', () => {
-  const sphinxIntegration = process.env.TEST_ENABLE_SPHINX === '1';
+  const fastIntegration = process.env.TEST_ENABLE_FAST_INTEGRATION === '1';
   describe('GET /search/works', () => {
     it('should return fulltext search results for works', async () => {
       const res = await request()
@@ -205,8 +205,8 @@ describe('Search API', () => {
       const endTime = Date.now();
       const responseTime = endTime - startTime;
 
-      const maxResponse = sphinxIntegration ? 5000 : 10000;
-      const maxQueryMs = sphinxIntegration ? 1000 : 6000;
+      const maxResponse = fastIntegration ? 5000 : 10000;
+      const maxQueryMs = fastIntegration ? 1000 : 6000;
 
       expect(responseTime).toBeLessThan(maxResponse);
       expect(res.body.meta.performance.controller_time_ms).toBeLessThan(maxQueryMs);
@@ -222,8 +222,8 @@ describe('Search API', () => {
       const endTime = Date.now();
       const responseTime = endTime - startTime;
 
-      const maxResponse = sphinxIntegration ? 10000 : 15000;
-      const maxQueryMs = sphinxIntegration ? 2000 : 8000;
+      const maxResponse = fastIntegration ? 10000 : 15000;
+      const maxQueryMs = fastIntegration ? 2000 : 8000;
 
       expect(responseTime).toBeLessThan(maxResponse);
       expect(res.body.meta.controller_time_ms).toBeLessThan(maxQueryMs);

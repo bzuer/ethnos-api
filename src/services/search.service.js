@@ -2,7 +2,6 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const personsService = require('./persons.service');
 const worksService = require('./works.service');
-const sphinxService = require('./sphinx.service');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 
 
@@ -16,9 +15,8 @@ class SearchService {
     const sortBy = filters.sort_by ?? filters.sortBy ?? null;
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
     const trimmedQuery = (query || '').trim();
-    const includeFacets = filters.include_facets === true;
 
-    const cacheKey = `search:works:v3:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}:${includeFacets}`;
+    const cacheKey = `search:works:v3:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -49,16 +47,6 @@ class SearchService {
 
       const worksResult = await worksService.getWorks(worksFilters);
 
-      let facets;
-      const sphinxEnabled = String(process.env.SPHINX_ENABLED || 'true').toLowerCase() !== 'false';
-      if (includeFacets && sphinxEnabled && trimmedQuery.length >= 2) {
-        try {
-          facets = await sphinxService.getFacets(trimmedQuery);
-        } catch (error) {
-          logger.warn('Failed to fetch Sphinx facets for works search', { error: error.message });
-        }
-      }
-
       const data = (worksResult.data || []).map(item => ({
         ...item,
         relevance: null
@@ -69,8 +57,7 @@ class SearchService {
         pagination: worksResult.pagination || createPagination(page, limit, data.length),
         meta: {
           query: trimmedQuery,
-          search_type: 'fulltext',
-          ...(facets ? { facets } : {})
+          search_type: 'fulltext'
         },
         performance: {
           ...((worksResult && worksResult.performance) || (worksResult && worksResult.meta && worksResult.meta.performance) || {}),
@@ -90,9 +77,9 @@ class SearchService {
   async searchPersons(query, filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { verified, engine } = filters;
+    const { verified } = filters;
     const trimmedQuery = (query || '').trim();
-    const cacheKey = `search:persons:${trimmedQuery}:${page}:${limit}:${offset}:${verified ?? 'all'}:${engine || 'auto'}`;
+    const cacheKey = `search:persons:${trimmedQuery}:${page}:${limit}:${offset}:${verified ?? 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -101,33 +88,12 @@ class SearchService {
         return cached;
       }
 
-      const sphinxEnabled = String(process.env.SPHINX_ENABLED || 'true').toLowerCase() !== 'false';
-      const wantsSphinx = (engine || '').toLowerCase() === 'sphinx';
-      const prefersSphinx = wantsSphinx || (sphinxEnabled && (engine || '').toLowerCase() !== 'mariadb');
-
-      let serviceResult = null;
-
-      if (prefersSphinx && trimmedQuery.length >= 2) {
-        try {
-          serviceResult = await personsService.searchPersonsSphinx(trimmedQuery, {
-            limit: parseInt(limit, 10),
-            offset: parseInt(offset, 10),
-            verified
-          });
-          logger.info(`Persons Sphinx search completed: "${trimmedQuery}" - ${serviceResult.data.length} results`);
-        } catch (error) {
-          logger.warn('Sphinx persons search failed, falling back to MariaDB', { error: error.message });
-        }
-      }
-
-      if (!serviceResult) {
-        serviceResult = await personsService.fallbackPersonsSearch(trimmedQuery, {
-          limit: parseInt(limit, 10),
-          offset: parseInt(offset, 10),
-          verified
-        });
-        logger.info(`Persons MariaDB search completed: "${trimmedQuery}" - ${serviceResult.data.length} results`);
-      }
+      const serviceResult = await personsService.searchPersons(trimmedQuery, {
+        limit: parseInt(limit, 10),
+        offset: parseInt(offset, 10),
+        verified
+      });
+      logger.info(`Persons search completed: "${trimmedQuery}" - ${serviceResult.data.length} results`);
 
       const data = (serviceResult.data || []).map(person => ({
         ...person,
@@ -165,7 +131,7 @@ class SearchService {
     const trimmedQuery = (query || '').trim();
 
     const cacheKey = `search:global:${trimmedQuery}:${limit}`;
-    
+
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) {
@@ -211,7 +177,7 @@ class SearchService {
 
       await cacheService.set(cacheKey, result, 300);
       logger.info(`Global search cached: "${trimmedQuery}"`);
-      
+
       return result;
     } catch (error) {
       logger.error('Error in global search:', error);

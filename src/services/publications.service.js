@@ -1,6 +1,5 @@
 const { sequelize } = require('../models');
 const cacheService = require('./cache.service');
-const sphinxService = require('./sphinx.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const {
@@ -71,24 +70,6 @@ const resolvePublicationsOrderClause = (sortBy, sortOrder) => {
     case 'id':
     case 'publication_id':
       return `sp.publication_id ${dir}`;
-    default:
-      return null;
-  }
-};
-
-const resolveSphinxPublicationOrderBy = (sortBy, sortOrder) => {
-  const dir = typeof sortOrder === 'string' && sortOrder.toUpperCase() === 'ASC' ? 'asc' : 'desc';
-  const key = (typeof sortBy === 'string' ? sortBy : '').toLowerCase();
-  switch (key) {
-    case 'cited_by_count':
-    case 'citation_count':
-    case 'citations':
-      return `cited_by_count_${dir}`;
-    case 'publication_year':
-    case 'year':
-      return `publication_year_${dir}`;
-    case 'relevance':
-      return 'relevance';
     default:
       return null;
   }
@@ -344,174 +325,105 @@ class PublicationsService {
     const venueFilter = filters.venue_name || filters.venue || null;
     const authorFilter = filters.author || null;
     const subjectFilter = filters.subject || null;
-    const useSphinx = Boolean(searchTerm || venueFilter || authorFilter || subjectFilter);
-    let sphinxIds = null;
-    let sphinxTotal = null;
-    let sphinxQueryMs = null;
-    let sphinxFailed = false;
-    let searchEngine = 'MariaDB';
 
     const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
     const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
     const sortBy = filters.sort_by ?? filters.sortBy ?? null;
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
-    const sphinxOrderBy = resolveSphinxPublicationOrderBy(sortBy, sortOrder);
     const mariaOrderClause = resolvePublicationsOrderClause(sortBy, sortOrder);
-
-    if (useSphinx) {
-      try {
-        const spx = await sphinxService.searchPublicationIds(searchTerm, {
-          work_type: filters.type || filters.work_type,
-          language: filters.language,
-          year_from: filters.year_from,
-          year_to: filters.year_to,
-          peer_reviewed: filters.peer_reviewed,
-          open_access: filters.open_access,
-          venue_name: venueFilter,
-          author: authorFilter,
-          subject: subjectFilter,
-          venue_id: filters.venue_id,
-          publisher_id: filters.publisher_id,
-          work_id: filters.work_id,
-          has_files: filters.has_files,
-          citation_count_min: citedByMin ?? filters.citation_count_min,
-          citation_count_max: citedByMax ?? filters.citation_count_max
-        }, { limit, offset, orderBy: sphinxOrderBy });
-        sphinxIds = Array.isArray(spx?.publication_ids) ? spx.publication_ids : (Array.isArray(spx?.ids) ? spx.ids : []);
-        sphinxTotal = parseInt(spx?.total ?? sphinxIds.length, 10) || 0;
-        sphinxQueryMs = spx?.query_time ?? null;
-        searchEngine = 'Sphinx+MariaDB';
-      } catch (sphinxError) {
-        sphinxFailed = true;
-        searchEngine = 'MariaDB-fallback';
-        logger.warn('Sphinx publication search unavailable, falling back to MariaDB', {
-          error: sphinxError.message
-        });
-      }
-    }
-
-    if (sphinxIds && sphinxIds.length === 0) {
-      const emptyResult = {
-        data: [],
-        pagination: createPagination(page, limit, sphinxTotal || 0),
-        meta: {
-          engine: searchEngine,
-          sphinx_query_ms: sphinxQueryMs,
-          elapsed_ms: Date.now() - t0
-        }
-      };
-      try {
-        await cacheService.set(cacheKey, emptyResult, 1800);
-      } catch (_) {}
-      return emptyResult;
-    }
 
     const whereConditions = [];
     const queryParams = [];
 
-    if (sphinxIds && sphinxIds.length > 0) {
-      const placeholders = sphinxIds.map(() => '?').join(',');
-      whereConditions.push(`sp.publication_id IN (${placeholders})`);
-      queryParams.push(...sphinxIds);
-    } else {
-      const workType = filters.type || filters.work_type;
-      if (workType) {
-        whereConditions.push('sp.work_type = ?');
-        queryParams.push(workType);
-      }
-      if (filters.language) {
-        whereConditions.push('sp.language = ?');
-        queryParams.push(filters.language);
-      }
-      if (filters.year_from) {
-        whereConditions.push('sp.publication_year >= ?');
-        queryParams.push(parseInt(filters.year_from, 10));
-      }
-      if (filters.year_to) {
-        whereConditions.push('sp.publication_year <= ?');
-        queryParams.push(parseInt(filters.year_to, 10));
-      }
+    const workType = filters.type || filters.work_type;
+    if (workType) {
+      whereConditions.push('sp.work_type = ?');
+      queryParams.push(workType);
+    }
+    if (filters.language) {
+      whereConditions.push('sp.language = ?');
+      queryParams.push(filters.language);
+    }
+    if (filters.year_from) {
+      whereConditions.push('sp.publication_year >= ?');
+      queryParams.push(parseInt(filters.year_from, 10));
+    }
+    if (filters.year_to) {
+      whereConditions.push('sp.publication_year <= ?');
+      queryParams.push(parseInt(filters.year_to, 10));
+    }
 
-      const oaFlag = toBoolFlag(filters.open_access);
-      if (oaFlag !== null) {
-        whereConditions.push('sp.open_access = ?');
-        queryParams.push(oaFlag);
-      }
+    const oaFlag = toBoolFlag(filters.open_access);
+    if (oaFlag !== null) {
+      whereConditions.push('sp.open_access = ?');
+      queryParams.push(oaFlag);
+    }
 
-      const peerFlag = toBoolFlag(filters.peer_reviewed);
-      if (peerFlag !== null) {
-        whereConditions.push('sp.peer_reviewed = ?');
-        queryParams.push(peerFlag);
-      }
+    const peerFlag = toBoolFlag(filters.peer_reviewed);
+    if (peerFlag !== null) {
+      whereConditions.push('sp.peer_reviewed = ?');
+      queryParams.push(peerFlag);
+    }
 
-      const filesFlag = toBoolFlag(filters.has_files);
-      if (filesFlag !== null) {
-        whereConditions.push('sp.has_files = ?');
-        queryParams.push(filesFlag);
-      }
+    const filesFlag = toBoolFlag(filters.has_files);
+    if (filesFlag !== null) {
+      whereConditions.push('sp.has_files = ?');
+      queryParams.push(filesFlag);
+    }
 
-      if (filters.venue_id) {
-        whereConditions.push('sp.venue_id = ?');
-        queryParams.push(parseInt(filters.venue_id, 10));
+    if (filters.venue_id) {
+      whereConditions.push('sp.venue_id = ?');
+      queryParams.push(parseInt(filters.venue_id, 10));
+    }
+    if (filters.publisher_id) {
+      whereConditions.push('sp.publisher_id = ?');
+      queryParams.push(parseInt(filters.publisher_id, 10));
+    }
+    if (filters.work_id) {
+      whereConditions.push('sp.work_id = ?');
+      queryParams.push(parseInt(filters.work_id, 10));
+    }
+    if (filters.doi) {
+      const normalized = normalizeDoiValue(filters.doi);
+      if (normalized) {
+        const candidates = buildDoiCandidates([normalized]);
+        const placeholders = candidates.map(() => '?').join(',');
+        whereConditions.push(`sp.doi IN (${placeholders})`);
+        queryParams.push(...candidates);
       }
-      if (filters.publisher_id) {
-        whereConditions.push('sp.publisher_id = ?');
-        queryParams.push(parseInt(filters.publisher_id, 10));
-      }
-      if (filters.work_id) {
-        whereConditions.push('sp.work_id = ?');
-        queryParams.push(parseInt(filters.work_id, 10));
-      }
-      if (filters.doi) {
-        const normalized = normalizeDoiValue(filters.doi);
-        if (normalized) {
-          const candidates = buildDoiCandidates([normalized]);
-          const placeholders = candidates.map(() => '?').join(',');
-          whereConditions.push(`sp.doi IN (${placeholders})`);
-          queryParams.push(...candidates);
-        }
-      }
+    }
 
-      if (citedByMin !== null) {
-        whereConditions.push('sp.work_citation_count >= ?');
-        queryParams.push(citedByMin);
-      }
-      if (citedByMax !== null) {
-        whereConditions.push('sp.work_citation_count <= ?');
-        queryParams.push(citedByMax);
-      }
+    if (citedByMin !== null) {
+      whereConditions.push('sp.work_citation_count >= ?');
+      queryParams.push(citedByMin);
+    }
+    if (citedByMax !== null) {
+      whereConditions.push('sp.work_citation_count <= ?');
+      queryParams.push(citedByMax);
+    }
 
-      if (sphinxFailed) {
-        if (searchTerm) {
-          whereConditions.push('(MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE))');
-          queryParams.push(searchTerm);
-        }
-        if (venueFilter) {
-          whereConditions.push('sp.venue_search LIKE ?');
-          queryParams.push(`%${venueFilter}%`);
-        }
-        if (authorFilter) {
-          whereConditions.push('sp.authors_search LIKE ?');
-          queryParams.push(`%${authorFilter}%`);
-        }
-        if (subjectFilter) {
-          whereConditions.push('sp.subjects_search LIKE ?');
-          queryParams.push(`%${subjectFilter}%`);
-        }
-      } else {
-        if (filters.venue_name || filters.venue) {
-          whereConditions.push('sp.venue_search LIKE ?');
-          queryParams.push(`%${filters.venue_name || filters.venue}%`);
-        }
-        if (filters.author) {
-          whereConditions.push('sp.authors_search LIKE ?');
-          queryParams.push(`%${filters.author}%`);
-        }
-        if (filters.subject) {
-          whereConditions.push('sp.subjects_search LIKE ?');
-          queryParams.push(`%${filters.subject}%`);
-        }
-      }
+    if (searchTerm) {
+      whereConditions.push('MATCH(sp.title_search, sp.abstract_search) AGAINST (? IN BOOLEAN MODE)');
+      queryParams.push(searchTerm);
+    }
+
+    const metadataTokens = (input) => {
+      if (typeof input !== 'string') return [];
+      return input
+        .replace(/["\\]/g, '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(token => `+${token}`);
+    };
+
+    const metadataBooleanParts = [];
+    if (venueFilter) metadataBooleanParts.push(...metadataTokens(venueFilter));
+    if (authorFilter) metadataBooleanParts.push(...metadataTokens(authorFilter));
+    if (subjectFilter) metadataBooleanParts.push(...metadataTokens(subjectFilter));
+
+    if (metadataBooleanParts.length > 0) {
+      whereConditions.push('MATCH(sp.authors_search, sp.venue_search, sp.subjects_search) AGAINST (? IN BOOLEAN MODE)');
+      queryParams.push(metadataBooleanParts.join(' '));
     }
 
     const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
@@ -519,9 +431,7 @@ class PublicationsService {
     const COUNT_BUDGET_MS = 2000;
     let totalItems;
     let totalIsExact = true;
-    if (sphinxIds && sphinxTotal !== null) {
-      totalItems = sphinxTotal;
-    } else if (whereConditions.length === 0) {
+    if (whereConditions.length === 0) {
       totalItems = 6567060;
       totalIsExact = false;
     } else {
@@ -541,13 +451,10 @@ class PublicationsService {
       }
     }
 
-    const orderClause = sphinxIds && sphinxIds.length > 0
-      ? `ORDER BY FIELD(sp.publication_id, ${sphinxIds.map(() => '?').join(',')})`
-      : `ORDER BY ${mariaOrderClause || 'sp.publication_id DESC'}`;
-
-    const orderParams = sphinxIds && sphinxIds.length > 0 ? [...sphinxIds] : [];
-    const limitClause = sphinxIds ? '' : 'LIMIT ? OFFSET ?';
-    const limitParams = sphinxIds ? [] : [limit, offset];
+    const orderClause = `ORDER BY ${mariaOrderClause || 'sp.publication_id DESC'}`;
+    const limitClause = 'LIMIT ? OFFSET ?';
+    const limitParams = [limit, offset];
+    const searchEngine = 'MariaDB';
 
     const rows = await sequelize.query(`
       SELECT
@@ -603,7 +510,7 @@ class PublicationsService {
       ${orderClause}
       ${limitClause}
     `, {
-      replacements: [...queryParams, ...orderParams, ...limitParams],
+      replacements: [...queryParams, ...limitParams],
       type: sequelize.QueryTypes.SELECT
     });
 
@@ -615,7 +522,6 @@ class PublicationsService {
       meta: {
         engine: searchEngine,
         pagination_total_exact: totalIsExact,
-        sphinx_query_ms: sphinxQueryMs,
         elapsed_ms: Date.now() - t0
       }
     };

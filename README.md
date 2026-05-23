@@ -6,7 +6,7 @@ Public RESTful API for academic bibliographic research with high-performance sea
 
 ## System Status
 
-Production-ready system with 78 documented endpoints (per OpenAPI), Sphinx search integration with MariaDB fallback, Redis caching, and standardized response envelopes.
+Production-ready system with 79 documented endpoints (per OpenAPI), MariaDB FULLTEXT search against `summary_publications` (`ft_summary_pubs_content`, `ft_summary_pubs_metadata`), Redis caching, and standardized response envelopes.
 
 ## Database Schema
 
@@ -17,22 +17,13 @@ Source of truth: `database/schema.sql`.
 - Node.js >= 18.0.0
 - MariaDB >= 10.5
 - Redis >= 6.0
-- Sphinx 2.2.x (tested with 2.2.11 from `sphinxsearch`)
 
 ### System packages (Ubuntu/Debian)
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y mariadb-server redis-server sphinxsearch libmariadb3
+sudo apt-get install -y mariadb-server redis-server libmariadb3
 sudo systemctl enable --now mariadb redis-server
-```
-
-If you use the Sphinx tarball binaries, ensure the MariaDB/MySQL runtime library is available:
-
-```bash
-sudo ln -sf /usr/lib/x86_64-linux-gnu/libmysqlclient.so.24 /usr/lib/x86_64-linux-gnu/libmysqlclient.so
-sudo ln -sf /usr/lib/x86_64-linux-gnu/libmariadb.so.3 /usr/lib/x86_64-linux-gnu/libmariadb.so
-sudo ldconfig
 ```
 
 ## Installation
@@ -65,21 +56,7 @@ sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY 
 sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost'; FLUSH PRIVILEGES;"
 ```
 
-5. Prepare Sphinx runtime folders:
-
-```bash
-sudo install -d -m 750 -o "$(whoami)" -g "$(whoami)" /var/lib/ethnos-api/sphinx /var/lib/ethnos-api/sphinx/binlog
-sudo install -d -m 750 -o "$(whoami)" -g "$(whoami)" /var/log/ethnos-api /var/run/ethnos-api
-```
-
-6. Generate Sphinx config and build indexes:
-
-```bash
-scripts/manage.sh index
-scripts/manage.sh sphinx start
-```
-
-7. Start the API:
+5. Start the API:
 
 ```bash
 ./server.sh start
@@ -102,13 +79,10 @@ scripts/manage.sh deploy
 ```
 
 Deploy sequence:
-- Stop API and Sphinx
+- Stop API
 - Clear caches
 - Install dependencies (including dev)
 - Generate Swagger artifacts
-- Rebuild Sphinx indexes
-- Start Sphinx
-- Repair broken indexes automatically if detected
 - Run tests
 - Restart API
 
@@ -139,7 +113,6 @@ Deploy sequence:
 - Use `scripts/manage.sh deploy` as the only deploy pipeline.
 - Ensure logs and caches are cleared on deploy/restart as defined in `scripts/manage.sh`.
 - Do not commit generated artifacts, logs, backups, or dumps.
-- Keep Sphinx runtime data in `/var/lib/ethnos-api/sphinx` only.
 
 ## Response Format
 
@@ -172,11 +145,14 @@ Deploy sequence:
   server.sh
 ```
 
-## Sphinx Configuration
+## Search Engine
 
-- Template: `config/sphinx-unified.conf`
-- Rendered at runtime: `/var/run/ethnos-api/sphinx.conf`
-- Rendered from `/etc/node-backend.env` by `scripts/manage.sh`
+All full-text search runs against MariaDB FULLTEXT indexes:
+- `ft_summary_pubs_content` over `summary_publications.title_search` + `abstract_search` for the free-text `q`.
+- `ft_summary_pubs_metadata` over `summary_publications.authors_search` + `venue_search` + `subjects_search` for `author` / `venue` / `subject` filters (AND-scoped via `+token` BOOLEAN MODE).
+- `persons` / `signatures` tables for person searches.
+
+There is no Sphinx daemon, RT index, or external indexer process. Listings backed by `summary_publications` always report `meta.engine = "MariaDB"`.
 
 ## Testing
 
@@ -191,7 +167,6 @@ npm run test:coverage
 ```bash
 curl -s http://localhost:1211/health/liveness
 curl -s http://localhost:1211/docs
-scripts/manage.sh sphinx status
 ```
 
 ## License

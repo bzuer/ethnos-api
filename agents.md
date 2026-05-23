@@ -1,54 +1,24 @@
-# Search Filter Fixes — Completed
+# Search Architecture — Historical Notes
 
-## Problems & Resolution
+This file used to document Sphinx-based filter fixes. Sphinx has been removed from
+the project: all full-text search now runs entirely against MariaDB FULLTEXT indexes
+on `summary_publications` (`ft_summary_pubs_content`, `ft_summary_pubs_metadata`)
+and on `persons`/`signatures` tables. There is no longer a Sphinx daemon, RT index,
+or `publications_poc` / `publications_rt` / `persons_poc` / `venues_poc` runtime.
 
-### P1 — `author` filter missing on `/search/works` and `/search/advanced` ✓
-- **Root cause**: `author` param not declared in route, not passed through controller/service/Sphinx
-- **Fix**: Added `author` query param validation, Swagger docs, controller extraction, service passthrough, and Sphinx `@author_string` MATCH in both `searchWorkIds` and `searchWorks` methods
-- **Files**: `routes/search.js`, `controllers/search.controller.js`, `services/search.service.js`, `services/sphinx.service.js`, `services/works.service.js`
+## Search filters surfaced on the works/publications path
 
-### P2 — `subject` filter missing ✓
-- **Root cause**: Same as P1 for `subjects_string`
-- **Fix**: Added `subject` query param → `@subjects_string` MATCH clause in Sphinx
-- **Files**: Same as P1
+- `q` — free-text search over `title_search` + `abstract_search` (BOOLEAN MODE).
+- `author`, `venue`, `subject` — AND-scoped tokens against the `authors_search`,
+  `venue_search`, `subjects_search` fields via `ft_summary_pubs_metadata`. Every
+  token of every filter is required (`+token1 +token2 …`) so multi-word values
+  don't bloat into the OR-mode false positives that used to plague the Sphinx
+  path on the operator side.
+- Filter-only listings (no `q` / `author` / `venue` / `subject`) bypass FULLTEXT
+  and rely on B-tree indexes on `summary_publications`.
 
-### P3 — `/search/advanced` filters not applied effectively ✓
-- **Root cause**: `searchWithFacets` ran `searchWorks` and `getFacets` in parallel via `Promise.all` on a shared Sphinx connection. `SHOW META` in `searchWorks` was returning metadata from concurrent `getFacets` queries, giving wrong totals.
-- **Fix**: Changed to sequential execution — `searchWorks` first, then `getFacets`. Also added `author`, `subject`, and `type→work_type` alias to the advanced handler.
-- **Files**: `services/sphinx.service.js` (`searchWithFacets`), `routes/search.js` (advanced handler)
+## Engine surface in responses
 
-### P4 — `scope` param inert — FRONTEND ONLY
-- Backend endpoints exist and work (`/search/persons`, `/search/global`, `/venues/search`)
-
-### P5 — `year` single field vs range — FRONTEND ONLY
-- Backend already supports `year_from` + `year_to`
-
-### P6 — `peer_reviewed`/`open_access` not exposed — FRONTEND ONLY
-- Backend already supports these filters
-
-### P7 — Duplicate remapping — FRONTEND ONLY
-- Backend accepts both `type` and `work_type`
-
-### P8 — `include_facets` on `/search/works` never returns facets ✓
-- **Root cause**: Facet fetch was gated on `worksResult.performance.engine` containing "SPHINX" — failed when MariaDB fallback was used
-- **Fix**: Removed engine check; facets are attempted whenever `include_facets=true`, Sphinx is enabled, and query >= 2 chars
-- **Files**: `services/search.service.js`
-
-## Files Modified
-- `src/routes/search.js` — validation, swagger docs, advanced handler (author, subject, type alias)
-- `src/controllers/search.controller.js` — pass author/subject filters
-- `src/services/search.service.js` — cache key with author/subject, filter passthrough, relaxed facets condition
-- `src/services/sphinx.service.js` — `@author_string`/`@subjects_string` MATCH in searchWorkIds + searchWorks; sequential execution in searchWithFacets
-- `src/services/works.service.js` — pass author/subject to Sphinx searchWorkIds; MariaDB fallback author/subject filtering
-- `tests/search.test.js` — new tests for author, subject, facets, advanced filters
-- `docs/swagger.json`, `docs/swagger.yaml` — regenerated
-
-## Verified Results (port 1210)
-- `/search/works?q=sociology` → 480508 results
-- `/search/works?q=sociology&author=geertz` → 66 results ✓
-- `/search/works?q=learning&subject=computer+science` → 13400 results ✓
-- `/search/works?q=sociology&include_facets=true` → facets with years, work_types, languages, venues, authors ✓
-- `/search/advanced?q=sociology&author=geertz` → 66 results ✓
-- `/search/advanced?q=sociology&work_type=BOOK` → 8744 results ✓
-- `/search/advanced?q=sociology&type=BOOK` → 8744 results (alias) ✓
-- `/search/advanced?q=sociology&subject=education` → 72402 results ✓
+- `meta.engine` is always `MariaDB` on listings backed by `summary_publications`.
+- The legacy `meta.engine = "Sphinx+MariaDB"` / `"MariaDB-fallback"` distinction
+  has been removed; the field is kept for callers that already key off it.

@@ -3,7 +3,6 @@ const router = express.Router();
 const { requireInternalAccessKey } = require('../middleware/accessKey');
 const { query } = require('express-validator');
 const metricsController = require('../controllers/metrics.controller');
-const { ERROR_CODES } = require('../utils/responseBuilder');
 
 const validateLimit = [
   query('page')
@@ -290,105 +289,5 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  *         $ref: '#/components/responses/InternalError'
  */
 router.get('/collaborations', validateCollaborations, metricsController.getCollaborations);
-
-/**
- * @swagger
- * /metrics/sphinx:
- *   get:
- *     summary: Get Sphinx search engine performance metrics
- *     tags: [Metrics]
- *     description: Comprehensive performance and health metrics for the Sphinx search engine
- *     security:
- *       - XAccessKey: []
- *     responses:
- *       200:
- *         description: Sphinx performance metrics
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
- *                   properties:
- *                     queries_per_second:
- *                       type: number
- *                     avg_response_time:
- *                       type: number
- *                     error_rate:
- *                       type: number
- *                     index_size_mb:
- *                       type: number
- *                     uptime_seconds:
- *                       type: integer
- *       500:
- *         $ref: '#/components/responses/InternalError'
- */
-const sphinxMonitoring = require('../services/sphinxMonitoring.service');
-
-router.get('/sphinx', async (req, res) => {
-    try {
-        await sphinxMonitoring.start();
-        const metrics = sphinxMonitoring.getMetrics();
-        
-        return res.success(metrics);
-        
-    } catch (error) {
-        return res.fail('Failed to get Sphinx metrics', {
-            statusCode: 500,
-            code: ERROR_CODES.INTERNAL
-        });
-    }
-});
-
-/**
- * @swagger
- * /metrics/sphinx/detailed:
- *   get:
- *     summary: Get detailed Sphinx performance metrics with query history
- *     tags: [Metrics]
- *     description: Detailed Sphinx metrics including recent query performance and distribution analysis
- *     security:
- *       - XAccessKey: []
- *     responses:
- *       200:
- *         description: Detailed Sphinx metrics
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
- *                   properties:
- *                     metrics:
- *                       type: object
- *                     recent_queries:
- *                       type: array
- *                       items:
- *                         type: object
- *                     performance_distribution:
- *                       type: object
- */
-router.get('/sphinx/detailed', async (req, res) => {
-    try {
-        await sphinxMonitoring.start();
-        const detailedMetrics = sphinxMonitoring.getDetailedMetrics();
-        
-        return res.success(detailedMetrics);
-        
-    } catch (error) {
-        return res.fail('Failed to get detailed Sphinx metrics', {
-            statusCode: 500,
-            code: ERROR_CODES.INTERNAL
-        });
-    }
-});
 
 module.exports = router;

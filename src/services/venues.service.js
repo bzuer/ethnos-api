@@ -5,7 +5,6 @@ const { createPagination, normalizePagination } = require('../utils/pagination')
 const { formatVenueListItem, formatVenueDetails } = require('../dto/venue.dto');
 const { withTimeout } = require('../utils/db');
 const { parseJsonColumn } = require('../dto/helpers');
-const sphinxService = require('./sphinx.service');
 
 const toInt = (value, fallback = 0) => {
   if (value === null || value === undefined) {
@@ -401,47 +400,10 @@ class VenuesService {
       return cached;
     }
 
-    let result;
-    try {
-      result = await this._searchVenuesSphinx(query, { page: currentPage, limit: currentLimit, offset: currentOffset, type });
-    } catch (sphinxError) {
-      logger.warn(`Sphinx venues search failed for "${query}", falling back to MariaDB`, { error: sphinxError.message });
-      result = await this._searchVenuesMariaDB(query, { page: currentPage, limit: currentLimit, offset: currentOffset, type });
-    }
+    const result = await this._searchVenuesMariaDB(query, { page: currentPage, limit: currentLimit, offset: currentOffset, type });
 
     await cacheService.set(cacheKey, result, 3600);
     return result;
-  }
-
-  async _searchVenuesSphinx(query, { page, limit, offset, type }) {
-    const spx = await sphinxService.searchVenueIds(query, { limit, offset, type });
-    const ids = Array.isArray(spx?.ids) ? spx.ids : [];
-    const total = parseInt(spx?.total || 0, 10) || 0;
-
-    if (ids.length === 0) {
-      return {
-        data: [],
-        pagination: createPagination(page, limit, total),
-        meta: { source: 'sphinx', query, sphinx_query_ms: spx?.query_time || null }
-      };
-    }
-
-    const venueMap = await this._loadVenuesByIds(ids);
-    const venues = ids
-      .map((id) => venueMap.get(id))
-      .filter(Boolean)
-      .map((venue) => formatVenueListItem(venue));
-
-    const meta = { source: 'sphinx', query, sphinx_query_ms: spx?.query_time || null };
-    if (type) meta.filters = { type };
-
-    logger.info(`Sphinx venues search "${query}": ${venues.length} results in ${spx?.query_time}ms`);
-
-    return {
-      data: venues,
-      pagination: createPagination(page, limit, total),
-      meta
-    };
   }
 
   async _searchVenuesMariaDB(query, { page, limit, offset, type }) {
@@ -475,7 +437,7 @@ class VenuesService {
       .map((venue) => formatVenueListItem(venue));
 
     const total = toInt(countRows?.[0]?.total, 0);
-    const meta = { source: 'mariadb_fallback', query };
+    const meta = { source: 'summary_venues', query };
     if (type) meta.filters = { type };
 
     return {

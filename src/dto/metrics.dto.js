@@ -182,47 +182,6 @@ const calculateTrendDirection = (values) => {
 };
 
 
-const formatSphinxMetrics = (metrics) => {
-  if (!metrics) return null;
-
-  return {
-    performance: {
-      queries_per_second: parseFloat(metrics.queries_per_second) || 0,
-      avg_response_time: parseFloat(metrics.avg_response_time) || 0,
-      error_rate: parseFloat(metrics.error_rate) || 0,
-      p95_response_time: parseFloat(metrics.p95_response_time) || 0
-    },
-    system: {
-      index_size_mb: parseFloat(metrics.index_size_mb) || 0,
-      uptime_seconds: parseInt(metrics.uptime_seconds) || 0,
-      connections: parseInt(metrics.connections) || 0,
-      memory_usage_mb: parseFloat(metrics.memory_usage_mb) || 0
-    },
-    activity: {
-      queries_last_hour: parseInt(metrics.queries_last_hour) || 0,
-      queries_last_minute: parseInt(metrics.queries_last_minute) || 0,
-      total_queries: parseInt(metrics.total_queries) || 0
-    },
-    health_score: calculateHealthScore(metrics)
-  };
-};
-
-
-const calculateHealthScore = (metrics) => {
-  let score = 100;
-  
-  if (metrics.error_rate > 0.1) score -= 30;
-  else if (metrics.error_rate > 0.05) score -= 15;
-  
-  if (metrics.avg_response_time > 100) score -= 20;
-  else if (metrics.avg_response_time > 50) score -= 10;
-  
-  if (metrics.queries_per_second > 1000) score -= 10;
-  
-  return Math.max(0, Math.min(100, score));
-};
-
-
 const formatTimeSeriesData = (data, valueField, timeField = 'timestamp') => {
   return data.map(item => ({
     timestamp: new Date(item[timeField]).toISOString(),
@@ -247,9 +206,7 @@ module.exports = {
   formatPersonProduction,
   formatCollaboration,
   formatDashboardSummary,
-  formatSphinxMetrics,
   formatTimeSeriesData,
   formatDistributionData,
-  calculateTrendDirection,
-  calculateHealthScore
+  calculateTrendDirection
 };

@@ -240,7 +240,7 @@ describe('Venues API', () => {
       }
     });
 
-    it('reconciliation logic filters invalid IDs from Sphinx results', async () => {
+    it('reconciliation logic filters invalid venue IDs returned by list queries', async () => {
       const list = await request()
         .get('/venues?limit=5')
         .expect(200);

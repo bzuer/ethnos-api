@@ -11,7 +11,6 @@ const { performanceMonitoring, errorMonitoring } = require('./middleware/monitor
 const { testConnection } = require('./config/database');
 const { testRedisConnection } = require('./config/redis');
 
-const realTimeIndexingService = require('./services/realTimeIndexing.service');
 const homepageStatsService = require('./services/homepageStats.service');
 
 const app = express();
@@ -200,14 +199,14 @@ app.get('/', (req, res) => {
     },
     system_status: {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
-      search_engine: 'Sphinx integrated (18-26ms search performance)',
+      search_engine: 'MariaDB FULLTEXT against summary_publications / summary_venues / persons',
       cache: 'Redis with 30min TTL',
       rate_limiting: 'Disabled for authenticated requests',
       authentication: 'X-Access-Key required for every endpoint except /health/liveness and /docs*'
     },
     main_categories: {
       search_discovery: {
-        description: 'Advanced search with optimized Sphinx engine (institutions search disabled for performance)',
+        description: 'Search across works, persons, and publications backed by MariaDB FULLTEXT (institutions search disabled for performance)',
         endpoints: ['/search/works', '/search/persons', '/search/advanced', '/search/autocomplete', '/search/global']
       },
       academic_works: {
@@ -236,7 +235,7 @@ app.get('/', (req, res) => {
       },
       metrics_analytics: {
         description: 'Research metrics and institutional analytics',
-        endpoints: ['/metrics/venues', '/metrics/sphinx', '/metrics/sphinx/detailed', '/metrics/sphinx/search', '/dashboard/overview']
+        endpoints: ['/metrics/venues', '/metrics/institutions', '/metrics/persons', '/metrics/collaborations', '/dashboard/overview']
       }
     },
     data_statistics: {
@@ -249,7 +248,7 @@ app.get('/', (req, res) => {
       collected_at: homepageStats?.collected_at || null
     },
     technical_features: {
-      search_performance: 'Sphinx: 18-26ms queries, total endpoint response: 20-2000ms (institutions search disabled for optimal performance)',
+      search_performance: 'MariaDB FULLTEXT indexes on summary_publications / persons drive search; institutions search disabled for optimal performance',
       authentication: 'X-Access-Key required on every endpoint (header: x-access-key | x-internal-key | x-api-key). Public paths: /health/liveness, /docs, /docs.json, /docs.yaml, /openapi.yaml, /openapi.yml.',
       rate_limits: 'No limit for authenticated requests',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
@@ -282,7 +281,6 @@ const metricsRoutes = require('./routes/metrics');
 const citationsRoutes = require('./routes/citations');
 const collaborationsRoutes = require('./routes/collaborations');
 const signaturesRoutes = require('./routes/signatures');
-const sphinxRoutes = require('./routes/sphinx');
 const dashboardRoutes = require('./routes/dashboard');
 const subjectsRoutes = require('./routes/subjects');
 
@@ -358,7 +356,6 @@ app.use('/persons', relationalLimiter, personsRoutes);
 app.use('/institutions', relationalLimiter, organizationsRoutes);
 app.use('/venues', relationalLimiter, venuesRoutes);
 app.use('/metrics', metricsLimiter, metricsRoutes);
-app.use('/metrics', metricsLimiter, sphinxRoutes);
 app.use('/dashboard', metricsLimiter, dashboardRoutes);
 app.use('/', citationsRoutes);
 app.use('/', collaborationsRoutes);
@@ -453,14 +450,11 @@ const startServer = async () => {
       logger.warn('Redis connection failed - caching disabled');
     }
 
-    const sphinxHealthCheck = require('./services/sphinxHealthCheck.service');
-    await sphinxHealthCheck.startMonitoring();
-
     server = app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
       logger.info(`API Bibliografica ${process.env.NODE_ENV || 'development'} mode`);
       logger.info(`Health check: http://localhost:${PORT}/health`);
-      logger.info(`Search engine: ${process.env.SEARCH_ENGINE || 'SPHINX'} with health monitoring`);
+      logger.info('Search engine: MariaDB FULLTEXT against summary_publications / summary_venues / persons');
     });
 
     server.on('error', (error) => {
@@ -509,10 +503,6 @@ const gracefulShutdown = async (signal) => {
     logger.info('HTTP server closed');
 
     try {
-      const sphinxHealthCheck = require('./services/sphinxHealthCheck.service');
-      await sphinxHealthCheck.stopMonitoring();
-      logger.info('Sphinx monitoring stopped');
-
       const { sequelize, closePool } = require('./config/database');
       await sequelize.close();
       await closePool();

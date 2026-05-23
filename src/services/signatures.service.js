@@ -2,7 +2,6 @@ const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
-const sphinxService = require('./sphinx.service');
 const { formatSignatureListItem, formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
 const { formatPersonListItem } = require('../dto/person.dto');
 const { authorsFromJson } = require('../dto/helpers');
@@ -27,124 +26,12 @@ class SignaturesService {
         return cached;
       }
 
-      if (search) {
-        return await this.searchSignaturesSphinx(search, { limit, offset, sortBy, sortOrder });
-      }
-
       return await this.getSignaturesFallback({ limit, offset, search, sortBy, sortOrder, includeCounts });
 
     } catch (error) {
       logger.error('Error fetching signatures:', error);
       throw error;
     }
-  }
-
-  
-  async searchSignaturesSphinx(searchTerm, options = {}) {
-    const { limit = 20, offset = 0, sortBy = 'signature', sortOrder = 'ASC' } = options;
-    const cacheKey = `signatures:sphinx:${searchTerm}:${JSON.stringify(options)}`;
-
-    try {
-      const spx = await sphinxService.searchSignatureIds(searchTerm, { limit, offset });
-      const ids = Array.isArray(spx?.ids) ? spx.ids : [];
-      const total = parseInt(spx?.total || 0, 10) || 0;
-
-      if (ids.length === 0) {
-        const empty = {
-          signatures: [],
-          pagination: {
-            total,
-            limit: parseInt(limit),
-            offset: parseInt(offset),
-            pages: Math.max(1, Math.ceil(total / Math.max(1, parseInt(limit))))
-          },
-          search_engine: 'sphinx',
-          performance_note: 'Sphinx returned no results; hydrated 0 via MariaDB'
-        };
-        await cacheService.set(cacheKey, empty, 900);
-        return empty;
-      }
-
-      const orderField = `FIELD(s.id, ${ids.map(() => '?').join(',')})`;
-      const [rows] = await sequelize.query(`
-        SELECT s.id, s.signature, s.created_at
-        FROM signatures s
-        WHERE s.id IN (${ids.map(() => '?').join(',')})
-        ORDER BY ${orderField}
-      `, { replacements: [...ids, ...ids], type: sequelize.QueryTypes.SELECT });
-
-      const result = {
-        signatures: Array.isArray(rows) ? rows.map(formatSignatureListItem) : [],
-        pagination: {
-          total,
-          limit: parseInt(limit),
-          offset: parseInt(offset),
-          pages: Math.max(1, Math.ceil(total / Math.max(1, parseInt(limit))))
-        },
-        search_engine: 'sphinx',
-        performance_note: `IDs from Sphinx in ${spx?.query_time || 0}ms; hydrated via MariaDB`
-      };
-
-      await cacheService.set(cacheKey, result, 1800);
-      logger.info(`Signatures Sphinx search (IDs) cached: "${searchTerm}" - ${result.signatures.length} results`);
-      return result;
-
-    } catch (error) {
-      logger.error(`Sphinx signatures search failed for term "${searchTerm}":`, error);
-      return await this.searchSignaturesFallback(searchTerm, options);
-    }
-  }
-
-  
-  async searchSignaturesFallback(searchTerm, options = {}) {
-    const { limit = 20, offset = 0, sortBy = 'signature', sortOrder = 'ASC' } = options;
-    
-    logger.warn('Using MariaDB fallback for signatures search');
-
-    const validSortFields = ['signature', 'created_at', 'id'];
-    const sortField = validSortFields.includes(sortBy) ? sortBy : 'signature';
-    const order = sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
-
-    const query = `
-      SELECT 
-        s.id,
-        s.signature,
-        s.created_at,
-        (SELECT COUNT(*) FROM persons p WHERE p.signature_id = s.id) as persons_count
-      FROM signatures s
-      WHERE s.signature LIKE ?
-      ORDER BY ${sortField} ${order}
-      LIMIT ? OFFSET ?
-    `;
-
-    const countQuery = `
-      SELECT COUNT(DISTINCT s.id) as total
-      FROM signatures s
-      WHERE s.signature LIKE ?
-    `;
-
-    const [signatures, countResult] = await Promise.all([
-      sequelize.query(query, {
-        replacements: [`%${searchTerm}%`, parseInt(limit), parseInt(offset)],
-        type: sequelize.QueryTypes.SELECT
-      }),
-      sequelize.query(countQuery, {
-        replacements: [`%${searchTerm}%`],
-        type: sequelize.QueryTypes.SELECT
-      })
-    ]);
-
-    return {
-      signatures: Array.isArray(signatures) ? signatures.map(formatSignatureListItem) : [formatSignatureListItem(signatures)],
-      pagination: {
-        total: countResult[0].total,
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        pages: Math.ceil(countResult[0].total / limit)
-      },
-      search_engine: 'mariadb_fallback',
-      performance_note: 'Using MariaDB fallback due to Sphinx error'
-    };
   }
 
   

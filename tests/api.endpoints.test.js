@@ -120,7 +120,7 @@ describe('Publications', () => {
         { id: 12, work_id: 8, doi: '10.1234/bar', title: 'Another publication', type: 'BOOK', publication_year: 2023 }
       ],
       pagination: pageMeta(1, 10, 2),
-      meta: { engine: 'mock', sphinx_query_ms: null, elapsed_ms: 1 }
+      meta: { engine: 'mock', elapsed_ms: 1 }
     });
 
     const req = createMockReq({ method: 'GET', path: '/publications', query: { limit: 10 } });

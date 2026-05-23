@@ -1,8 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { query, validationResult } = require('express-validator');
-const sphinxMonitoring = require('../services/sphinxMonitoring.service');
-const sphinxHealthCheck = require('../services/sphinxHealthCheck.service');
 const autocompleteService = require('../services/autocomplete.service');
 const { requireInternalAccessKey } = require('../middleware/accessKey');
 const { ERROR_CODES } = require('../utils/responseBuilder');
@@ -43,6 +41,26 @@ const handleValidation = (req, res) => {
   return null;
 };
 
+const emptyMetrics = () => ({
+  queries_per_second: 0,
+  avg_response_time: 0,
+  error_rate: 0,
+  index_size_mb: 0,
+  uptime_seconds: 0,
+  queries_last_hour: 0,
+  queries_last_minute: 0,
+  connections: 0
+});
+
+const emptyHealthStatus = () => ({
+  searchEngine: 'MariaDB',
+  rollbackActive: false,
+  metrics: {
+    consecutiveFailures: 0,
+    lastSuccessfulCheck: null
+  }
+});
+
 /**
  * @swagger
  * /dashboard/overview:
@@ -74,45 +92,43 @@ const handleValidation = (req, res) => {
 router.get('/overview', async (req, res) => {
     try {
         const t0 = Date.now();
-        const [
-            sphinxMetrics,
-            healthStatus,
-            searchAnalytics
-        ] = await Promise.all([
-            sphinxMonitoring.getDetailedMetrics(),
-            sphinxHealthCheck.getHealthStatus(),
-            autocompleteService.getSearchAnalytics(7)
-        ]);
+        const searchAnalytics = await autocompleteService.getSearchAnalytics(7);
+        const metrics = emptyMetrics();
+        const healthStatus = emptyHealthStatus();
 
         const rawOverview = {
             search_performance: {
                 engine: healthStatus.searchEngine,
-                queries_per_second: sphinxMetrics.metrics.queries_per_second,
-                avg_response_time: sphinxMetrics.metrics.avg_response_time,
-                error_rate: sphinxMetrics.metrics.error_rate,
-                index_size_mb: sphinxMetrics.metrics.index_size_mb,
-                performance_distribution: sphinxMetrics.performance_distribution
+                queries_per_second: metrics.queries_per_second,
+                avg_response_time: metrics.avg_response_time,
+                error_rate: metrics.error_rate,
+                index_size_mb: metrics.index_size_mb,
+                performance_distribution: {
+                    total_queries: 0,
+                    distribution: {},
+                    percentiles: {}
+                }
             },
             system_health: {
                 rollback_active: healthStatus.rollbackActive,
-                uptime_seconds: sphinxMetrics.metrics.uptime_seconds || 0,
+                uptime_seconds: metrics.uptime_seconds,
                 consecutive_failures: healthStatus.metrics.consecutiveFailures,
                 last_successful_check: healthStatus.metrics.lastSuccessfulCheck,
-                memory_usage: `${sphinxMetrics.metrics.index_size_mb}MB indexes`,
-                connections: sphinxMetrics.metrics.connections || 0
+                memory_usage: '0MB indexes',
+                connections: metrics.connections
             },
             recent_activity: {
-                queries_last_hour: sphinxMetrics.metrics.queries_last_hour,
-                queries_last_minute: sphinxMetrics.metrics.queries_last_minute,
-                recent_queries: sphinxMetrics.recent_queries.slice(0, 10),
-                search_analytics: Object.keys(searchAnalytics).length > 0 ? 
+                queries_last_hour: metrics.queries_last_hour,
+                queries_last_minute: metrics.queries_last_minute,
+                recent_queries: [],
+                search_analytics: Object.keys(searchAnalytics).length > 0 ?
                     searchAnalytics : { message: 'No analytics data available' }
             },
-            alerts: await router.checkSystemAlerts(sphinxMetrics, healthStatus)
+            alerts: await router.checkSystemAlerts(metrics, healthStatus)
         };
 
         const formattedOverview = formatDashboardOverview(rawOverview);
-        
+
         return res.success(formattedOverview, {
             meta: {
                 generated_at: new Date().toISOString(),
@@ -157,23 +173,22 @@ router.get('/performance', validatePerformanceParams, async (req, res) => {
 
         const t0 = Date.now();
         const hours = Math.min(req.query.hours || 24, 168);
-        
-        const detailedMetrics = sphinxMonitoring.getDetailedMetrics();
-        const recentQueries = detailedMetrics.recent_queries || [];
-        
-        const timeBuckets = router.createTimeBuckets(recentQueries, hours);
-        const rawChartData = router.createPerformanceChart(timeBuckets);
-        const chartData = formatPerformanceChart(rawChartData);
-        
+
+        const chartData = formatPerformanceChart([]);
+
         return res.success({
             chart_data: chartData,
             summary: {
-                total_queries: recentQueries.length,
-                avg_response_time: detailedMetrics.metrics.avg_response_time,
-                p95_response_time: detailedMetrics.performance_distribution?.percentiles?.p95 || 0,
-                error_count: recentQueries.filter(q => q.error).length
+                total_queries: 0,
+                avg_response_time: 0,
+                p95_response_time: 0,
+                error_count: 0
             },
-            distribution: detailedMetrics.performance_distribution
+            distribution: {
+                total_queries: 0,
+                distribution: {},
+                percentiles: {}
+            }
         }, {
             meta: {
                 hours_requested: hours,
@@ -211,20 +226,20 @@ router.get('/search-trends', validateTrendParams, async (req, res) => {
 
         const t0 = Date.now();
         const days = req.query.days || 7;
-        
+
         const [searchAnalytics, popularTerms] = await Promise.all([
             autocompleteService.getSearchAnalytics(days),
             autocompleteService.getPopularTerms(20)
         ]);
 
         const rawTrends = router.analyzeTrends(searchAnalytics, days);
-        
+
         const formattedTrends = formatSearchTrends({
             trends: rawTrends,
             popular_terms: popularTerms,
             analytics_period: `${days} days`
         });
-        
+
         return res.success(formattedTrends, {
             meta: {
                 days_analyzed: days,
@@ -255,14 +270,9 @@ router.get('/search-trends', validateTrendParams, async (req, res) => {
 router.get('/alerts', async (req, res) => {
     try {
         const t0 = Date.now();
-        const [sphinxMetrics, healthStatus] = await Promise.all([
-            sphinxMonitoring.getMetrics(),
-            sphinxHealthCheck.getHealthStatus()
-        ]);
-
-        const rawAlerts = await router.checkSystemAlerts(sphinxMetrics, healthStatus);
+        const rawAlerts = await router.checkSystemAlerts(emptyMetrics(), emptyHealthStatus());
         const formattedAlerts = formatSystemAlerts(rawAlerts);
-        
+
         return res.success({
             alerts: formattedAlerts,
             alert_count: formattedAlerts.length,
@@ -285,104 +295,46 @@ router.get('/alerts', async (req, res) => {
     }
 });
 
-router.checkSystemAlerts = async function(sphinxMetrics, healthStatus) {
+router.checkSystemAlerts = async function(metrics, healthStatus) {
     const alerts = [];
-    
-    if (sphinxMetrics.error_rate > 0.05) {
+
+    if (metrics.error_rate > 0.05) {
         alerts.push({
             type: 'error',
             severity: 'high',
-            message: `High error rate: ${(sphinxMetrics.error_rate * 100).toFixed(1)}%`,
+            message: `High error rate: ${(metrics.error_rate * 100).toFixed(1)}%`,
             threshold: '5%',
-            current_value: `${(sphinxMetrics.error_rate * 100).toFixed(1)}%`
+            current_value: `${(metrics.error_rate * 100).toFixed(1)}%`
         });
     }
-    
-    if (sphinxMetrics.avg_response_time > 50) {
+
+    if (metrics.avg_response_time > 50) {
         alerts.push({
             type: 'performance',
             severity: 'medium',
-            message: `Slow average response time: ${sphinxMetrics.avg_response_time}ms`,
+            message: `Slow average response time: ${metrics.avg_response_time}ms`,
             threshold: '50ms',
-            current_value: `${sphinxMetrics.avg_response_time}ms`
+            current_value: `${metrics.avg_response_time}ms`
         });
     }
-    
-    if (sphinxMetrics.queries_per_second > 100) {
+
+    if (metrics.queries_per_second > 100) {
         alerts.push({
             type: 'volume',
             severity: 'medium',
-            message: `High query volume: ${sphinxMetrics.queries_per_second} QPS`,
+            message: `High query volume: ${metrics.queries_per_second} QPS`,
             threshold: '100 QPS',
-            current_value: `${sphinxMetrics.queries_per_second} QPS`
+            current_value: `${metrics.queries_per_second} QPS`
         });
     }
-    
-    if (sphinxMetrics.index_size_mb > 1000) {
-        alerts.push({
-            type: 'storage',
-            severity: 'low',
-            message: `Large index size: ${sphinxMetrics.index_size_mb}MB`,
-            threshold: '1000MB',
-            current_value: `${sphinxMetrics.index_size_mb}MB`
-        });
-    }
-    
-    if (healthStatus.rollbackActive) {
-        alerts.push({
-            type: 'system',
-            severity: 'high',
-            message: 'Search engine rollback is active - using MariaDB fallback',
-            threshold: 'No rollback',
-            current_value: 'Rollback active'
-        });
-    }
-    
+
     return alerts;
-};
-
-router.createTimeBuckets = function(queries, hours) {
-    const buckets = {};
-    const now = Date.now();
-    const bucketSizeMs = (hours * 60 * 60 * 1000) / 50;
-    
-    queries.forEach(query => {
-        const queryTime = new Date(query.timestamp).getTime();
-        const bucketKey = Math.floor((now - queryTime) / bucketSizeMs);
-        
-        if (!buckets[bucketKey]) {
-            buckets[bucketKey] = {
-                timestamp: now - (bucketKey * bucketSizeMs),
-                queries: [],
-                total_time: 0,
-                error_count: 0
-            };
-        }
-        
-        buckets[bucketKey].queries.push(query);
-        buckets[bucketKey].total_time += query.responseTime;
-        if (query.error) buckets[bucketKey].error_count++;
-    });
-    
-    return Object.values(buckets);
-};
-
-router.createPerformanceChart = function(timeBuckets) {
-    return timeBuckets.map(bucket => ({
-        timestamp: new Date(bucket.timestamp).toISOString(),
-        query_count: bucket.queries.length,
-        avg_response_time: bucket.queries.length > 0 ? 
-            bucket.total_time / bucket.queries.length : 0,
-        error_count: bucket.error_count,
-        error_rate: bucket.queries.length > 0 ? 
-            bucket.error_count / bucket.queries.length : 0
-    })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 };
 
 router.analyzeTrends = function(searchAnalytics, days) {
     const dates = Object.keys(searchAnalytics).sort();
     if (dates.length < 2) return { message: 'Insufficient data for trend analysis' };
-    
+
     const trends = {
         search_volume: router.calculateTrend(dates.map(d => searchAnalytics[d].total_searches)),
         unique_queries: router.calculateTrend(dates.map(d => searchAnalytics[d].unique_queries)),
@@ -392,18 +344,18 @@ router.analyzeTrends = function(searchAnalytics, days) {
             ...searchAnalytics[date]
         }))
     };
-    
+
     return trends;
 };
 
 router.calculateTrend = function(values) {
     if (values.length < 2) return { trend: 'insufficient_data' };
-    
+
     const recent = values.slice(-3).reduce((sum, v) => sum + v, 0) / 3;
     const older = values.slice(0, 3).reduce((sum, v) => sum + v, 0) / 3;
-    
-    const change = ((recent - older) / older) * 100;
-    
+
+    const change = older === 0 ? 0 : ((recent - older) / older) * 100;
+
     return {
         trend: change > 10 ? 'increasing' : change < -10 ? 'decreasing' : 'stable',
         change_percent: Math.round(change * 100) / 100,

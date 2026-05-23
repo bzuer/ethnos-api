@@ -2,7 +2,6 @@ const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
-const sphinxService = require('./sphinx.service');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
 const { authorsFromJson } = require('../dto/helpers');
@@ -234,7 +233,7 @@ class PersonsService {
       const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
       if (search) {
-        return await this.searchPersonsSphinx(search, { limit, offset, verified });
+        return await this.searchPersons(search, { limit, offset, verified });
       }
 
       if (verified !== undefined) {
@@ -677,110 +676,57 @@ class PersonsService {
     }
   }
 
-  
-  async searchPersonsSphinx(searchTerm, options = {}) {
+  async searchPersons(searchTerm, options = {}) {
     const pagination = normalizePagination(options);
     const { page, limit, offset } = pagination;
     const { verified } = options;
-    const cacheKey = `persons:sphinx:${searchTerm}:${limit}:${offset}:${verified}`;
+    const trimmed = (searchTerm || '').trim();
+    const cacheKey = `persons:search:v2:${trimmed}:${limit}:${offset}:${verified ?? 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) return cached;
-
-      const spx = await sphinxService.searchPersonIds(searchTerm, { limit, offset, verified });
-      const ids = Array.isArray(spx?.ids) ? spx.ids : [];
-      const total = parseInt(spx?.total || 0, 10) || 0;
-
-      if (ids.length === 0) {
-        const empty = {
-          data: [],
-          pagination: createPagination(page, limit, total),
-          performance: {
-            engine: 'Sphinx',
-            query_type: 'search',
-            sphinx_query_ms: spx?.query_time || null,
-            hydrated: 0
-          },
-          meta: {
-            note: 'Sphinx returned no results; hydration skipped'
-          }
-        };
-        await cacheService.set(cacheKey, empty, 3600);
-        return empty;
-      }
-
-      const orderField = `FIELD(p.id, ${ids.map(() => '?').join(',')})`;
-      const persons = await sequelize.query(`
-        SELECT p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.is_verified
-        FROM persons p
-        WHERE p.id IN (${ids.map(() => '?').join(',')})
-        ORDER BY ${orderField}
-      `, { replacements: [...ids, ...ids], type: sequelize.QueryTypes.SELECT });
-
-      const result = {
-        data: persons.map(person => formatPersonListItem({
-          ...person,
-          metrics: { works_count: 0, latest_publication_year: null }
-        })),
-        pagination: createPagination(page, limit, total),
-        performance: {
-          engine: 'Sphinx+MariaDB',
-          query_type: 'search_hydrate',
-          sphinx_query_ms: spx?.query_time || null
-        }
-      };
-
-      await cacheService.set(cacheKey, result, 3600);
-      logger.info(`Persons Sphinx search (IDs) cached: "${searchTerm}" - ${result.data.length} results`);
-      return result;
-
-    } catch (error) {
-      logger.error(`Sphinx persons search failed for term "${searchTerm}":`, error);
-      return await this.fallbackPersonsSearch(searchTerm, options);
-    }
-  }
-
-  
-  async fallbackPersonsSearch(searchTerm, options = {}) {
-    const pagination = normalizePagination(options);
-    const { page, limit, offset } = pagination;
-    const { verified } = options;
-
-    logger.warn('Using MariaDB fallback for persons search');
+    } catch (_) {}
 
     const whereConditions = [];
     const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
-    whereConditions.push('(p.preferred_name LIKE :search OR p.given_names LIKE :search OR p.family_name LIKE :search)');
-    replacements.search = `%${searchTerm}%`;
+    let useFulltext = false;
+    if (trimmed.length >= 2) {
+      whereConditions.push('(p.preferred_name LIKE :likeSearch OR p.given_names LIKE :likeSearch OR p.family_name LIKE :likeSearch)');
+      replacements.likeSearch = `%${trimmed}%`;
+      useFulltext = true;
+      replacements.ftSearch = trimmed;
+    }
 
-    if (verified !== undefined) {
+    if (verified !== undefined && verified !== null && verified !== '') {
       whereConditions.push('p.is_verified = :verified');
-      replacements.verified = verified === 'true' ? 1 : 0;
+      replacements.verified = (verified === 'true' || verified === true || verified === 1 || verified === '1') ? 1 : 0;
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
     const [persons, countResult] = await Promise.all([
       sequelize.query(`
-        SELECT p.id, p.preferred_name, p.given_names, p.family_name, 
+        SELECT p.id, p.preferred_name, p.given_names, p.family_name,
                p.orcid, p.is_verified
         FROM persons p
         ${whereClause}
-        ORDER BY p.preferred_name ASC
+        ORDER BY ${useFulltext ? 'CASE WHEN p.preferred_name = :ftSearch THEN 0 ELSE 1 END, ' : ''}p.preferred_name ASC
         LIMIT :limit OFFSET :offset
       `, {
         replacements,
         type: sequelize.QueryTypes.SELECT
       }),
-      
+
       sequelize.query(`
         SELECT COUNT(*) as total
         FROM persons p
         ${whereClause}
       `, {
-        replacements: { search: replacements.search, verified: replacements.verified },
+        replacements: Object.fromEntries(
+          Object.entries(replacements).filter(([key]) => !['limit', 'offset'].includes(key))
+        ),
         type: sequelize.QueryTypes.SELECT
       })
     ]);
@@ -795,17 +741,21 @@ class PersonsService {
       }
     }));
 
-    return {
+    const result = {
       data: formattedResults,
       pagination: createPagination(page, limit, total),
       performance: {
         engine: 'MariaDB',
-        query_type: 'search_fallback'
-      },
-      meta: {
-        note: 'Using MariaDB fallback due to Sphinx error'
+        query_type: 'search'
       }
     };
+
+    try {
+      await cacheService.set(cacheKey, result, 3600);
+    } catch (_) {}
+
+    logger.info(`Persons search "${trimmed}": ${formattedResults.length} of ${total} results`);
+    return result;
   }
 }
 

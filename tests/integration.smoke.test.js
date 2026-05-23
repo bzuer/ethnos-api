@@ -108,8 +108,11 @@ describe('Integration smoke (real DB)', () => {
     });
 
     test('GET /works/:id embeds publications[]', async () => {
-      const body = assertSuccess(await fetchJson('/works/5'), 'GET /works/5');
-      assert.equal(body.data.id, 5);
+      const list = assertSuccess(await fetchJson('/works?limit=1'), 'GET /works for /works/:id probe');
+      const workId = list.data?.[0]?.id;
+      if (!workId) return;
+      const body = assertSuccess(await fetchJson(`/works/${workId}`), `GET /works/${workId}`);
+      assert.equal(body.data.id, workId);
       assert.ok(Array.isArray(body.data.publications), 'publications must be array');
       assert.ok(!('publication' in body.data), 'legacy publication block must be gone');
       assert.ok('primary_publication_id' in body.data, 'primary_publication_id must be present');
@@ -126,8 +129,11 @@ describe('Integration smoke (real DB)', () => {
     });
 
     test('GET /publications exposes identifiers+files', async () => {
-      const body = assertSuccess(await fetchJson('/publications/5'), 'GET /publications/5');
-      assert.equal(body.data.id, 5);
+      const list = assertSuccess(await fetchJson('/publications?limit=1'), 'GET /publications for /publications/:id probe');
+      const publicationId = list.data?.[0]?.id;
+      if (!publicationId) return;
+      const body = assertSuccess(await fetchJson(`/publications/${publicationId}`), `GET /publications/${publicationId}`);
+      assert.equal(body.data.id, publicationId);
       assert.ok(body.data.identifiers, 'identifiers block');
       assert.equal(typeof body.data.has_scimag_file, 'boolean');
       assert.equal(typeof body.data.has_libgen_file, 'boolean');

@@ -127,8 +127,9 @@ const validatePublicationsQuery = [
  *       Filters can target the parent work (`work_type`, `language`, `work_id`)
  *       or the publication itself (`year_from`, `year_to`, `open_access`,
  *       `peer_reviewed`, `has_files`, `venue`, `venue_id`, `publisher_id`,
- *       `doi`). Free-text queries (`q`) route through Sphinx and dedupe by
- *       publication id; filter-only queries hit MariaDB directly.
+ *       `doi`). Free-text queries (`q`) use MariaDB FULLTEXT against
+ *       `ft_summary_pubs_content`; metadata filters (`venue`, `author`, `subject`)
+ *       use FULLTEXT against `ft_summary_pubs_metadata`.
  *     tags: [Publications]
  *     parameters:
  *       - in: query
@@ -159,7 +160,7 @@ const validatePublicationsQuery = [
  *           type: string
  *           minLength: 1
  *           maxLength: 200
- *         description: Free-text query routed through Sphinx
+ *         description: Free-text query against summary_publications FULLTEXT indexes
  *         example: machine learning
  *       - in: query
  *         name: type
@@ -267,7 +268,7 @@ const validatePublicationsQuery = [
  *           enum: [cited_by_count, references_count, publication_year, id, relevance]
  *         description: |
  *           Primary sort key. `cited_by_count` surfaces the most cited publications first; `relevance`
- *           is only meaningful on the Sphinx path (when `q`, `venue`, `author`, or `subject` is set).
+ *           is only meaningful when `q`, `venue`, `author`, or `subject` is set (FULLTEXT path).
  *         example: cited_by_count
  *       - in: query
  *         name: sort_order
@@ -298,10 +299,7 @@ const validatePublicationsQuery = [
  *                   properties:
  *                     engine:
  *                       type: string
- *                       example: Sphinx+MariaDB
- *                     sphinx_query_ms:
- *                       type: integer
- *                       nullable: true
+ *                       example: MariaDB
  *                     elapsed_ms:
  *                       type: integer
  *       400:

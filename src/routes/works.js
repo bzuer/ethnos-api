@@ -174,7 +174,7 @@ const validateWorksQuery = [
  *           enum: [cited_by_count, references_count, publication_year, id, relevance]
  *         description: |
  *           Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance`
- *           is only meaningful when `q` / `venue` / `author` / `subject` are set (Sphinx path).
+ *           is only meaningful when `q` / `venue` / `author` / `subject` are set (FULLTEXT path).
  *         example: cited_by_count
  *       - in: query
  *         name: sort_order
