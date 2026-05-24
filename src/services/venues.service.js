@@ -617,11 +617,16 @@ class VenuesService {
       ? `${sortField} IS NULL, `
       : '';
 
+    const scoreSortKeys = new Set(['score', 'ranking']);
+    const scoreTiebreaker = scoreSortKeys.has(normalizedSortBy)
+      ? ''
+      : ', COALESCE(v.total_score, 0) DESC';
+
     const listSql = `
       SELECT ${BASE_SELECT}
       ${BASE_FROM}
       ${whereClause}
-      ORDER BY ${sortNullGuard}${sortField} ${sortOrderFinal}, COALESCE(v.total_score, 0) DESC, v.name ASC
+      ORDER BY ${sortNullGuard}${sortField} ${sortOrderFinal}${scoreTiebreaker}, v.name ASC
       LIMIT :lim OFFSET :off
     `;
     const countSql = `SELECT COUNT(*) AS total ${BASE_FROM} ${whereClause}`;

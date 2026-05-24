@@ -165,9 +165,17 @@ describe('Integration smoke (real DB)', () => {
     });
 
     test('GET /venues exposes venues base-table surface', async () => {
-      const body = assertSuccess(await fetchJson('/venues?limit=2'), 'GET /venues');
+      const body = assertSuccess(await fetchJson('/venues?limit=5'), 'GET /venues');
       assert.ok(Array.isArray(body.data));
       assert.equal(body.meta?.source, 'venues');
+      assert.equal(body.meta?.sort?.by, 'score', 'default sort field is score (total_score)');
+      assert.equal(body.meta?.sort?.order, 'DESC', 'default sort order is DESC');
+      if (body.data.length >= 2) {
+        const scores = body.data.map((v) => v.ranking?.score ?? 0);
+        for (let i = 1; i < scores.length; i += 1) {
+          assert.ok(scores[i - 1] >= scores[i], `venues must be ordered by total_score DESC (got ${scores.join(', ')})`);
+        }
+      }
       if (body.data.length > 0) {
         const venue = body.data[0];
         assert.ok(venue.identifiers && typeof venue.identifiers === 'object', 'identifiers block');
