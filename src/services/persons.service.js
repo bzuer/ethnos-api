@@ -5,6 +5,7 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
 const { withTimeout } = require('../utils/db');
+const searchEngine = require('./searchEngine.service');
 
 class PersonsService {
   async getPersonById(id) {
@@ -700,6 +701,32 @@ class PersonsService {
       const cached = await cacheService.get(cacheKey);
       if (cached) return cached;
     } catch (_) {}
+
+    if (searchEngine.isEnabled() && trimmed.length >= 2) {
+      const mres = await searchEngine.searchPersonIds(trimmed, { verified, limit, offset });
+      let people = [];
+      if (mres.ids.length) {
+        const rows = await sequelize.query(
+          'SELECT p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.is_verified FROM persons p WHERE p.id IN (:ids)',
+          { replacements: { ids: mres.ids }, type: sequelize.QueryTypes.SELECT }
+        );
+        const byId = new Map(rows.map(r => [r.id, r]));
+        people = mres.ids.map(id => byId.get(id)).filter(Boolean);
+      }
+      const formattedResults = people.map(person => formatPersonListItem({
+        ...person,
+        name_signature: null,
+        metrics: { works_count: 0, latest_publication_year: null }
+      }));
+      const result = {
+        data: formattedResults,
+        pagination: createPagination(page, limit, mres.total),
+        performance: { engine: 'Manticore', query_type: 'search' }
+      };
+      try { await cacheService.set(cacheKey, result, 3600); } catch (_) {}
+      logger.info(`Persons search "${trimmed}" [Manticore]: ${formattedResults.length} of ${mres.total} results`);
+      return result;
+    }
 
     const whereConditions = [];
     const replacements = { limit: parseInt(limit), offset: parseInt(offset) };

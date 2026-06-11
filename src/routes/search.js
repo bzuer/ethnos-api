@@ -607,6 +607,28 @@ router.get('/advanced', validateAdvancedSearch, enhancedValidationHandler, advan
  */
 router.get('/health', async (req, res, next) => {
   try {
+    const searchEngine = require('../services/searchEngine.service');
+    if (searchEngine.isEnabled()) {
+      const health = await searchEngine.healthcheck();
+      return res.success({
+        search_engine: 'Manticore',
+        backend: health.backend,
+        reachable: health.reachable,
+        ...(health.error ? { error: health.error } : {}),
+        tables: health.tables || [],
+        indexes: {
+          works: 'Manticore table works (title, subtitle, abstract, authors, subjects, venue)',
+          persons: 'Manticore table persons (preferred_name, given_names, family_name)',
+          venues: 'ft_venues_search (name + abbreviated_name) [MariaDB]'
+        },
+        endpoints: {
+          basic_search: '/search/works',
+          advanced_search: '/search/advanced',
+          autocomplete: '/search/autocomplete',
+          popular_terms: '/search/popular'
+        }
+      });
+    }
     return res.success({
       search_engine: 'MariaDB',
       indexes: {

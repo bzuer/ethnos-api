@@ -1,6 +1,7 @@
 const { logger } = require('../middleware/errorHandler');
 const redis = require('../config/redis');
 const { sequelize } = require('../models');
+const searchEngine = require('./searchEngine.service');
 
 class AutocompleteService {
     constructor() {
@@ -95,6 +96,17 @@ class AutocompleteService {
 
     async _fetchWorkIdsByMatch(query, fetchLimit) {
         const cappedLimit = Math.max(1, Math.min(parseInt(fetchLimit, 10) || 50, 500));
+
+        if (searchEngine.isEnabled()) {
+            try {
+                return await searchEngine.fetchWorkIdsForMatch(query, cappedLimit);
+            } catch (error) {
+                logger.warn('Autocomplete Manticore lookup failed; returning empty match set', {
+                    error: error.message
+                });
+                return [];
+            }
+        }
 
         try {
             const rows = await sequelize.query(

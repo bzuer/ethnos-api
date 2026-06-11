@@ -8,6 +8,7 @@ const {
 } = require('../dto/publication.dto');
 const { normalizeType, toOptionalBoolean, toOptionalInteger } = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
+const searchEngine = require('./searchEngine.service');
 
 const normalizeDoiValue = (value) => {
   if (!value) return null;
@@ -510,17 +511,32 @@ class PublicationsService {
       params.push(citedByMax);
     }
 
-    if (searchTerm) {
-      where.push('p.work_id IN (SELECT w_ft.id FROM works w_ft WHERE MATCH(w_ft.full_title_normalized, w_ft.subjects_search) AGAINST (? IN BOOLEAN MODE))');
-      params.push(searchTerm);
+    let ftCapped = false;
+    if (searchEngine.isEnabled()) {
+      if (searchTerm || authorFilter || subjectFilter) {
+        const cap = parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10);
+        const ft = await searchEngine.fetchWorkIdsForFilters({ q: searchTerm, author: authorFilter, subject: subjectFilter }, cap);
+        ftCapped = ft.capped;
+        if (ft.ids.length === 0) {
+          where.push('1 = 0');
+        } else {
+          where.push(`p.work_id IN (${ft.ids.map(() => '?').join(',')})`);
+          params.push(...ft.ids);
+        }
+      }
+    } else {
+      if (searchTerm) {
+        where.push('p.work_id IN (SELECT w_ft.id FROM works w_ft WHERE MATCH(w_ft.full_title_normalized, w_ft.subjects_search) AGAINST (? IN BOOLEAN MODE))');
+        params.push(searchTerm);
+      }
+      const metadataExpr = buildBooleanExpr(authorFilter, subjectFilter);
+      if (metadataExpr) {
+        where.push('p.work_id IN (SELECT w_meta.id FROM works w_meta WHERE MATCH(w_meta.authors_search, w_meta.subjects_search) AGAINST (? IN BOOLEAN MODE))');
+        params.push(metadataExpr);
+      }
     }
 
-    const metadataExpr = buildBooleanExpr(authorFilter, subjectFilter);
     const venueExpr = buildBooleanExpr(venueFilter);
-    if (metadataExpr) {
-      where.push('p.work_id IN (SELECT w_meta.id FROM works w_meta WHERE MATCH(w_meta.authors_search, w_meta.subjects_search) AGAINST (? IN BOOLEAN MODE))');
-      params.push(metadataExpr);
-    }
     if (venueExpr) {
       where.push('p.venue_id IN (SELECT v_ft.id FROM venues v_ft WHERE MATCH(v_ft.name, v_ft.abbreviated_name) AGAINST (? IN BOOLEAN MODE))');
       params.push(venueExpr);
@@ -595,8 +611,9 @@ class PublicationsService {
       data,
       pagination: createPagination(page, limit, totalItems),
       meta: {
-        engine: 'MariaDB',
+        engine: (searchEngine.isEnabled() && (searchTerm || authorFilter || subjectFilter)) ? 'Manticore' : 'MariaDB',
         pagination_total_exact: totalIsExact,
+        ...(ftCapped ? { fulltext_truncated: true, fulltext_work_cap: parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10) } : {}),
         elapsed_ms: Date.now() - t0
       }
     };

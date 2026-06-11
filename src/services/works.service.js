@@ -10,6 +10,7 @@ const {
 } = require('../dto/helpers');
 const { formatPublicationEntry } = require('../dto/publication.dto');
 const { withTimeout } = require('../utils/db');
+const searchEngine = require('./searchEngine.service');
 
 const WORK_LEVEL_FILE_CAP = 50;
 const FILE_ROLE_PRIORITY = { MAIN: 0, SUPPLEMENT: 1, COVER: 2, PREVIEW: 3 };
@@ -643,6 +644,27 @@ class WorksService {
       return { data: [], pagination: createPagination(page, limit, 0) };
     }
 
+    if (searchEngine.isEnabled()) {
+      const manticoreStart = process.hrtime.bigint();
+      const mres = await searchEngine.searchWorkIds({
+        q: trimmed,
+        author,
+        subject,
+        venue_name,
+        type,
+        language,
+        year_from,
+        year_to,
+        open_access,
+        peer_reviewed,
+        cited_by_min: citedByMin,
+        cited_by_max: citedByMax,
+        sort_by: filters?.sort_by ?? filters?.sortBy,
+        sort_order: filters?.sort_order ?? filters?.sortOrder
+      }, limit, offset);
+      return this._hydrateWorkSearchResults(mres.ids, page, limit, mres.total, mres.exact, 'Manticore', manticoreStart);
+    }
+
     const innerWhere = [];
     const innerParams = [];
     const publicationConds = [];
@@ -761,12 +783,16 @@ class WorksService {
     }
 
     const workIds = innerRows.map(r => r.work_id).filter(Boolean);
-    if (workIds.length === 0) {
+    return this._hydrateWorkSearchResults(workIds, page, limit, totalItems, totalIsExact, 'MariaDB', primaryStart);
+  }
+
+  async _hydrateWorkSearchResults(workIds, page, limit, totalItems, totalIsExact, engine, primaryStart) {
+    if (!workIds || workIds.length === 0) {
       return {
         data: [],
         pagination: createPagination(page, limit, totalItems),
         meta: { match_mode: 'any_publication', pagination_total_exact: totalIsExact },
-        performance: { engine: 'MariaDB', query_type: 'search', match_mode: 'any_publication', primary_query_ms: innerQueryMs }
+        performance: { engine, query_type: 'search', match_mode: 'any_publication', primary_query_ms: Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString()) }
       };
     }
 
@@ -823,7 +849,7 @@ class WorksService {
         references_count: row.work_reference_count,
         added_to_database: row.work_created_at,
         data_source: 'search',
-        search_engine: 'MariaDB'
+        search_engine: engine
       });
     });
 
@@ -834,13 +860,13 @@ class WorksService {
         match_mode: 'any_publication',
         pagination_total_exact: totalIsExact,
         performance: {
-          engine: 'MariaDB',
+          engine,
           query_type: 'search',
           primary_query_ms: primaryQueryMs
         }
       },
       performance: {
-        engine: 'MariaDB',
+        engine,
         query_type: 'search',
         match_mode: 'any_publication',
         primary_query_ms: primaryQueryMs
