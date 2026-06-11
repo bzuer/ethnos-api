@@ -28,4 +28,8 @@ chown root:manticore "$DEST" 2>/dev/null || true
 mkdir -p "$DATA_DIR" /var/log/manticore /run/manticore
 chown -R manticore:manticore "$DATA_DIR" /var/log/manticore /run/manticore 2>/dev/null || true
 
-echo "rendered ${DEST}; data dir ${DATA_DIR} ready"
+# Install the reindex helper to a system path the manticore user can reach
+# (scripts under /home/ubuntu are not traversable by the manticore user).
+install -m 0755 "${REPO_ROOT}/scripts/manticore/reindex.sh" /usr/local/bin/manticore-ethnos-reindex
+
+echo "rendered ${DEST}; data dir ${DATA_DIR} ready; helper at /usr/local/bin/manticore-ethnos-reindex"

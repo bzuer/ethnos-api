@@ -44,16 +44,28 @@ live path is unchanged until the operator completes the steps below and flips th
    sudo ENV_FILE=/etc/node-backend.env scripts/manticore/render-config.sh
    ```
 
-3. **Initial full build**, then restart searchd to serve the plain tables:
+3. **Initial full build**, then restart searchd to serve the plain tables. The `manticore`
+   user cannot read scripts under `/home/ubuntu`, so invoke the `indexer` binary directly
+   (binary and config are both in system paths):
    ```
-   sudo -u manticore scripts/manticore/reindex.sh init
+   sudo -u manticore indexer --config /etc/manticoresearch/manticore.conf --all
    sudo systemctl restart manticore
    ```
+   (`render-config.sh` also installs `/usr/local/bin/manticore-ethnos-reindex`, so
+   `sudo -u manticore manticore-ethnos-reindex init` is the equivalent convenience form.)
 
-4. **Schedule freshness** (operator cron; API stays consumer-only). Example `/etc/cron.d/manticore-ethnos`:
+4. **Schedule freshness** (operator cron; API stays consumer-only). Use the installed helper
+   (re-run `render-config.sh` once to install it) or the `indexer` binary directly — both are
+   reachable by the `manticore` user, unlike the repo path under `/home/ubuntu`. Example
+   `/etc/cron.d/manticore-ethnos`:
    ```
-   */5 * * * * manticore /home/ubuntu/api/scripts/manticore/reindex.sh delta >/dev/null 2>&1
-   17 3  * * * manticore /home/ubuntu/api/scripts/manticore/reindex.sh main  >/dev/null 2>&1
+   */5 * * * * manticore /usr/local/bin/manticore-ethnos-reindex delta >/dev/null 2>&1
+   17 3  * * * manticore /usr/local/bin/manticore-ethnos-reindex main  >/dev/null 2>&1
+   ```
+   Binary-direct equivalent (no helper needed):
+   ```
+   */5 * * * * manticore /usr/bin/indexer --config /etc/manticoresearch/manticore.conf --rotate works_delta persons_delta >/dev/null 2>&1
+   17 3  * * * manticore /usr/bin/indexer --config /etc/manticoresearch/manticore.conf --rotate works_main persons_main >/dev/null 2>&1
    ```
    (Delta window is 48h in `config/manticore.conf`; keep delta interval well under it.)
 
