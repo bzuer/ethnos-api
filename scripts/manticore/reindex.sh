@@ -18,15 +18,13 @@ MODE="${1:-delta}"
 [ -f "$CONF" ] || { echo "missing config: $CONF" >&2; exit 1; }
 
 case "$MODE" in
-  init|all) TABLES="works_main works_delta persons_main persons_delta"; ROTATE="" ;;
-  delta)    TABLES="works_delta persons_delta"; ROTATE="--rotate" ;;
-  main)     TABLES="works_main persons_main"; ROTATE="--rotate" ;;
+  init|all) TABLES="works_main works_delta persons_main persons_delta" ;;
+  delta)    TABLES="works_delta persons_delta" ;;
+  main)     TABLES="works_main persons_main" ;;
   *) echo "usage: $0 [init|all|delta|main]" >&2; exit 2 ;;
 esac
 
+# searchd runs as a persistent systemd service and holds the table-slot locks, so always
+# rotate: indexer builds .new files and signals searchd to load them live (no restart).
 # shellcheck disable=SC2086
-"$INDEXER" --config "$CONF" $ROTATE $TABLES
-
-if [ "$MODE" = "init" ] || [ "$MODE" = "all" ]; then
-  echo "Initial build complete. Restart searchd to serve: sudo systemctl restart manticore"
-fi
+"$INDEXER" --config "$CONF" --rotate $TABLES

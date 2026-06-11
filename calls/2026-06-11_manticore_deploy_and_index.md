@@ -44,12 +44,12 @@ live path is unchanged until the operator completes the steps below and flips th
    sudo ENV_FILE=/etc/node-backend.env scripts/manticore/render-config.sh
    ```
 
-3. **Initial full build**, then restart searchd to serve the plain tables. The `manticore`
-   user cannot read scripts under `/home/ubuntu`, so invoke the `indexer` binary directly
-   (binary and config are both in system paths):
+3. **Initial full build.** searchd runs as a persistent service and holds the plain-table
+   slots, so build with `--rotate` (indexer writes `.new` files and signals searchd to load
+   them live — no restart needed; a plain `--all` fails with a lock error). The `manticore`
+   user cannot read scripts under `/home/ubuntu`, so invoke the `indexer` binary directly:
    ```
-   sudo -u manticore indexer --config /etc/manticoresearch/manticore.conf --all
-   sudo systemctl restart manticore
+   sudo -u manticore indexer --config /etc/manticoresearch/manticore.conf --rotate --all
    ```
    (`render-config.sh` also installs `/usr/local/bin/manticore-ethnos-reindex`, so
    `sudo -u manticore manticore-ethnos-reindex init` is the equivalent convenience form.)
