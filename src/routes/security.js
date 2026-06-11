@@ -124,7 +124,6 @@ router.get('/audit', requireAccessKey, (req, res) => {
   const audit = {};
   try {
     const dashboardRouter = require('../routes/dashboard');
-    const metricsRouter = require('../routes/metrics');
     const healthRouter = require('../routes/health');
 
     const hasGuardInStack = (router, guardName) => Array.isArray(router.stack) && router.stack.some(layer => {
@@ -137,7 +136,6 @@ router.get('/audit', requireAccessKey, (req, res) => {
     });
 
     audit.dashboard_protected = hasGuardInStack(dashboardRouter, 'requireInternalAccessKey');
-    audit.metrics_protected = hasGuardInStack(metricsRouter, 'requireInternalAccessKey');
     const healthProtected = hasGuardInStack(healthRouter, 'requireInternalAccessKey');
     audit.health_protected = healthProtected;
     audit.security_protected = true;

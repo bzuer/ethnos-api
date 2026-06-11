@@ -71,9 +71,21 @@ describe('Integration smoke (real DB)', () => {
     }
   });
 
-  describe('Access key enforcement', () => {
-    test('GET /works without key returns 401', async () => {
+  describe('Open access and optional key', () => {
+    test('GET /works without key returns 200 (public access)', async () => {
       const result = await fetchRaw('/works?limit=1');
+      assert.equal(result.status, 200, `expected 200, got ${result.status}`);
+      assert.equal(result.body?.status, 'success');
+    });
+
+    test('GET /metrics/annual without key returns 200 (public access)', async () => {
+      const result = await fetchRaw('/metrics/annual?limit=1');
+      assert.equal(result.status, 200, `expected 200, got ${result.status}`);
+      assert.equal(result.body?.status, 'success');
+    });
+
+    test('GET /dashboard/overview without key stays gated (401)', async () => {
+      const result = await fetchRaw('/dashboard/overview');
       assert.equal(result.status, 401, `expected 401, got ${result.status}`);
       assert.equal(result.body?.code, 'UNAUTHORIZED');
     });

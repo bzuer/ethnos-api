@@ -1,7 +1,7 @@
 const rateLimit = require('express-rate-limit');
 const slowDown = require('express-slow-down');
 const { logger } = require('./errorHandler');
-const { ERROR_CODES } = require('../utils/responseBuilder');
+const { ERROR_CODES, buildErrorResponse } = require('../utils/responseBuilder');
 const { hasValidAccessKey } = require('./accessKey');
 
 try { require('dotenv').config({ path: '/etc/node-backend.env' }); } catch (_) {}
@@ -13,7 +13,7 @@ const parseIntSafe = (val, def) => {
 
 const windowMs = parseIntSafe(process.env.RATE_LIMIT_WINDOW_MS, 60000);
 const maxGlobal = parseIntSafe(process.env.RATE_LIMIT_MAX_REQUESTS, 0);
-const maxGeneral = parseIntSafe(process.env.RATE_LIMIT_GENERAL, maxGlobal || 600);
+const maxGeneral = parseIntSafe(process.env.RATE_LIMIT_GENERAL, maxGlobal || 120);
 const maxSearch = parseIntSafe(process.env.RATE_LIMIT_SEARCH, maxGeneral);
 const maxMetrics = parseIntSafe(process.env.RATE_LIMIT_METRICS, maxGeneral);
 const maxRelational = parseIntSafe(process.env.RATE_LIMIT_RELATIONAL, maxGeneral);
@@ -22,7 +22,7 @@ const delayAfter = parseIntSafe(process.env.SLOW_DOWN_AFTER, 1000);
 const delayMs = parseIntSafe(process.env.SLOW_DOWN_DELAY, 50);
 const maxDelayMs = parseIntSafe(process.env.SLOW_DOWN_MAX, 1000);
 
-const disableRateLimiting = (process.env.RATE_LIMIT_DISABLED || 'true').toLowerCase() !== 'false';
+const disableRateLimiting = (process.env.RATE_LIMIT_DISABLED || 'false').toLowerCase() === 'true';
 const noopLimiter = (_req, _res, next) => next();
 const shouldSkipRateLimit = (req) => (
   disableRateLimiting
@@ -46,17 +46,23 @@ const handler = (req, res) => {
   const remaining = (res.getHeader('RateLimit-Remaining') || '').toString();
   const limit = (res.getHeader('RateLimit-Limit') || '').toString();
   const reset = (res.getHeader('RateLimit-Reset') || '').toString();
-  return res.fail('Too many requests', {
-    statusCode: 429,
+  const meta = { ip: req.ip, path: req.path, remaining, limit, reset };
+
+  if (typeof res.fail === 'function') {
+    return res.fail('Too many requests', {
+      statusCode: 429,
+      code: ERROR_CODES.RATE_LIMIT,
+      meta
+    });
+  }
+
+  logger.warn('Rate limit exceeded', { ip: req.ip, path: req.path, limit });
+  return res.status(429).json(buildErrorResponse({
+    status: 'error',
+    message: 'Too many requests',
     code: ERROR_CODES.RATE_LIMIT,
-    meta: {
-      ip: req.ip,
-      path: req.path,
-      remaining,
-      limit,
-      reset
-    }
-  });
+    meta
+  }));
 };
 
 const buildLimiter = (max) => {

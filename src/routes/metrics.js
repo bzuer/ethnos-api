@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { requireInternalAccessKey } = require('../middleware/accessKey');
 const { query } = require('express-validator');
 const metricsController = require('../controllers/metrics.controller');
 
@@ -60,17 +59,13 @@ const validateCollaborations = [
     .withMessage('Minimum collaborations must be between 1 and 50')
 ];
 
-router.use(requireInternalAccessKey);
-
 /**
  * @swagger
  * /metrics/annual:
  *   get:
  *     summary: Annual publication statistics
  *     tags: [Metrics]
- *     description: Get yearly statistics from the v_annual_stats view
- *     security:
- *       - XAccessKey: []
+ *     description: Get yearly statistics rolled up from publications and works
  *     parameters:
  *       - name: year_from
  *         in: query
@@ -124,8 +119,6 @@ router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
  *     summary: Top venues by publication impact
  *     description: Get the top academic venues ranked by publication count, citation metrics, and impact factors.
  *     tags: [Metrics]
- *     security:
- *       - XAccessKey: []
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
@@ -161,8 +154,6 @@ router.get('/venues', validateLimit, metricsController.getTopVenues);
  *     summary: Institution productivity ranking
  *     description: Get academic institutions ranked by research productivity, publication count, and citation metrics.
  *     tags: [Metrics]
- *     security:
- *       - XAccessKey: []
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
@@ -207,8 +198,6 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  *     summary: Person production analytics
  *     description: Get researchers ranked by publication productivity and citation metrics.
  *     tags: [Metrics]
- *     security:
- *       - XAccessKey: []
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
@@ -252,8 +241,6 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  *     summary: Collaboration network statistics
  *     description: Get statistics on research collaboration networks, including top collaborator pairs and collaboration patterns.
  *     tags: [Metrics]
- *     security:
- *       - XAccessKey: []
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'

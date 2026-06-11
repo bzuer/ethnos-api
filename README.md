@@ -101,12 +101,14 @@ Deploy sequence:
 - When updating CSP, ensure Swagger UI and fonts remain functional.
 - Do not loosen headers in production unless strictly required and documented.
 
-## Internal Access Key Usage
+## Access Control and Rate Limiting
 
-- Protected endpoints require `X-Access-Key` (case-insensitive: `x-access-key`, `x-internal-key`, `x-api-key`).
-- Validation is handled by `requireInternalAccessKey` in `src/middleware/accessKey.js`.
+- Data and metrics endpoints are public: no key is required. Unauthenticated traffic is capped at 120 requests/min per IP (`RATE_LIMIT_GENERAL`, window `RATE_LIMIT_WINDOW_MS`, default 60s); requests over the cap get `429`.
+- A valid `X-Access-Key` (case-insensitive aliases: `x-access-key`, `x-internal-key`, `x-api-key`) removes the rate limit and is **required** for `/dashboard`, `/security/*`, `/health/readiness`, and `/health/metrics`.
+- Key validation is handled by `requireInternalAccessKey` / `createAccessKeyGuard` in `src/middleware/accessKey.js`; the rate-limit bypass for keyed and localhost traffic lives in `shouldSkipRateLimit` in `src/middleware/rateLimiting.js`.
 - Keys must be provided only via `/etc/node-backend.env` and never logged or exposed in responses.
 - If rotating keys, update the env file and restart the service to apply changes.
+- The whole limiter can be turned off with `RATE_LIMIT_DISABLED=true` (default: enabled).
 
 ## Deployment Hygiene
 

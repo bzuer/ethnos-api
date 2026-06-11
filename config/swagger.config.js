@@ -10,8 +10,8 @@ const options = {
         'REST API for academic bibliographic research: works, publications, persons, institutions, venues, courses, citations, collaborations and system health.',
         '',
         '## Conventions',
-        '- Every endpoint requires the `x-access-key` header (see the `XAccessKey` security scheme). Public exceptions: `/health/liveness`, `/docs`, `/docs.json`, `/docs.yaml`, `/openapi.yaml`, `/openapi.yml`.',
-        '- Authenticated requests bypass rate limiting; unauthenticated requests are rejected with 401 before any handler runs.',
+        '- Open access: data and metrics endpoints need no key. The optional `x-access-key` header (see the `XAccessKey` security scheme) lifts the rate limit. A key is still required for `/dashboard`, `/security/*`, and the internal health probes `/health/readiness` and `/health/metrics`.',
+        '- Unauthenticated requests are limited to 120/min per IP; a valid key removes the limit. Requests over the limit are rejected with 429.',
         '- Read-only by design. The only mutating endpoint is `POST /security/unblock/{ip}`.',
         '- Standard response envelope: `{ status, data, pagination?, meta? }`. Errors: `{ status: "error", message, code, timestamp }`.',
         '- Pagination accepts `page/limit` and `offset/limit` interchangeably.',
@@ -47,7 +47,7 @@ const options = {
           type: 'apiKey',
           in: 'header',
           name: 'x-access-key',
-          description: 'Access key required on every endpoint. Aliases: `x-access-key`, `x-internal-key`, `x-api-key`. Public exceptions: `/health/liveness`, `/docs`, `/docs.json`, `/docs.yaml`, `/openapi.yaml`, `/openapi.yml`.'
+          description: 'Optional on data and metrics endpoints, where it only removes the 120/min per-IP rate limit. Required for `/dashboard`, `/security/*`, `/health/readiness`, and `/health/metrics`. Aliases: `x-access-key`, `x-internal-key`, `x-api-key`.'
         }
       },
       schemas: {
@@ -4094,6 +4094,7 @@ const options = {
       }
     },
     security: [
+      {},
       { XAccessKey: [] }
     ],
     tags: [

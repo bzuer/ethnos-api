@@ -118,34 +118,11 @@ const {
   relationalLimiter,
   honeypotMiddleware
 } = require('./middleware/rateLimiting');
-const { requireInternalAccessKey } = require('./middleware/accessKey');
 
 app.use(honeypotMiddleware);
 
 app.use('/', generalLimiter);
 app.use('/', speedLimiter);
-
-const PUBLIC_PATH_EXACT = new Set([
-  '/health/liveness',
-  '/docs.json',
-  '/docs.yaml',
-  '/openapi.yaml',
-  '/openapi.yml',
-]);
-
-const PUBLIC_PATH_PREFIXES = ['/docs'];
-
-const isPublicPath = (path) => {
-  if (PUBLIC_PATH_EXACT.has(path)) return true;
-  return PUBLIC_PATH_PREFIXES.some((prefix) => (
-    path === prefix || path.startsWith(`${prefix}/`)
-  ));
-};
-
-const globalAccessKeyGuard = (req, res, next) => {
-  if (isPublicPath(req.path)) return next();
-  return requireInternalAccessKey(req, res, next);
-};
 
 app.use(compression());
 
@@ -168,8 +145,6 @@ app.use(requestTimeout({ timeoutMs: 0 }));
 app.use(performanceMonitoring);
 
 homepageStatsService.refresh();
-
-app.use(globalAccessKeyGuard);
 
 app.get('/', (req, res) => {
   const homepageStats = homepageStatsService.getSnapshot();
@@ -201,8 +176,8 @@ app.get('/', (req, res) => {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
       search_engine: 'MariaDB FULLTEXT against works (ft_works_content, ft_works_metadata) / venues (ft_venues_search) / persons (ft_persons_names)',
       cache: 'Redis with 30min TTL',
-      rate_limiting: 'Disabled for authenticated requests',
-      authentication: 'X-Access-Key required for every endpoint except /health/liveness and /docs*'
+      rate_limiting: 'Public requests limited to 120/min per IP; a valid X-Access-Key removes the limit',
+      authentication: 'No key required for data and metrics endpoints; X-Access-Key still gates /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics)'
     },
     main_categories: {
       search_discovery: {
@@ -249,8 +224,8 @@ app.get('/', (req, res) => {
     },
     technical_features: {
       search_performance: 'MariaDB FULLTEXT indexes on works (ft_works_content + ft_works_metadata) and persons (ft_persons_names) drive search; institutions search disabled for optimal performance',
-      authentication: 'X-Access-Key required on every endpoint (header: x-access-key | x-internal-key | x-api-key). Public paths: /health/liveness, /docs, /docs.json, /docs.yaml, /openapi.yaml, /openapi.yml.',
-      rate_limits: 'No limit for authenticated requests',
+      authentication: 'Open access: data and metrics endpoints need no key. An optional X-Access-Key (header: x-access-key | x-internal-key | x-api-key) lifts the rate limit and unlocks /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics).',
+      rate_limits: 'Unauthenticated requests: 120/min per IP. No limit when a valid X-Access-Key is supplied.',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
       cache_ttl: '30 minutes',
       security: 'XSS protection, SQL injection prevention, abuse detection'
