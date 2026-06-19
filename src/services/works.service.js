@@ -382,7 +382,7 @@ class WorksService {
     const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
     const sortBy = filters.sort_by ?? filters.sortBy ?? null;
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
-    const effectiveLimit = Math.min(limit, 20);
+    const effectiveLimit = Math.min(limit, 50);
     const cacheKey = `works:list:v5:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
 
     try {

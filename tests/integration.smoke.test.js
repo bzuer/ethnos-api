@@ -119,6 +119,17 @@ describe('Integration smoke (real DB)', () => {
       }
     });
 
+    test('GET /search/works free-text q returns ranked matches', async () => {
+      const body = assertSuccess(await fetchJson('/search/works?q=social&limit=5'), 'GET /search/works?q');
+      assert.ok(Array.isArray(body.data), 'data must be array');
+      assert.ok(body.pagination.total > 0, 'free-text q must return matches');
+      assert.equal(body.meta?.search_type, 'fulltext');
+      assert.equal(body.meta?.performance?.match_mode, 'any_publication');
+      if (body.data.length > 0) {
+        assert.ok('cited_by_count' in body.data[0], 'search result must expose cited_by_count');
+      }
+    });
+
     test('GET /works/:id embeds publications[]', async () => {
       const list = assertSuccess(await fetchJson('/works?limit=1'), 'GET /works for /works/:id probe');
       const workId = list.data?.[0]?.id;

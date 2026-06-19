@@ -9,6 +9,11 @@ const PERSONS_TABLE = process.env.MANTICORE_PERSONS_TABLE || 'persons';
 const WORKS_FIELD_WEIGHTS = 'title=10, subtitle=4, abstract=2, authors=6, subjects=4, venue=4';
 const PERSONS_FIELD_WEIGHTS = 'preferred_name=10, family_name=6, given_names=4';
 
+const WORKS_TEXT_FIELDS = 'title,subtitle,abstract,authors,subjects,venue';
+
+const WORKS_RELEVANCE_RANKER = "ranker=expr('sum(lcs*user_weight)*1000 + bm25 + min(citation_count,1000)*50')";
+const PERSONS_RELEVANCE_RANKER = "ranker=expr('sum(lcs*user_weight)*1000 + bm25 + min(total_works,500)*20')";
+
 const MAX_MATCHES_CEILING = 100000;
 const YEAR_ENUM_MAX_SPAN = 150;
 
@@ -47,7 +52,7 @@ function quoteAttr(value) {
 function buildWorksMatch({ q, author, subject, venue_name }) {
   const groups = [];
   const free = sanitizeMatchValue(q);
-  if (free) groups.push(`@(title,subtitle,abstract,subjects) ${free}`);
+  if (free) groups.push(`@(${WORKS_TEXT_FIELDS}) ${free}`);
   const a = sanitizeMatchValue(author);
   if (a) groups.push(`@authors ${a}`);
   const s = sanitizeMatchValue(subject);
@@ -93,27 +98,25 @@ function buildWorksAttrConditions(filters) {
   return conds;
 }
 
-function buildWorksOrder(filters, hasMatch) {
+function buildWorksOrder(filters) {
   const sortBy = (filters.sort_by ?? filters.sortBy ?? '').toString().toLowerCase();
   const dir = (filters.sort_order ?? filters.sortOrder ?? '').toString().toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   switch (sortBy) {
     case 'cited_by_count':
     case 'citation_count':
     case 'citations':
-      return `citation_count ${dir}, max_year DESC, id DESC`;
+      return { clause: `citation_count ${dir}, max_year DESC, id DESC`, relevance: false };
     case 'references_count':
     case 'reference_count':
-      return `reference_count ${dir}, max_year DESC, id DESC`;
+      return { clause: `reference_count ${dir}, max_year DESC, id DESC`, relevance: false };
     case 'publication_year':
     case 'year':
-      return `max_year ${dir}, id DESC`;
+      return { clause: `max_year ${dir}, id DESC`, relevance: false };
     case 'id':
     case 'work_id':
-      return `id ${dir}`;
+      return { clause: `id ${dir}`, relevance: false };
     default:
-      return hasMatch
-        ? 'weight() DESC, citation_count DESC, id DESC'
-        : 'citation_count DESC, id DESC';
+      return { clause: 'weight() DESC, citation_count DESC, id DESC', relevance: true };
   }
 }
 
@@ -123,12 +126,14 @@ async function searchWorkIds(filters = {}, limit, offset) {
 
   const where = [`MATCH('${matchExpr}')`, ...buildWorksAttrConditions(filters)];
   const whereClause = where.join(' AND ');
-  const order = buildWorksOrder(filters, true);
+  const order = buildWorksOrder(filters);
   const maxMatches = Math.min(MAX_MATCHES_CEILING, Math.max(1000, offset + limit));
+  const options = [`max_matches=${maxMatches}`, `field_weights=(${WORKS_FIELD_WEIGHTS})`];
+  if (order.relevance) options.push(WORKS_RELEVANCE_RANKER);
 
   const pageSql = `SELECT id, weight() AS w FROM ${WORKS_TABLE} WHERE ${whereClause} `
-    + `ORDER BY ${order} LIMIT ${offset}, ${limit} `
-    + `OPTION max_matches=${maxMatches}, field_weights=(${WORKS_FIELD_WEIGHTS})`;
+    + `ORDER BY ${order.clause} LIMIT ${offset}, ${limit} `
+    + `OPTION ${options.join(', ')}`;
   const countSql = `SELECT COUNT(*) AS total FROM ${WORKS_TABLE} WHERE ${whereClause}`;
 
   const [pageRows, countRows] = await Promise.all([
@@ -158,7 +163,7 @@ async function searchPersonIds(query, { verified, limit, offset } = {}) {
 
   const pageSql = `SELECT id, weight() AS w FROM ${PERSONS_TABLE} WHERE ${whereClause} `
     + `ORDER BY weight() DESC, total_works DESC, id DESC LIMIT ${off}, ${lim} `
-    + `OPTION max_matches=${maxMatches}, field_weights=(${PERSONS_FIELD_WEIGHTS})`;
+    + `OPTION max_matches=${maxMatches}, field_weights=(${PERSONS_FIELD_WEIGHTS}), ${PERSONS_RELEVANCE_RANKER}`;
   const countSql = `SELECT COUNT(*) AS total FROM ${PERSONS_TABLE} WHERE ${whereClause}`;
 
   const [pageRows, countRows] = await Promise.all([
@@ -180,7 +185,7 @@ async function fetchWorkIdsForMatch(query, limit) {
   const lim = toInt(limit) ?? 50;
   const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
     + `ORDER BY weight() DESC, citation_count DESC, id DESC LIMIT 0, ${lim} `
-    + `OPTION max_matches=${Math.max(1000, lim)}, field_weights=(${WORKS_FIELD_WEIGHTS})`;
+    + `OPTION max_matches=${Math.max(1000, lim)}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}`;
   const rows = await manticore.query(sql);
   return rows.map(r => Number(r.id));
 }
@@ -191,7 +196,7 @@ async function fetchWorkIdsForFilters(filters, cap = 5000) {
   const lim = Math.min(Math.max(cap, 1), MAX_MATCHES_CEILING);
   const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
     + `ORDER BY weight() DESC, citation_count DESC, id DESC LIMIT 0, ${lim} `
-    + `OPTION max_matches=${lim}, field_weights=(${WORKS_FIELD_WEIGHTS})`;
+    + `OPTION max_matches=${lim}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}`;
   const rows = await manticore.query(sql);
   const ids = rows.map(r => Number(r.id));
   return { ids, capped: ids.length >= lim };
