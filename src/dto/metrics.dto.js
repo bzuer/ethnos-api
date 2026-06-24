@@ -68,12 +68,6 @@ const formatInstitutionProductivity = (institution, rank = null) => {
         ? null
         : parseInt(institution.h_index, 10)
     },
-    timespan: {
-      first_publication_year: parseInt(institution.first_publication_year) || null,
-      latest_publication_year: parseInt(institution.latest_publication_year) || null,
-      years_active: institution.latest_publication_year && institution.first_publication_year ?
-        parseInt(institution.latest_publication_year) - parseInt(institution.first_publication_year) + 1 : 0
-    },
     productivity_score: institution.productivity_score ? parseFloat(institution.productivity_score) : null
   };
 };

@@ -555,9 +555,7 @@ describe('DTOs structure', () => {
       open_access_works_count: 25,
       h_index: 12,
       i10_index: 30,
-      '2yr_mean_citedness': 1.5,
-      aliases_count: 3,
-      corpus: { first_publication_year: 1990, latest_publication_year: 2025 }
+      '2yr_mean_citedness': 1.5
     };
     const details = formatOrganizationDetails(org);
     expect(details.type).toBe('INSTITUTE');
@@ -567,7 +565,8 @@ describe('DTOs structure', () => {
     expect(details.names.alternative_names).toEqual(['Test U', 'Universidade Teste']);
     expect(details.metrics).toMatchObject({ works_count: 100, researchers_count: 40, total_citations: 500, h_index: 12, i10_index: 30 });
     expect(details.metrics.open_access_percentage).toBe(25);
-    expect(details.metrics.first_publication_year).toBe(1990);
+    expect(details).not.toHaveProperty('production_summary');
+    expect(details).not.toHaveProperty('top_authors');
     expect(details._links.self).toBe('/institutions/2');
 
     const listItem = formatOrganizationListItem(org);

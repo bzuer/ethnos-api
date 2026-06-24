@@ -11,7 +11,6 @@ const { withTimeout } = require('../utils/db');
 
 const ORG_TYPES = new Set(['UNIVERSITY', 'INSTITUTE', 'PUBLISHER', 'FUNDER', 'COMPANY', 'OTHER']);
 const ORG_STATUSES = new Set(['active', 'inactive', 'withdrawn']);
-const TREND_YEARS = 15;
 
 const LIST_SORT_COLUMNS = {
   works_count: 'o.publication_count',
@@ -266,18 +265,8 @@ class OrganizationsService {
     }
   }
 
-  async getOrganizationById(id, options = {}) {
-    const includeProduction = toBooleanFlag(options.include_production, true);
-    const includeAuthors = toBooleanFlag(options.include_authors, true);
-    const includeWorks = toBooleanFlag(options.include_works, true);
-    const includeRelationships = toBooleanFlag(options.include_relationships, true);
-
-    const cacheKey = `organization:v3:${id}:${[
-      includeProduction ? 1 : 0,
-      includeAuthors ? 1 : 0,
-      includeWorks ? 1 : 0,
-      includeRelationships ? 1 : 0
-    ].join('')}`;
+  async getOrganizationById(id) {
+    const cacheKey = `organization:v4:${id}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -306,97 +295,14 @@ class OrganizationsService {
       }
       const organization = orgRows[0];
 
-      const enrichment = await Promise.allSettled([
-        sequelize.query(withTimeout(`
-          SELECT MIN(pub.year) AS first_publication_year, MAX(pub.year) AS latest_publication_year
-          FROM authorships a
-          JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id = :id AND pub.year IS NOT NULL
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
+      let relationships = {};
+      try {
+        relationships = await this.getRelationships(id);
+      } catch (e) {
+        logger.warn(`Org ${id} relationships lookup failed`, { error: e.message });
+      }
 
-        includeProduction ? sequelize.query(withTimeout(`
-          SELECT w.work_type AS type, COUNT(DISTINCT w.id) AS works_count
-          FROM authorships a
-          JOIN works w ON w.id = a.work_id
-          WHERE a.affiliation_id = :id
-          GROUP BY w.work_type
-          ORDER BY works_count DESC
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
-
-        includeProduction ? sequelize.query(withTimeout(`
-          SELECT pub.year, COUNT(DISTINCT a.work_id) AS works_count
-          FROM authorships a
-          JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id = :id AND pub.year IS NOT NULL
-          GROUP BY pub.year
-          ORDER BY pub.year DESC
-          LIMIT :years
-        `), { replacements: { id, years: TREND_YEARS }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
-
-        includeAuthors ? sequelize.query(withTimeout(`
-          SELECT p.id AS person_id, p.preferred_name,
-                 COUNT(DISTINCT a.work_id) AS works_count,
-                 MAX(pub.year) AS latest_publication_year
-          FROM authorships a
-          JOIN persons p ON p.id = a.person_id
-          LEFT JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id = :id
-          GROUP BY p.id, p.preferred_name
-          ORDER BY works_count DESC, p.preferred_name ASC
-          LIMIT 10
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
-
-        includeWorks ? sequelize.query(withTimeout(`
-          SELECT
-            w.id, w.title, w.subtitle, w.work_type, w.language,
-            w.citation_count, w.reference_count,
-            pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
-            pub.open_access, pub.peer_reviewed,
-            v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
-            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
-          FROM works w
-          JOIN authorships a ON a.work_id = w.id
-          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
-          LEFT JOIN venues v ON v.id = pub.venue_id
-          WHERE a.affiliation_id = :id
-          GROUP BY w.id
-          ORDER BY COALESCE(pub.year, 0) DESC, w.id DESC
-          LIMIT 10
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
-
-        sequelize.query(withTimeout(`
-          SELECT COUNT(*) AS aliases_count FROM organization_aliases WHERE org_id = :id
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
-
-        sequelize.query(withTimeout(`
-          SELECT COUNT(*) AS funded_works_count, COUNT(DISTINCT grant_number) AS grants_count
-          FROM funding WHERE funder_id = :id
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
-
-        includeRelationships ? this.getRelationships(id) : Promise.resolve({})
-      ]);
-
-      const value = (idx, fallback) => (enrichment[idx].status === 'fulfilled' ? enrichment[idx].value : fallback);
-      const corpusRow = value(0, [])[0] || {};
-      const productionByType = value(1, []);
-      const publicationTrend = value(2, []);
-      const topAuthors = value(3, []);
-      const recentWorks = value(4, []);
-      const aliasesCount = value(5, [])[0]?.aliases_count || 0;
-      const fundingRow = value(6, [])[0] || {};
-      const relationships = value(7, {});
-
-      const shaped = formatOrganizationDetails({
-        ...organization,
-        corpus: corpusRow,
-        aliases_count: aliasesCount,
-        funded_works_count: fundingRow.funded_works_count,
-        grants_count: fundingRow.grants_count,
-        production_summary: { by_work_type: productionByType, publication_trend: publicationTrend },
-        top_authors: topAuthors,
-        recent_works: recentWorks,
-        relationships
-      });
+      const shaped = formatOrganizationDetails({ ...organization, relationships });
 
       await cacheService.set(cacheKey, shaped, 600);
       logger.info(`Organization ${id} cached for 10 minutes`);

@@ -216,10 +216,12 @@ describe('Integration smoke (real DB)', () => {
       const body = assertSuccess(await fetchJson(`/institutions/${id}`), `GET /institutions/${id}`);
       const org = body.data;
       assert.equal(org.id, id);
-      for (const block of ['identifiers', 'names', 'metrics', 'funding_role', 'production_summary', 'relationships', '_links']) {
+      for (const block of ['identifiers', 'names', 'metrics', 'relationships', '_links']) {
         assert.ok(block in org, `detail exposes ${block} block`);
       }
       assert.ok(Array.isArray(org.names.acronyms), 'names.acronyms is an array');
+      assert.ok(!('production_summary' in org), 'detail performs no live production aggregation');
+      assert.ok(!('top_authors' in org), 'detail performs no live author aggregation');
       assert.equal(org._links.works, `/institutions/${id}/works`);
     });
 

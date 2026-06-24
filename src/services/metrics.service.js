@@ -207,29 +207,7 @@ class MetricsService {
         type: sequelize.QueryTypes.SELECT
       });
 
-      const orgIds = topOrgsRows.map(r => r.organization_id);
-      const timespanMap = Object.create(null);
-      if (orgIds.length > 0) {
-        const timespans = await sequelize.query(`
-          SELECT
-            a.affiliation_id AS organization_id,
-            MIN(pub.year) AS first_publication_year,
-            MAX(pub.year) AS latest_publication_year
-          FROM authorships a
-          JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id IN (:orgIds) AND pub.year IS NOT NULL
-          GROUP BY a.affiliation_id
-        `, {
-          replacements: { orgIds },
-          type: sequelize.QueryTypes.SELECT
-        });
-        for (const row of timespans) {
-          timespanMap[row.organization_id] = row;
-        }
-      }
-
       const institutions = topOrgsRows.map(row => {
-        const timespan = timespanMap[row.organization_id] || {};
         const totalWorks = parseInt(row.total_works, 10) || 0;
         const totalCitations = parseInt(row.total_citations, 10) || 0;
         return {
@@ -241,9 +219,7 @@ class MetricsService {
           avg_citations: totalWorks > 0 ? Math.round((totalCitations / totalWorks) * 100) / 100 : null,
           unique_researchers: parseInt(row.unique_researchers, 10) || 0,
           open_access_works_count: parseInt(row.open_access_works_count, 10) || 0,
-          h_index: row.h_index === null || row.h_index === undefined ? null : parseInt(row.h_index, 10),
-          first_publication_year: timespan.first_publication_year || null,
-          latest_publication_year: timespan.latest_publication_year || null
+          h_index: row.h_index === null || row.h_index === undefined ? null : parseInt(row.h_index, 10)
         };
       });
 
