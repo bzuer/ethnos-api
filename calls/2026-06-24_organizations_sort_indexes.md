@@ -1,7 +1,7 @@
 # organizations — add sort indexes for the rebuilt /institutions listing
 
 **Filed:** 2026-06-24
-**Status:** PENDING (operator) — additive index creation only. No data, column, or structural change to rows.
+**Status:** APPLIED 2026-06-24 — operator ran the `ALTER TABLE organizations ADD INDEX` for all three columns (`idx_organizations_total_citations`, `idx_organizations_h_index`, `idx_organizations_i10_index`); `Query OK, 0 rows affected`. The `/institutions` secondary sorts (`citations`/`h_index`/`i10_index`) are now index-backed. Additive index creation only; no data, column, or structural change to rows.
 
 ## Why
 The rebuilt `/institutions` endpoint reads org metrics straight from the stored columns and offers

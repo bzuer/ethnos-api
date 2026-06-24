@@ -33,42 +33,24 @@ class PersonsService {
         return null;
       }
 
-      const [workCounts] = await sequelize.query(withTimeout(`
+      const [roleBreakdown] = await sequelize.query(withTimeout(`
         SELECT
-          COUNT(DISTINCT a.work_id) AS total_works,
           COUNT(DISTINCT CASE WHEN a.role = 'AUTHOR' THEN a.work_id END) AS works_as_author,
-          COUNT(DISTINCT CASE WHEN a.role = 'EDITOR' THEN a.work_id END) AS works_as_editor,
-          COUNT(DISTINCT CASE WHEN a.is_corresponding = 1 THEN a.work_id END) AS corresponding_author_count
+          COUNT(DISTINCT CASE WHEN a.role = 'EDITOR' THEN a.work_id END) AS works_as_editor
         FROM authorships a
         WHERE a.person_id = :id
       `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
 
-      const [publicationWindow] = await sequelize.query(withTimeout(`
-        SELECT
-          MIN(pub.year) AS first_publication_year,
-          MAX(pub.year) AS latest_publication_year
-        FROM publications pub
-        INNER JOIN authorships a ON pub.work_id = a.work_id
-        WHERE a.person_id = :id AND pub.year IS NOT NULL
-      `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
-
-      const agg = {
-        ...(workCounts || {}),
-        first_publication_year: publicationWindow?.first_publication_year || null,
-        latest_publication_year: publicationWindow?.latest_publication_year || null,
-        total_citations: null,
-        open_access_papers: null
-      };
-
+      const stored = person[0];
       const personData = {
-        ...person[0],
-        works_count: parseInt(agg?.total_works, 10) || 0,
-        author_count: parseInt(agg?.works_as_author, 10) || 0,
-        editor_count: parseInt(agg?.works_as_editor, 10) || 0,
-        first_publication_year: agg?.first_publication_year ? parseInt(agg.first_publication_year, 10) : null,
-        latest_publication_year: agg?.latest_publication_year ? parseInt(agg.latest_publication_year, 10) : null,
-        total_citations: agg?.total_citations !== undefined ? parseInt(agg.total_citations, 10) : null,
-        open_access_works: agg?.open_access_papers !== undefined ? parseInt(agg.open_access_papers, 10) : null,
+        ...stored,
+        works_count: parseInt(stored.total_works, 10) || 0,
+        author_count: parseInt(roleBreakdown?.works_as_author, 10) || 0,
+        editor_count: parseInt(roleBreakdown?.works_as_editor, 10) || 0,
+        first_publication_year: stored.first_publication_year ? parseInt(stored.first_publication_year, 10) : null,
+        latest_publication_year: stored.latest_publication_year ? parseInt(stored.latest_publication_year, 10) : null,
+        total_citations: stored.total_citations !== null && stored.total_citations !== undefined ? parseInt(stored.total_citations, 10) : null,
+        open_access_works: null
       };
 
       const recentWorks = await sequelize.query(withTimeout(`
@@ -254,6 +236,8 @@ class PersonsService {
               p.family_name,
               p.orcid,
               p.is_verified,
+              p.total_works,
+              p.latest_publication_year,
               s.signature as name_signature
             FROM persons p
             INNER JOIN signatures s ON p.signature_id = s.id
@@ -278,7 +262,10 @@ class PersonsService {
         const total = parseInt(countRows?.[0]?.total || 0, 10);
         const data = rows.map(p => formatPersonListItem({
           ...p,
-          metrics: { works_count: 0, latest_publication_year: null }
+          metrics: {
+            works_count: parseInt(p.total_works, 10) || 0,
+            latest_publication_year: p.latest_publication_year || null
+          }
         }));
         const fastResult = {
           data,
@@ -302,13 +289,15 @@ class PersonsService {
       try {
         [persons, countResult] = await Promise.all([
           sequelize.query(`
-            SELECT 
+            SELECT
               p.id,
               p.preferred_name,
               p.given_names,
               p.family_name,
               p.orcid,
               p.is_verified,
+              p.total_works,
+              p.latest_publication_year,
               s.signature as name_signature
             FROM persons p
             LEFT JOIN signatures s ON p.signature_id = s.id
@@ -344,40 +333,15 @@ class PersonsService {
         throw listErr;
       }
 
-      const personIds = persons.map(person => person.id);
-      let metricsMap = {};
-
-      if (personIds.length > 0) {
-        const placeholders = personIds.map(() => '?').join(',');
-        const metrics = await sequelize.query(`
-          SELECT 
-            a.person_id,
-            COUNT(DISTINCT a.work_id) as works_count,
-            MAX(pub.year) as latest_publication_year
-          FROM authorships a
-          LEFT JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.person_id IN (${placeholders})
-          GROUP BY a.person_id
-        `, {
-          replacements: personIds,
-          type: sequelize.QueryTypes.SELECT
-        });
-
-        metricsMap = metrics.reduce((acc, row) => {
-          acc[row.person_id] = {
-            works_count: parseInt(row.works_count, 10) || 0,
-            latest_publication_year: row.latest_publication_year ? parseInt(row.latest_publication_year, 10) : null
-          };
-          return acc;
-        }, {});
-      }
-
       const total = countResult[0].total;
       const totalPages = Math.ceil(total / limit);
 
       const listItems = persons.map(person => formatPersonListItem({
         ...person,
-        metrics: metricsMap[person.id] || { works_count: 0, latest_publication_year: null }
+        metrics: {
+          works_count: parseInt(person.total_works, 10) || 0,
+          latest_publication_year: person.latest_publication_year || null
+        }
       }));
 
       const result = {

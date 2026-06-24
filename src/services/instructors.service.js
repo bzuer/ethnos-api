@@ -507,16 +507,13 @@ class InstructorsService {
 
     const authorshipStatsQuery = `
       SELECT
-        COUNT(DISTINCT a.work_id) AS works_authored,
-        COUNT(DISTINCT p.signature_id) AS unique_signatures,
-        COUNT(DISTINCT a.work_id) AS confirmed_authorships,
-        MIN(pub.year) AS first_publication_year,
-        MAX(pub.year) AS latest_publication_year
+        p.total_works AS works_authored,
+        p.total_works AS confirmed_authorships,
+        CASE WHEN p.signature_id IS NOT NULL THEN 1 ELSE 0 END AS unique_signatures,
+        p.first_publication_year,
+        p.latest_publication_year
       FROM persons p
-      LEFT JOIN authorships a ON a.person_id = p.id
-      LEFT JOIN publications pub ON pub.work_id = a.work_id
       WHERE p.id = ?
-      GROUP BY p.id
     `;
 
     const [authorshipStats] = await pool.execute(authorshipStatsQuery, [personId]);
