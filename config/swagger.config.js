@@ -772,10 +772,11 @@ const options = {
             },
             names: {
               type: 'object',
-              description: 'Name surface (detail responses) — read from the stored JSON columns',
+              description: 'Name surface (detail responses)',
               properties: {
                 acronyms: { type: 'array', items: { type: 'string' }, example: ['USP'] },
-                alternative_names: { type: 'array', items: { type: 'string' }, example: ['University of São Paulo'] }
+                alternative_names: { type: 'array', items: { type: 'string' }, example: ['University of São Paulo'] },
+                aliases_count: { type: 'integer', example: 7 }
               }
             },
             identifiers: {
@@ -790,7 +791,7 @@ const options = {
             },
             metrics: {
               type: 'object',
-              description: 'Metrics read straight from the stored organizations columns — the API performs no live aggregation. works_count/researchers_count are local corpus counts; h_index/i10_index/two_yr_mean_citedness are provisional, DB-sourced bibliometric indicators.',
+              description: 'Institution metrics. works_count/researchers_count/total_citations/open_access_works_count and the provisional h_index/i10_index/two_yr_mean_citedness are read straight from stored organizations columns (the database calculates them, the API never recomputes them); first_publication_year/latest_publication_year are not stored and are derived by the API from the affiliated-works corpus (bounded + cached).',
               properties: {
                 works_count: { type: 'integer', example: 13766 },
                 researchers_count: { type: 'integer', example: 10872 },
@@ -799,7 +800,17 @@ const options = {
                 open_access_percentage: { type: 'number', nullable: true, example: 92.7 },
                 h_index: { type: 'integer', nullable: true, example: 51 },
                 i10_index: { type: 'integer', nullable: true, example: 708 },
-                two_yr_mean_citedness: { type: 'number', nullable: true, example: 0.0507 }
+                two_yr_mean_citedness: { type: 'number', nullable: true, example: 0.0507 },
+                first_publication_year: { type: 'integer', nullable: true, example: 1949 },
+                latest_publication_year: { type: 'integer', nullable: true, example: 2026 }
+              }
+            },
+            funding_role: {
+              type: 'object',
+              description: 'Footprint as a funder (detail responses)',
+              properties: {
+                funded_works_count: { type: 'integer', example: 0 },
+                grants_count: { type: 'integer', example: 0 }
               }
             },
             relationships: {

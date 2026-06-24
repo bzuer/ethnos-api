@@ -95,7 +95,14 @@ class OrganizationsController {
       if (!this.validate(req, res)) return;
 
       const { id } = req.params;
-      const organization = await organizationsService.getOrganizationById(id);
+      const options = {
+        include_production: clean(req.query.include_production),
+        include_authors: clean(req.query.include_authors),
+        include_works: clean(req.query.include_works),
+        include_relationships: clean(req.query.include_relationships)
+      };
+
+      const organization = await organizationsService.getOrganizationById(id, options);
       if (!organization) {
         return res.fail(`Institution with ID ${id} not found`, {
           statusCode: 404,

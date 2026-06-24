@@ -138,10 +138,45 @@ function formatRelationships(raw = {}) {
     parents,
     children,
     related,
-    parents_count: parents.length,
-    children_count: children.length,
-    related_count: related.length
+    parents_count: toOptionalInteger(raw.parents_count) ?? parents.length,
+    children_count: toOptionalInteger(raw.children_count) ?? children.length,
+    related_count: toOptionalInteger(raw.related_count) ?? related.length
   };
+}
+
+function formatTopAuthors(items = []) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.map(item => ({
+    person_id: toOptionalInteger(item.person_id || item.id),
+    preferred_name: normalizeString(item.preferred_name || item.name),
+    works_count: toOptionalInteger(item.works_count) || 0,
+    latest_publication_year: toOptionalInteger(item.latest_publication_year),
+    _links: item.person_id || item.id
+      ? { self: `/persons/${toOptionalInteger(item.person_id || item.id)}` }
+      : { self: null }
+  }));
+}
+
+function formatProductionSummary(raw = {}) {
+  const summary = { by_work_type: [], publication_trend: [] };
+
+  if (Array.isArray(raw.by_work_type)) {
+    summary.by_work_type = raw.by_work_type.map(item => ({
+      type: normalizeType(item.type),
+      works_count: toOptionalInteger(item.works_count) || 0
+    }));
+  }
+
+  if (Array.isArray(raw.publication_trend)) {
+    summary.publication_trend = raw.publication_trend.map(item => ({
+      year: toOptionalInteger(item.year),
+      works_count: toOptionalInteger(item.works_count) || 0
+    })).filter(entry => entry.year !== null);
+  }
+
+  return summary;
 }
 
 function formatAffiliatedWork(work = {}) {
@@ -192,6 +227,11 @@ function formatAffiliatedWork(work = {}) {
 
 function formatOrganizationDetails(org = {}) {
   const id = toOptionalInteger(org.id);
+  const corpus = org.corpus || {};
+
+  const metrics = formatMetrics(org);
+  metrics.first_publication_year = toOptionalInteger(corpus.first_publication_year);
+  metrics.latest_publication_year = toOptionalInteger(corpus.latest_publication_year);
 
   return {
     id,
@@ -202,11 +242,19 @@ function formatOrganizationDetails(org = {}) {
     location: normalizeLocation(org),
     names: {
       acronyms: parseJsonArray(org.acronyms),
-      alternative_names: parseJsonArray(org.alternative_names)
+      alternative_names: parseJsonArray(org.alternative_names),
+      aliases_count: toOptionalInteger(org.aliases_count) || 0
     },
     identifiers: normalizeIdentifiers(org),
-    metrics: formatMetrics(org),
+    metrics,
+    funding_role: {
+      funded_works_count: toOptionalInteger(org.funded_works_count) || 0,
+      grants_count: toOptionalInteger(org.grants_count) || 0
+    },
+    production_summary: formatProductionSummary(org.production_summary || {}),
     relationships: formatRelationships(org.relationships || {}),
+    top_authors: formatTopAuthors(org.top_authors),
+    recent_works: Array.isArray(org.recent_works) ? org.recent_works.map(formatAffiliatedWork) : [],
     created_at: org.created_at || null,
     updated_at: org.updated_at || null,
     _links: {

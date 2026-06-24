@@ -145,11 +145,10 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
  *   get:
  *     summary: Get an institution by ID
  *     description: >-
- *       Full institution profile, presented from the stored `organizations` record: identifiers, names
- *       (acronyms + alternative names), operator-maintained metrics (works, researchers, citations,
- *       open-access, h-index, i10-index, 2-yr mean citedness), and the organizational hierarchy
- *       (parents/children/related). The API performs no live metric aggregation — every figure is read
- *       from a stored column. Work and funding corpora are served by the dedicated list sub-resources.
+ *       Full institution profile: identifiers, names (acronyms + alternative names), operator-maintained
+ *       metrics (works, researchers, citations, open-access, h-index, i10-index, 2-yr mean citedness),
+ *       corpus production summary (by work type + yearly trend), affiliated top authors, recent works,
+ *       organizational hierarchy (parents/children/related), and funding role.
  *     tags: [Institutions]
  *     parameters:
  *       - in: path
@@ -157,6 +156,22 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
  *         required: true
  *         schema: { type: integer, minimum: 1 }
  *         description: Unique identifier of the organization.
+ *       - in: query
+ *         name: include_production
+ *         schema: { type: boolean, default: true }
+ *         description: Embed production_summary (by_work_type + publication_trend).
+ *       - in: query
+ *         name: include_authors
+ *         schema: { type: boolean, default: true }
+ *         description: Embed top_authors.
+ *       - in: query
+ *         name: include_works
+ *         schema: { type: boolean, default: true }
+ *         description: Embed recent_works.
+ *       - in: query
+ *         name: include_relationships
+ *         schema: { type: boolean, default: true }
+ *         description: Embed the parents/children/related hierarchy.
  *     responses:
  *       200: { $ref: '#/components/responses/Success' }
  *       400: { $ref: '#/components/responses/BadRequest' }
