@@ -224,11 +224,13 @@ function formatPrimaryAffiliation(raw) {
     return null;
   }
 
+  const organizationId = toOptionalInteger(raw.organization_id || raw.id);
   return {
-    id: toOptionalInteger(raw.organization_id || raw.id),
+    id: organizationId,
     name: raw.name || raw.organization_name || null,
     type: raw.type || null,
-    country_code: raw.country_code || raw.country || null
+    country_code: raw.country_code || raw.country || null,
+    _links: { self: organizationId === null ? null : `/institutions/${organizationId}` }
   };
 }
 

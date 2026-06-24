@@ -725,76 +725,115 @@ const options = {
         },
         Organization: {
           type: 'object',
+          description: 'Academic institution or organization (university, institute, publisher, funder, company). Exposed at `/institutions`.',
           properties: {
             id: {
               type: 'integer',
-              example: 12345,
+              example: 698684,
               description: 'Unique identifier for the organization'
             },
             name: {
               type: 'string',
               example: 'Universidade de São Paulo',
-              description: 'Full name of the organization'
-            },
-            short_name: {
-              type: 'string',
-              example: 'USP',
-              description: 'Short name or acronym'
+              description: 'Canonical name of the organization'
             },
             type: {
               type: 'string',
-              enum: ['UNIVERSITY', 'RESEARCH_INSTITUTE', 'COMPANY', 'GOVERNMENT', 'NGO', 'HOSPITAL'],
-              example: 'UNIVERSITY',
-              description: 'Type of organization'
+              enum: ['UNIVERSITY', 'INSTITUTE', 'PUBLISHER', 'FUNDER', 'COMPANY', 'OTHER'],
+              example: 'INSTITUTE',
+              description: 'Organization type'
             },
-            country: {
+            openalex_type: {
               type: 'string',
-              example: 'Brazil',
-              description: 'Country where organization is located'
+              nullable: true,
+              example: 'education',
+              description: 'OpenAlex institution type (education, healthcare, government, nonprofit, archive, funder, company)'
             },
-            region: {
+            status: {
               type: 'string',
-              example: 'South America',
-              description: 'Geographic region'
+              nullable: true,
+              enum: ['active', 'inactive', 'withdrawn'],
+              example: 'active',
+              description: 'Lifecycle status'
             },
-            city: {
-              type: 'string',
-              example: 'São Paulo',
-              description: 'City location'
+            acronyms: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['USP'],
+              description: 'Known acronyms (list responses)'
             },
-            website: {
-              type: 'string',
-              format: 'uri',
-              example: 'https://www.usp.br',
-              description: 'Official website URL'
+            location: {
+              type: 'object',
+              nullable: true,
+              properties: {
+                country_code: { type: 'string', nullable: true, example: 'BR' },
+                city: { type: 'string', nullable: true, example: 'São Paulo' }
+              }
             },
-            ror_id: {
-              type: 'string',
-              example: 'https://ror.org/036rp1748',
-              description: 'Research Organization Registry ID'
+            names: {
+              type: 'object',
+              description: 'Name surface (detail responses)',
+              properties: {
+                acronyms: { type: 'array', items: { type: 'string' }, example: ['USP'] },
+                alternative_names: { type: 'array', items: { type: 'string' }, example: ['University of São Paulo'] },
+                aliases_count: { type: 'integer', example: 7 }
+              }
             },
-            works_count: {
-              type: 'integer',
-              example: 125420,
-              description: 'Total number of works from this organization'
+            identifiers: {
+              type: 'object',
+              properties: {
+                ror_id: { type: 'string', nullable: true, example: '036rp1748' },
+                grid_id: { type: 'string', nullable: true, example: 'grid.11899.38' },
+                wikidata_id: { type: 'string', nullable: true, example: 'Q835960' },
+                openalex_id: { type: 'string', nullable: true, example: 'I17974374' },
+                url: { type: 'string', nullable: true, example: 'https://www5.usp.br' }
+              }
             },
-            members_count: {
-              type: 'integer',
-              example: 8250,
-              description: 'Number of affiliated researchers'
+            metrics: {
+              type: 'object',
+              description: 'Operator-maintained metrics sourced from the database. works_count/researchers_count are local corpus counts; h_index/i10_index/two_yr_mean_citedness are provisional bibliometric indicators.',
+              properties: {
+                works_count: { type: 'integer', example: 13766 },
+                researchers_count: { type: 'integer', example: 10872 },
+                total_citations: { type: 'integer', example: 51898 },
+                open_access_works_count: { type: 'integer', example: 12760 },
+                open_access_percentage: { type: 'number', nullable: true, example: 92.7 },
+                h_index: { type: 'integer', nullable: true, example: 866 },
+                i10_index: { type: 'integer', nullable: true, example: 444566 },
+                two_yr_mean_citedness: { type: 'number', nullable: true, example: 1.94888 },
+                first_publication_year: { type: 'integer', nullable: true, example: 1949 },
+                latest_publication_year: { type: 'integer', nullable: true, example: 2026 }
+              }
             },
-            h_index: {
-              type: 'integer',
-              example: 245,
-              description: 'Institutional H-index'
+            funding_role: {
+              type: 'object',
+              description: 'Footprint as a funder (detail responses)',
+              properties: {
+                funded_works_count: { type: 'integer', example: 0 },
+                grants_count: { type: 'integer', example: 0 }
+              }
             },
-            created_at: {
-              type: 'string',
-              format: 'date-time'
+            relationships: {
+              type: 'object',
+              description: 'Organizational hierarchy (detail responses)',
+              properties: {
+                parents: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                children: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                related: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                parents_count: { type: 'integer', example: 0 },
+                children_count: { type: 'integer', example: 24 },
+                related_count: { type: 'integer', example: 3 }
+              }
             },
-            updated_at: {
-              type: 'string',
-              format: 'date-time'
+            created_at: { type: 'string', format: 'date-time' },
+            updated_at: { type: 'string', format: 'date-time' },
+            _links: {
+              type: 'object',
+              properties: {
+                self: { type: 'string', example: '/institutions/698684' },
+                works: { type: 'string', example: '/institutions/698684/works' },
+                funded_works: { type: 'string', example: '/institutions/698684/funded-works' }
+              }
             }
           }
         },

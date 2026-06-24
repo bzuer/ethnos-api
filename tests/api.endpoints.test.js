@@ -283,18 +283,26 @@ describe('Persons', () => {
 });
 
 describe('Organizations', () => {
-  test('GET /institutions returns list', async () => {
+  test('GET /institutions returns list with sort meta', async () => {
     stubResolved(orgsService, 'getOrganizations', {
       data: [{ id: 1, name: 'Test University', identifiers: { ror_id: 'RORX' }, metrics: { works_count: 0 } }],
       pagination: pageMeta(1, 20, 1),
       performance: { engine: 'mock' },
-      meta: { engine: 'mock' },
+      meta: { sort: { by: 'works_count', order: 'DESC' }, source: 'organizations' },
     });
-    const req = createMockReq({ method: 'GET', path: '/institutions', query: {} });
+    const req = createMockReq({ method: 'GET', path: '/institutions', query: { sort_by: 'works_count' } });
     const res = withResponseFormatter(req, createMockRes());
     await invokeRouter({ router: orgsRouter, method: 'get', path: '/', req, res });
     expect(res.statusCode).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.meta.sort).toMatchObject({ by: 'works_count', order: 'DESC' });
+  });
+
+  test('GET /institutions rejects an invalid sort_by', async () => {
+    const req = createMockReq({ method: 'GET', path: '/institutions', query: { sort_by: 'bogus' } });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: orgsRouter, method: 'get', path: '/', req, res });
+    expect(res.statusCode).toBe(400);
   });
 
   test('GET /institutions/:id returns details', async () => {
@@ -304,6 +312,40 @@ describe('Organizations', () => {
     await invokeRouter({ router: orgsRouter, method: 'get', path: '/:id', req, res });
     expect(res.statusCode).toBe(200);
     expect(res.body.data).toHaveProperty('id', 1);
+  });
+
+  test('GET /institutions/:id 404 when absent', async () => {
+    stubResolved(orgsService, 'getOrganizationById', null);
+    const req = createMockReq({ method: 'GET', path: '/institutions/9', params: { id: '9' } });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: orgsRouter, method: 'get', path: '/:id', req, res });
+    expect(res.statusCode).toBe(404);
+  });
+
+  test('GET /institutions/:id/works returns affiliated works', async () => {
+    stubResolved(orgsService, 'getOrganizationWorks', {
+      data: [{ id: 7, title: 'A Work', cited_by_count: 3 }],
+      pagination: pageMeta(1, 20, 1),
+      meta: { match_mode: 'affiliation', sort: { by: 'publication_year', order: 'DESC' } },
+    });
+    const req = createMockReq({ method: 'GET', path: '/institutions/1/works', params: { id: '1' }, query: {} });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: orgsRouter, method: 'get', path: '/:id/works', req, res });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.meta.match_mode).toBe('affiliation');
+  });
+
+  test('GET /institutions/:id/funded-works returns funded works', async () => {
+    stubResolved(orgsService, 'getOrganizationFundedWorks', {
+      data: [{ id: 8, title: 'Funded Work', grant_number: 'G-1' }],
+      pagination: pageMeta(1, 20, 1),
+      meta: { match_mode: 'funder', sort: { by: 'publication_year', order: 'DESC' } },
+    });
+    const req = createMockReq({ method: 'GET', path: '/institutions/1/funded-works', params: { id: '1' }, query: {} });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: orgsRouter, method: 'get', path: '/:id/funded-works', req, res });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.meta.match_mode).toBe('funder');
   });
 });
 
@@ -492,27 +534,46 @@ describe('DTOs structure', () => {
     expect(listItem).toHaveProperty('scopus_id', 'SC123');
   });
 
-  test('Organization DTO exposes explicit IDs and keeps identifiers object', () => {
+  test('Organization DTO groups identifiers, parses JSON names, derives metrics', () => {
     const { formatOrganizationDetails, formatOrganizationListItem } = require('../src/dto/organization.dto');
     const org = {
       id: 2,
       name: 'Test University',
-      type: 'university',
+      type: 'institute',
+      openalex_type: 'education',
+      status: 'active',
       ror_id: 'ROR123',
+      grid_id: 'grid.1',
       wikidata_id: 'Q555',
       openalex_id: 'O-9',
-      url: 'https://example.org/u'
+      url: 'https://example.org/u',
+      acronyms: '["TU"]',
+      alternative_names: '["Test U", "Universidade Teste"]',
+      publication_count: 100,
+      researcher_count: 40,
+      total_citations: 500,
+      open_access_works_count: 25,
+      h_index: 12,
+      i10_index: 30,
+      '2yr_mean_citedness': 1.5,
+      aliases_count: 3,
+      corpus: { first_publication_year: 1990, latest_publication_year: 2025 }
     };
     const details = formatOrganizationDetails(org);
-    expect(details).toMatchObject({
-      ror_id: 'ROR123',
-      wikidata_id: 'Q555',
-      openalex_id: 'O-9',
-      url: 'https://example.org/u'
-    });
-    expect(details).toHaveProperty('identifiers');
+    expect(details.type).toBe('INSTITUTE');
+    expect(details.identifiers).toMatchObject({ ror_id: 'ROR123', grid_id: 'grid.1', wikidata_id: 'Q555', openalex_id: 'O-9' });
+    expect(details).not.toHaveProperty('ror_id');
+    expect(details.names.acronyms).toEqual(['TU']);
+    expect(details.names.alternative_names).toEqual(['Test U', 'Universidade Teste']);
+    expect(details.metrics).toMatchObject({ works_count: 100, researchers_count: 40, total_citations: 500, h_index: 12, i10_index: 30 });
+    expect(details.metrics.open_access_percentage).toBe(25);
+    expect(details.metrics.first_publication_year).toBe(1990);
+    expect(details._links.self).toBe('/institutions/2');
+
     const listItem = formatOrganizationListItem(org);
-    expect(listItem).toHaveProperty('ror_id', 'ROR123');
+    expect(listItem.identifiers.ror_id).toBe('ROR123');
+    expect(listItem.acronyms).toEqual(['TU']);
+    expect(listItem.metrics.works_count).toBe(100);
   });
 
   test('Work DTO embeds publications array and aggregated identifiers', () => {

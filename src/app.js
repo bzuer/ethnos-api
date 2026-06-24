@@ -193,8 +193,8 @@ app.get('/', (req, res) => {
         endpoints: ['/persons', '/persons/{id}', '/persons/{id}/collaborators', '/persons/{id}/works']
       },
       institutions: {
-        description: 'Academic institutions and affiliations',
-        endpoints: ['/institutions', '/institutions/{id}', '/institutions/{id}/works']
+        description: 'Academic institutions, publishers and funders',
+        endpoints: ['/institutions', '/institutions/{id}', '/institutions/{id}/works', '/institutions/{id}/funded-works']
       },
       academic_venues: {
         description: 'Journals, conferences, and publication venues',

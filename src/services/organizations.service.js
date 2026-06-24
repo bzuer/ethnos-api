@@ -1,188 +1,178 @@
 const { sequelize } = require('../models');
-const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
-const { formatOrganizationListItem, formatOrganizationDetails } = require('../dto/organization.dto');
+const {
+  formatOrganizationListItem,
+  formatOrganizationDetails,
+  formatAffiliatedWork
+} = require('../dto/organization.dto');
 const { withTimeout } = require('../utils/db');
 
+const ORG_TYPES = new Set(['UNIVERSITY', 'INSTITUTE', 'PUBLISHER', 'FUNDER', 'COMPANY', 'OTHER']);
+const ORG_STATUSES = new Set(['active', 'inactive', 'withdrawn']);
+const TREND_YEARS = 15;
+
+const LIST_SORT_COLUMNS = {
+  works_count: 'o.publication_count',
+  publication_count: 'o.publication_count',
+  researchers_count: 'o.researcher_count',
+  researcher_count: 'o.researcher_count',
+  citations: 'o.total_citations',
+  total_citations: 'o.total_citations',
+  cited_by_count: 'o.total_citations',
+  open_access_works_count: 'o.open_access_works_count',
+  h_index: 'o.h_index',
+  i10_index: 'o.i10_index',
+  name: 'o.name',
+  id: 'o.id',
+  created_at: 'o.created_at',
+  updated_at: 'o.updated_at'
+};
+
+const ASCENDING_DEFAULT_SORTS = new Set(['name', 'id']);
+
+function toNonNegativeInt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function toBooleanFlag(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const str = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(str)) return true;
+  if (['false', '0', 'no', 'off'].includes(str)) return false;
+  return fallback;
+}
+
+function normalizeSearchTerm(term) {
+  return String(term || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 class OrganizationsService {
-  async getOrganizationById(id) {
-    const t0 = Date.now();
-    const cacheKey = `organization:v2:${id}`;
-    
+  resolveListSort(filters = {}) {
+    const rawKey = (typeof filters.sort_by === 'string'
+      ? filters.sort_by
+      : (typeof filters.sortBy === 'string' ? filters.sortBy : '')).trim().toLowerCase();
+    const rawOrder = (typeof filters.sort_order === 'string'
+      ? filters.sort_order
+      : (typeof filters.sortOrder === 'string' ? filters.sortOrder : '')).trim().toUpperCase();
+
+    const hasSearch = Boolean(filters.search && String(filters.search).trim());
+
+    if (rawKey === 'relevance' || (!rawKey && hasSearch)) {
+      return { by: 'relevance', order: rawOrder === 'ASC' ? 'ASC' : 'DESC', column: null };
+    }
+
+    const key = LIST_SORT_COLUMNS[rawKey] ? rawKey : 'works_count';
+    const column = LIST_SORT_COLUMNS[key];
+    const defaultOrder = ASCENDING_DEFAULT_SORTS.has(key) ? 'ASC' : 'DESC';
+    const order = rawOrder === 'ASC' || rawOrder === 'DESC' ? rawOrder : defaultOrder;
+    return { by: key, order, column };
+  }
+
+  buildListFilters(filters = {}, { aliasMatch = false } = {}) {
+    const where = [];
+    const replacements = {};
+
+    const includeUnresolved = toBooleanFlag(filters.include_unresolved, false);
+    if (!includeUnresolved) {
+      where.push('NOT EXISTS (SELECT 1 FROM organization_unresolved u WHERE u.org_id = o.id)');
+      where.push('CHAR_LENGTH(TRIM(o.name)) >= 2');
+    }
+
+    const type = (filters.type || '').trim().toUpperCase();
+    if (type && ORG_TYPES.has(type)) {
+      where.push('o.type = :type');
+      replacements.type = type;
+    }
+
+    const openalexType = (filters.openalex_type || '').trim().toLowerCase();
+    if (openalexType) {
+      where.push('o.openalex_type = :openalexType');
+      replacements.openalexType = openalexType;
+    }
+
+    const country = (filters.country || filters.country_code || '').trim().toUpperCase();
+    if (country) {
+      where.push('o.country_code = :country');
+      replacements.country = country;
+    }
+
+    const status = (filters.status || '').trim().toLowerCase();
+    if (status && ORG_STATUSES.has(status)) {
+      where.push('o.status = :status');
+      replacements.status = status;
+    }
+
+    if (toBooleanFlag(filters.has_ror, false)) {
+      where.push('o.ror_id IS NOT NULL');
+    }
+
+    const worksMin = toNonNegativeInt(filters.works_min);
+    if (worksMin !== null) {
+      where.push('o.publication_count >= :worksMin');
+      replacements.worksMin = worksMin;
+    }
+    const worksMax = toNonNegativeInt(filters.works_max);
+    if (worksMax !== null) {
+      where.push('o.publication_count <= :worksMax');
+      replacements.worksMax = worksMax;
+    }
+
+    const researchersMin = toNonNegativeInt(filters.researchers_min);
+    if (researchersMin !== null) {
+      where.push('o.researcher_count >= :researchersMin');
+      replacements.researchersMin = researchersMin;
+    }
+
+    const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
+    if (citedByMin !== null) {
+      where.push('o.total_citations >= :citedByMin');
+      replacements.citedByMin = citedByMin;
+    }
+    const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
+    if (citedByMax !== null) {
+      where.push('o.total_citations <= :citedByMax');
+      replacements.citedByMax = citedByMax;
+    }
+
+    const hIndexMin = toNonNegativeInt(filters.h_index_min);
+    if (hIndexMin !== null) {
+      where.push('o.h_index >= :hIndexMin');
+      replacements.hIndexMin = hIndexMin;
+    }
+
+    const term = (filters.search || '').trim();
+    if (term) {
+      replacements.q = term;
+      replacements.qnorm = normalizeSearchTerm(term);
+      if (aliasMatch) {
+        where.push(`(MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE)
+          OR EXISTS (SELECT 1 FROM organization_aliases al WHERE al.org_id = o.id AND al.alias_norm = :qnorm))`);
+      }
+    }
+
+    return { where, replacements, term };
+  }
+
+  async countWithBudget(sql, replacements) {
     try {
-      const cached = await cacheService.get(cacheKey);
-      if (cached) {
-        logger.info(`Organization ${id} retrieved from cache`);
-        return cached;
-      }
-
-      const orgRows = await sequelize.query(withTimeout(`
-        SELECT * FROM organizations WHERE id = :id
-      `), {
-        replacements: { id },
+      const rows = await sequelize.query(withTimeout(sql, 2500), {
+        replacements,
         type: sequelize.QueryTypes.SELECT
       });
-
-      if (!orgRows || orgRows.length === 0) {
-        return null;
-      }
-
-      const organization = orgRows[0];
-
-      let metrics = {
-        affiliated_authors_count: parseInt(organization.researcher_count || 0, 10) || 0,
-        works_count: parseInt(organization.publication_count || 0, 10) || 0,
-        first_publication_year: null,
-        latest_publication_year: null,
-        total_citations: organization.total_citations || null,
-        open_access_works_count: organization.open_access_works_count || null
-      };
-      try {
-        const [agg] = await sequelize.query(withTimeout(`
-          SELECT
-            COUNT(DISTINCT a.person_id) AS affiliated_authors_count,
-            COUNT(DISTINCT a.work_id) AS works_count,
-            MIN(pub.year) AS first_publication_year,
-            MAX(pub.year) AS latest_publication_year,
-            SUM(CASE WHEN pub.open_access = 1 THEN 1 ELSE 0 END) AS open_access_works_count
-          FROM authorships a
-          LEFT JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id = :id
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
-        if (agg) {
-          metrics = {
-            affiliated_authors_count: parseInt(agg.affiliated_authors_count ?? metrics.affiliated_authors_count, 10) || 0,
-            works_count: parseInt(agg.works_count ?? metrics.works_count, 10) || 0,
-            first_publication_year: agg.first_publication_year || metrics.first_publication_year,
-            latest_publication_year: agg.latest_publication_year || metrics.latest_publication_year,
-            total_citations: metrics.total_citations || null,
-            open_access_works_count: agg.open_access_works_count !== undefined && agg.open_access_works_count !== null
-              ? parseInt(agg.open_access_works_count, 10) || 0
-              : metrics.open_access_works_count || null
-          };
-        }
-      } catch (e) {
-        logger.warn(`Org ${id} metrics aggregation failed`, { error: e.message });
-      }
-
-      const recentWorks = await sequelize.query(withTimeout(`
-        SELECT DISTINCT
-          w.id,
-          w.title,
-          w.abstract,
-          w.work_type,
-          w.language,
-          pub.year,
-          pub.doi,
-          pub.volume,
-          pub.issue,
-          pub.pages,
-          pub.peer_reviewed,
-          pub.open_access,
-          v.id AS venue_id,
-          v.name AS venue_name,
-          v.abbreviated_name AS venue_abbreviated_name,
-          v.type AS venue_type,
-          (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count,
-          NULL as first_author_name
-        FROM works w
-        INNER JOIN authorships a ON w.id = a.work_id
-        LEFT JOIN publications pub ON pub.id = (
-          SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-        )
-        LEFT JOIN venues v ON v.id = pub.venue_id
-        WHERE a.affiliation_id = :id
-        ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
-        LIMIT 10
-      `), {
-        replacements: { id },
-        type: sequelize.QueryTypes.SELECT
-      });
-
-      let topAuthors = [];
-      try {
-        topAuthors = await sequelize.query(withTimeout(`
-          SELECT 
-            p.id as person_id,
-            p.preferred_name,
-            COUNT(DISTINCT a.work_id) AS works_count,
-            MAX(pub.year) AS latest_publication_year
-          FROM authorships a
-          JOIN persons p ON p.id = a.person_id
-          LEFT JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id = :id
-          GROUP BY p.id, p.preferred_name
-          ORDER BY works_count DESC, p.preferred_name ASC
-          LIMIT 10
-        `), {
-          replacements: { id },
-          type: sequelize.QueryTypes.SELECT
-        });
-      } catch (e) {
-        topAuthors = [];
-      }
-
-      let productionByType = [];
-      try {
-        productionByType = await sequelize.query(withTimeout(`
-          SELECT 
-            w.work_type AS type,
-            COUNT(DISTINCT w.id) AS works_count
-          FROM authorships a
-          JOIN works w ON w.id = a.work_id
-          WHERE a.affiliation_id = :id
-          GROUP BY w.work_type
-          ORDER BY works_count DESC
-        `), {
-          replacements: { id },
-          type: sequelize.QueryTypes.SELECT
-        });
-      } catch (e) {
-        productionByType = [];
-      }
-
-      let publicationTrend = [];
-      try {
-        publicationTrend = await sequelize.query(withTimeout(`
-          SELECT 
-            pub.year,
-            COUNT(DISTINCT w.id) AS works_count
-          FROM authorships a
-          JOIN works w ON w.id = a.work_id
-          JOIN publications pub ON pub.work_id = w.id
-          WHERE a.affiliation_id = :id
-            AND pub.year IS NOT NULL
-          GROUP BY pub.year
-          ORDER BY pub.year DESC
-          LIMIT 10
-        `), {
-          replacements: { id },
-          type: sequelize.QueryTypes.SELECT
-        });
-      } catch (e) {
-        publicationTrend = [];
-      }
-
-      const shaped = formatOrganizationDetails({
-        ...organization,
-        metrics,
-        production_summary: {
-          by_work_type: productionByType,
-          publication_trend: publicationTrend
-        },
-        top_authors: topAuthors,
-        recent_works: recentWorks
-      });
-      
-      await cacheService.set(cacheKey, shaped, 300);
-      logger.info(`Organization ${id} cached for 5 minutes`);
-      
-      return shaped;
+      return { total: parseInt(rows?.[0]?.total || 0, 10), exact: true };
     } catch (error) {
-      logger.error('Error fetching organization by ID:', error);
-      throw error;
+      logger.warn('Organizations count budget exceeded; returning estimate', { error: error.message });
+      return { total: null, exact: false };
     }
   }
 
@@ -190,10 +180,9 @@ class OrganizationsService {
     const t0 = Date.now();
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { search, country_code, type } = filters;
-    
-    const cacheKey = `organizations:v3:${JSON.stringify(filters)}`;
-    
+
+    const cacheKey = `organizations:v4:${JSON.stringify({ ...filters, page, limit, offset })}`;
+
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) {
@@ -201,125 +190,75 @@ class OrganizationsService {
         return cached;
       }
 
-      const whereConditions = [];
-      const countReplacements = {};
+      const sort = this.resolveListSort(filters);
+      const { where, replacements, term } = this.buildListFilters(filters, { aliasMatch: Boolean(filters.search) });
+      const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-      if (search) {
-        const term = (search || '').trim();
-        try {
-          return await this.searchOrganizationsFulltext(term, { limit, offset, country_code, type });
-        } catch (e) {
-          logger.warn('Organizations FULLTEXT search failed; using LIKE fallback', { error: e.message });
-          return await this.fallbackOrganizationsSearch(term, { limit, offset, country_code, type });
-        }
+      let orderClause;
+      let relevanceSelect = '';
+      if (sort.by === 'relevance' && term) {
+        relevanceSelect = `,
+            (EXISTS (SELECT 1 FROM organization_aliases al WHERE al.org_id = o.id AND al.alias_norm = :qnorm)) AS alias_exact,
+            MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE) AS relevance`;
+        orderClause = 'alias_exact DESC, o.publication_count DESC, relevance DESC, o.id ASC';
+      } else {
+        const column = sort.column || 'o.publication_count';
+        const tieBreak = column === 'o.id' ? '' : ', o.id ASC';
+        orderClause = `${column} ${sort.order}${tieBreak}`;
       }
 
-      if (country_code) {
-        whereConditions.push('o.country_code = :country_code');
-        countReplacements.country_code = country_code;
-      }
+      const listReplacements = { ...replacements, limit: parseInt(limit, 10), offset: parseInt(offset, 10) };
 
-      if (type) {
-        whereConditions.push('o.type = :type');
-        countReplacements.type = type;
-      }
-
-      whereConditions.push("TRIM(o.name) != ''");
-      const whereClause = whereConditions.length ? `WHERE ${whereConditions.join(' AND ')}` : '';
-
-      const limitValue = Math.min(100, parseInt(limit, 10) || 20);
-      const offsetValue = Math.max(0, parseInt(offset, 10) || 0);
-
-      const [baseOrganizations, countResult] = await Promise.all([
+      const [rows, count] = await Promise.all([
         sequelize.query(`
           SELECT
-            o.id,
-            o.name,
-            o.type,
-            o.country_code,
-            o.city,
-            o.ror_id
+            o.id, o.name, o.type, o.openalex_type, o.status,
+            o.country_code, o.city, o.url, o.ror_id, o.grid_id, o.wikidata_id, o.openalex_id,
+            o.acronyms,
+            o.publication_count, o.researcher_count, o.total_citations, o.open_access_works_count,
+            o.h_index, o.i10_index, o.\`2yr_mean_citedness\`,
+            o.created_at, o.updated_at
+            ${relevanceSelect}
           FROM organizations o
           ${whereClause}
-          ORDER BY o.name ASC
+          ORDER BY ${orderClause}
           LIMIT :limit OFFSET :offset
         `, {
-          replacements: { ...countReplacements, limit: limitValue, offset: offsetValue },
+          replacements: listReplacements,
           type: sequelize.QueryTypes.SELECT
         }),
-        sequelize.query(`
+        this.countWithBudget(`
           SELECT COUNT(*) AS total
           FROM organizations o
           ${whereClause}
-        `, {
-          replacements: countReplacements,
-          type: sequelize.QueryTypes.SELECT
-        })
+        `, replacements)
       ]);
 
-      const orgIds = baseOrganizations.map(org => org.id);
-      const metricsMap = {};
+      const data = rows.map(formatOrganizationListItem);
 
-      if (orgIds.length > 0) {
-        const metricsQuery = `
-          SELECT
-            a.affiliation_id AS org_id,
-            COUNT(DISTINCT a.work_id) AS works_count,
-            COUNT(DISTINCT a.person_id) AS unique_researchers,
-            MIN(pub.year) AS first_publication_year,
-            MAX(pub.year) AS latest_publication_year,
-            SUM(CASE WHEN pub.open_access = 1 THEN 1 ELSE 0 END) AS open_access_works_count
-          FROM authorships a
-          LEFT JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id IN (:orgIds)
-          GROUP BY a.affiliation_id
-        `;
-
-        const metricsRows = await sequelize.query(metricsQuery, {
-          replacements: { orgIds },
-          type: sequelize.QueryTypes.SELECT
-        });
-
-        metricsRows.forEach(row => {
-          metricsMap[row.org_id] = {
-            works_count: parseInt(row.works_count, 10) || 0,
-            unique_researchers: parseInt(row.unique_researchers, 10) || 0,
-            first_publication_year: row.first_publication_year,
-            latest_publication_year: row.latest_publication_year,
-            open_access_works_count: parseInt(row.open_access_works_count, 10) || 0
-          };
-        });
+      let total = count.total;
+      let totalExact = count.exact;
+      if (total === null) {
+        total = offset + data.length + (data.length === limit ? limit : 0);
       }
-
-      const total = countResult[0]?.total ? parseInt(countResult[0].total, 10) : 0;
-
-      const data = baseOrganizations.map(org => {
-        const metrics = metricsMap[org.id] || {};
-        return formatOrganizationListItem({
-          ...org,
-          metrics: {
-            works_count: metrics.works_count,
-            affiliated_authors_count: metrics.unique_researchers,
-            first_publication_year: metrics.first_publication_year,
-            latest_publication_year: metrics.latest_publication_year,
-            open_access_works_count: metrics.open_access_works_count
-          }
-        });
-      });
 
       const result = {
         data,
-        pagination: createPagination(page, limitValue, total),
+        pagination: createPagination(page, limit, total),
         performance: {
-          engine: 'MariaDB',
-          query_type: 'list'
+          engine: term ? 'MariaDB-FULLTEXT' : 'MariaDB',
+          query_type: term ? 'search' : 'list',
+          elapsed_ms: Date.now() - t0
+        },
+        meta: {
+          source: 'organizations',
+          sort: { by: sort.by, order: sort.order },
+          pagination_total_exact: totalExact
         }
       };
-      result.performance.elapsed_ms = Date.now() - t0;
 
-      await cacheService.set(cacheKey, result, 14400);
-      logger.info('Organizations list cached for 4 hours');
-      
+      await cacheService.set(cacheKey, result, term ? 1800 : 14400);
+      logger.info(`Organizations list cached (${term ? 'search' : 'browse'})`);
       return result;
     } catch (error) {
       logger.error('Error fetching organizations:', error);
@@ -327,144 +266,281 @@ class OrganizationsService {
     }
   }
 
-  async searchOrganizationsFulltext(searchTerm, options = {}) {
-    const pagination = normalizePagination(options);
-    const { page, limit, offset } = pagination;
-    const { country_code, type } = options;
+  async getOrganizationById(id, options = {}) {
+    const includeProduction = toBooleanFlag(options.include_production, true);
+    const includeAuthors = toBooleanFlag(options.include_authors, true);
+    const includeWorks = toBooleanFlag(options.include_works, true);
+    const includeRelationships = toBooleanFlag(options.include_relationships, true);
 
-    const whereClauses = [
-      'MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE)'
-    ];
-    const replacements = {
-      q: searchTerm,
-      limit: parseInt(limit, 10),
-      offset: parseInt(offset, 10)
-    };
-    if (country_code) {
-      whereClauses.push('o.country_code = :country_code');
-      replacements.country_code = country_code;
-    }
-    if (type) {
-      whereClauses.push('o.type = :type');
-      replacements.type = type;
-    }
-    const whereClause = `WHERE ${whereClauses.join(' AND ')}`;
+    const cacheKey = `organization:v3:${id}:${[
+      includeProduction ? 1 : 0,
+      includeAuthors ? 1 : 0,
+      includeWorks ? 1 : 0,
+      includeRelationships ? 1 : 0
+    ].join('')}`;
 
-    const [rows, countRows] = await Promise.all([
-      sequelize.query(`
-        SELECT 
-          o.id, o.name, o.type, o.country_code, o.city, o.ror_id,
-          MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE) AS relevance
+    try {
+      const cached = await cacheService.get(cacheKey);
+      if (cached) {
+        logger.info(`Organization ${id} retrieved from cache`);
+        return cached;
+      }
+
+      const orgRows = await sequelize.query(`
+        SELECT
+          o.id, o.name, o.type, o.openalex_type, o.status,
+          o.country_code, o.city, o.url, o.ror_id, o.grid_id, o.wikidata_id, o.openalex_id,
+          o.acronyms, o.alternative_names,
+          o.publication_count, o.researcher_count, o.total_citations, o.open_access_works_count,
+          o.h_index, o.i10_index, o.\`2yr_mean_citedness\`,
+          o.created_at, o.updated_at
         FROM organizations o
-        ${whereClause}
-        ORDER BY relevance DESC, o.id ASC
-        LIMIT :limit OFFSET :offset
-      `, { replacements, type: sequelize.QueryTypes.SELECT }),
-      sequelize.query(`
-        SELECT COUNT(*) AS total
-        FROM organizations o
-        ${whereClause}
-      `, { replacements: { q: replacements.q, country_code: replacements.country_code, type: replacements.type }, type: sequelize.QueryTypes.SELECT })
-    ]);
+        WHERE o.id = :id
+      `, {
+        replacements: { id },
+        type: sequelize.QueryTypes.SELECT
+      });
 
-    const total = parseInt(countRows?.[0]?.total || 0, 10);
-    const data = rows.map(org => formatOrganizationListItem({
-      ...org,
-      relevance: org.relevance || null,
-      metrics: { works_count: 0, affiliated_authors_count: 0, latest_publication_year: null, first_publication_year: null }
-    }));
+      if (!orgRows || orgRows.length === 0) {
+        return null;
+      }
+      const organization = orgRows[0];
 
-    return {
-      data,
-      pagination: createPagination(page, limit, total),
-      performance: { engine: 'MariaDB-FULLTEXT', query_type: 'search_fulltext' }
-    };
+      const enrichment = await Promise.allSettled([
+        sequelize.query(withTimeout(`
+          SELECT MIN(pub.year) AS first_publication_year, MAX(pub.year) AS latest_publication_year
+          FROM authorships a
+          JOIN publications pub ON pub.work_id = a.work_id
+          WHERE a.affiliation_id = :id AND pub.year IS NOT NULL
+        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
+
+        includeProduction ? sequelize.query(withTimeout(`
+          SELECT w.work_type AS type, COUNT(DISTINCT w.id) AS works_count
+          FROM authorships a
+          JOIN works w ON w.id = a.work_id
+          WHERE a.affiliation_id = :id
+          GROUP BY w.work_type
+          ORDER BY works_count DESC
+        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
+
+        includeProduction ? sequelize.query(withTimeout(`
+          SELECT pub.year, COUNT(DISTINCT a.work_id) AS works_count
+          FROM authorships a
+          JOIN publications pub ON pub.work_id = a.work_id
+          WHERE a.affiliation_id = :id AND pub.year IS NOT NULL
+          GROUP BY pub.year
+          ORDER BY pub.year DESC
+          LIMIT :years
+        `), { replacements: { id, years: TREND_YEARS }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
+
+        includeAuthors ? sequelize.query(withTimeout(`
+          SELECT p.id AS person_id, p.preferred_name,
+                 COUNT(DISTINCT a.work_id) AS works_count,
+                 MAX(pub.year) AS latest_publication_year
+          FROM authorships a
+          JOIN persons p ON p.id = a.person_id
+          LEFT JOIN publications pub ON pub.work_id = a.work_id
+          WHERE a.affiliation_id = :id
+          GROUP BY p.id, p.preferred_name
+          ORDER BY works_count DESC, p.preferred_name ASC
+          LIMIT 10
+        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
+
+        includeWorks ? sequelize.query(withTimeout(`
+          SELECT
+            w.id, w.title, w.subtitle, w.work_type, w.language,
+            w.citation_count, w.reference_count,
+            pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
+            pub.open_access, pub.peer_reviewed,
+            v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
+            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
+          FROM works w
+          JOIN authorships a ON a.work_id = w.id
+          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          LEFT JOIN venues v ON v.id = pub.venue_id
+          WHERE a.affiliation_id = :id
+          GROUP BY w.id
+          ORDER BY COALESCE(pub.year, 0) DESC, w.id DESC
+          LIMIT 10
+        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
+
+        sequelize.query(withTimeout(`
+          SELECT COUNT(*) AS aliases_count FROM organization_aliases WHERE org_id = :id
+        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
+
+        sequelize.query(withTimeout(`
+          SELECT COUNT(*) AS funded_works_count, COUNT(DISTINCT grant_number) AS grants_count
+          FROM funding WHERE funder_id = :id
+        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
+
+        includeRelationships ? this.getRelationships(id) : Promise.resolve({})
+      ]);
+
+      const value = (idx, fallback) => (enrichment[idx].status === 'fulfilled' ? enrichment[idx].value : fallback);
+      const corpusRow = value(0, [])[0] || {};
+      const productionByType = value(1, []);
+      const publicationTrend = value(2, []);
+      const topAuthors = value(3, []);
+      const recentWorks = value(4, []);
+      const aliasesCount = value(5, [])[0]?.aliases_count || 0;
+      const fundingRow = value(6, [])[0] || {};
+      const relationships = value(7, {});
+
+      const shaped = formatOrganizationDetails({
+        ...organization,
+        corpus: corpusRow,
+        aliases_count: aliasesCount,
+        funded_works_count: fundingRow.funded_works_count,
+        grants_count: fundingRow.grants_count,
+        production_summary: { by_work_type: productionByType, publication_trend: publicationTrend },
+        top_authors: topAuthors,
+        recent_works: recentWorks,
+        relationships
+      });
+
+      await cacheService.set(cacheKey, shaped, 600);
+      logger.info(`Organization ${id} cached for 10 minutes`);
+      return shaped;
+    } catch (error) {
+      logger.error('Error fetching organization by ID:', error);
+      throw error;
+    }
   }
 
-  
-  async fallbackOrganizationsSearch(searchTerm, options = {}) {
-    const pagination = normalizePagination(options);
-    const { page, limit, offset } = pagination;
-    const { country_code, type } = options;
-    
-    logger.warn('Using MariaDB fallback for organizations search');
+  async getRelationships(id) {
+    const rows = await sequelize.query(withTimeout(`
+      SELECT 'children' AS bucket, o.id, o.name, o.type, o.country_code
+        FROM organization_relationships r
+        JOIN organizations o ON o.id = r.child_id
+        WHERE r.parent_id = :id AND r.relationship_type = 'PARENT_CHILD'
+      UNION ALL
+      SELECT 'parents' AS bucket, o.id, o.name, o.type, o.country_code
+        FROM organization_relationships r
+        JOIN organizations o ON o.id = r.parent_id
+        WHERE r.child_id = :id AND r.relationship_type = 'PARENT_CHILD'
+      UNION ALL
+      SELECT 'related' AS bucket, o.id, o.name, o.type, o.country_code
+        FROM organization_relationships r
+        JOIN organizations o ON o.id = r.child_id
+        WHERE r.parent_id = :id AND r.relationship_type = 'RELATED'
+      UNION ALL
+      SELECT 'related' AS bucket, o.id, o.name, o.type, o.country_code
+        FROM organization_relationships r
+        JOIN organizations o ON o.id = r.parent_id
+        WHERE r.child_id = :id AND r.relationship_type = 'RELATED'
+      LIMIT 200
+    `), { replacements: { id }, type: sequelize.QueryTypes.SELECT });
 
-    const whereConditions = [];
-    const replacements = { limit: parseInt(limit, 10), offset: parseInt(offset, 10) };
-
-    whereConditions.push('o.name LIKE :search');
-    replacements.search = `%${searchTerm}%`;
-
-    if (country_code) {
-      whereConditions.push('o.country_code = :country_code');
-      replacements.country_code = country_code;
+    const buckets = { parents: [], children: [], related: [] };
+    for (const row of rows) {
+      if (buckets[row.bucket]) {
+        buckets[row.bucket].push(row);
+      }
     }
+    return buckets;
+  }
 
+  buildWorksSort(options = {}) {
+    const sortKey = (typeof options.sort_by === 'string'
+      ? options.sort_by
+      : (typeof options.sortBy === 'string' ? options.sortBy : '')).toLowerCase();
+    const sortDir = (typeof options.sort_order === 'string'
+      ? options.sort_order
+      : (typeof options.sortOrder === 'string' ? options.sortOrder : 'DESC')).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    switch (sortKey) {
+      case 'cited_by_count':
+      case 'citation_count':
+      case 'citations':
+        return { clause: `COALESCE(w.citation_count, 0) ${sortDir}, COALESCE(pub.year, 0) DESC, w.id DESC`, by: 'cited_by_count', order: sortDir };
+      case 'references_count':
+      case 'reference_count':
+        return { clause: `COALESCE(w.reference_count, 0) ${sortDir}, COALESCE(pub.year, 0) DESC, w.id DESC`, by: 'references_count', order: sortDir };
+      case 'publication_year':
+      case 'year':
+        return { clause: `COALESCE(pub.year, 0) ${sortDir}, w.id DESC`, by: 'publication_year', order: sortDir };
+      case 'id':
+        return { clause: `w.id ${sortDir}`, by: 'id', order: sortDir };
+      default:
+        return { clause: 'COALESCE(pub.year, 0) DESC, w.id DESC', by: 'publication_year', order: 'DESC' };
+    }
+  }
+
+  buildWorkFilters(options = {}) {
+    const where = [];
+    const replacements = {};
+
+    const type = (options.type || '').trim();
     if (type) {
-      whereConditions.push('o.type = :type');
-      replacements.type = type;
+      where.push('w.work_type = :type');
+      replacements.type = type.toUpperCase();
+    }
+    const language = (options.language || '').trim();
+    if (language) {
+      where.push('w.language = :language');
+      replacements.language = language;
+    }
+    const yearFrom = toNonNegativeInt(options.year_from);
+    if (yearFrom !== null) {
+      where.push('COALESCE(pub.year, 0) >= :yearFrom');
+      replacements.yearFrom = yearFrom;
+    }
+    const yearTo = toNonNegativeInt(options.year_to);
+    if (yearTo !== null) {
+      where.push('COALESCE(pub.year, 0) <= :yearTo');
+      replacements.yearTo = yearTo;
+    }
+    const citedByMin = toNonNegativeInt(options.cited_by_min ?? options.citation_count_min);
+    if (citedByMin !== null) {
+      where.push('COALESCE(w.citation_count, 0) >= :citedByMin');
+      replacements.citedByMin = citedByMin;
+    }
+    const citedByMax = toNonNegativeInt(options.cited_by_max ?? options.citation_count_max);
+    if (citedByMax !== null) {
+      where.push('COALESCE(w.citation_count, 0) <= :citedByMax');
+      replacements.citedByMax = citedByMax;
+    }
+    const openAccess = toBooleanFlag(options.open_access, null);
+    if (openAccess !== null) {
+      where.push('pub.open_access = :openAccess');
+      replacements.openAccess = openAccess ? 1 : 0;
+    }
+    const peerReviewed = toBooleanFlag(options.peer_reviewed, null);
+    if (peerReviewed !== null) {
+      where.push('pub.peer_reviewed = :peerReviewed');
+      replacements.peerReviewed = peerReviewed ? 1 : 0;
     }
 
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    return { where, replacements };
+  }
 
-    const [organizations, countResult] = await Promise.all([
-      sequelize.query(`
-        SELECT o.id, o.name, o.type, o.country_code, o.city, o.ror_id
-        FROM organizations o
-        ${whereClause}
-        ORDER BY o.name ASC
-        LIMIT :limit OFFSET :offset
-      `, {
-        replacements,
-        type: sequelize.QueryTypes.SELECT
-      }),
-      
-      sequelize.query(`
-        SELECT COUNT(*) as total
-        FROM organizations o
-        ${whereClause}
-      `, {
-        replacements: {
-          search: replacements.search,
-          country_code: replacements.country_code,
-          type: replacements.type
-        },
-        type: sequelize.QueryTypes.SELECT
-      })
-    ]);
-
-    const total = parseInt(countResult[0]?.total || 0, 10);
-
-    const formattedResults = organizations.map(org => formatOrganizationListItem({
-      ...org,
-      metrics: {
-        works_count: 0,
-        affiliated_authors_count: 0,
-        latest_publication_year: null,
-        first_publication_year: null
-      }
-    }));
-
-    return {
-      data: formattedResults,
-      pagination: createPagination(page, limit, total),
-      performance: {
-        engine: 'MariaDB-LIKE',
-        query_type: 'search_fallback'
-      },
-      meta: {
-        note: 'Using LIKE-based fallback (FULLTEXT search failed)'
-      }
-    };
+  async hydrateAuthors(workIds) {
+    const authorsByWork = {};
+    if (!workIds.length) return authorsByWork;
+    const placeholders = workIds.map(() => '?').join(',');
+    const rows = await sequelize.query(`
+      SELECT a.work_id, p.preferred_name
+      FROM authorships a
+      INNER JOIN persons p ON p.id = a.person_id
+      WHERE a.work_id IN (${placeholders})
+      ORDER BY a.work_id, a.position
+    `, { replacements: workIds, type: sequelize.QueryTypes.SELECT });
+    for (const row of rows) {
+      if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
+      authorsByWork[row.work_id].push(row.preferred_name);
+    }
+    return authorsByWork;
   }
 
   async getOrganizationWorks(organizationId, filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { type, year_from, year_to, language } = filters;
-    
-    const cacheKey = `organization:${organizationId}:works:${JSON.stringify(filters)}`;
-    
+
+    const sort = this.buildWorksSort(filters);
+    const { where, replacements } = this.buildWorkFilters(filters);
+
+    const cacheKey = `organization:${organizationId}:works:v2:${JSON.stringify({ page, limit, offset, filters })}`;
+
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) {
@@ -473,164 +549,162 @@ class OrganizationsService {
       }
 
       const orgExists = await sequelize.query(`
-        SELECT id FROM organizations WHERE id = :organizationId
-      `, {
-        replacements: { organizationId },
-        type: sequelize.QueryTypes.SELECT
-      });
-
+        SELECT 1 FROM organizations WHERE id = :organizationId LIMIT 1
+      `, { replacements: { organizationId }, type: sequelize.QueryTypes.SELECT });
       if (!orgExists || orgExists.length === 0) {
         return null;
       }
 
-      const whereConditions = ['a.affiliation_id = :organizationId'];
-      const replacements = { 
-        organizationId, 
-        limit: parseInt(limit), 
-        offset: parseInt(offset) 
-      };
+      const whereClause = ['a.affiliation_id = :organizationId', ...where].join(' AND ');
+      const listReplacements = { ...replacements, organizationId, limit: parseInt(limit, 10), offset: parseInt(offset, 10) };
+      const countReplacements = { ...replacements, organizationId };
 
-      if (type) {
-        whereConditions.push('w.work_type = :type');
-        replacements.type = type;
-      }
-
-      if (year_from) {
-        whereConditions.push('pub.year >= :year_from');
-        replacements.year_from = parseInt(year_from);
-      }
-
-      if (year_to) {
-        whereConditions.push('pub.year <= :year_to');
-        replacements.year_to = parseInt(year_to);
-      }
-
-      if (language) {
-        whereConditions.push('w.language = :language');
-        replacements.language = language;
-      }
-
-      const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
-
-      const [works, countResult] = await Promise.all([
+      const [works, count] = await Promise.all([
         sequelize.query(`
-          SELECT DISTINCT
-            w.id,
-            w.title,
-            w.work_type,
-            w.language,
-            pub.peer_reviewed,
-            pub.open_access,
-            pub.year,
-            pub.doi,
-            pub.volume,
-            pub.issue,
-            pub.pages,
-            v.id AS venue_id,
-            v.name AS venue_name,
-            v.abbreviated_name AS venue_abbreviated_name,
-            v.type AS venue_type,
-            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count,
-            NULL as first_author_name
+          SELECT
+            w.id, w.title, w.subtitle, w.work_type, w.language,
+            w.citation_count, w.reference_count,
+            pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
+            pub.open_access, pub.peer_reviewed,
+            v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
+            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM works w
-          INNER JOIN authorships a ON w.id = a.work_id
-          LEFT JOIN publications pub ON pub.id = (
-            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-          )
+          INNER JOIN authorships a ON a.work_id = w.id
+          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
           LEFT JOIN venues v ON v.id = pub.venue_id
-          ${whereClause}
-          ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
+          WHERE ${whereClause}
+          GROUP BY w.id
+          ORDER BY ${sort.clause}
           LIMIT :limit OFFSET :offset
-        `, {
-          replacements,
-          type: sequelize.QueryTypes.SELECT
-        }),
-
-        sequelize.query(`
-          SELECT COUNT(DISTINCT w.id) as total
+        `, { replacements: listReplacements, type: sequelize.QueryTypes.SELECT }),
+        this.countWithBudget(`
+          SELECT COUNT(DISTINCT w.id) AS total
           FROM works w
-          INNER JOIN authorships a ON w.id = a.work_id
-          LEFT JOIN publications pub ON pub.id = (
-            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-          )
-          ${whereClause}
-        `, {
-          replacements: Object.fromEntries(
-            Object.entries(replacements).filter(([key]) => !['limit', 'offset'].includes(key))
-          ),
-          type: sequelize.QueryTypes.SELECT
-        })
+          INNER JOIN authorships a ON a.work_id = w.id
+          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          WHERE ${whereClause}
+        `, countReplacements)
       ]);
 
-      const total = countResult[0].total;
+      const workIds = Array.from(new Set(works.map(w => w.id).filter(Number.isFinite)));
+      const authorsByWork = await this.hydrateAuthors(workIds);
 
-      const workIdsForAuthors = Array.from(new Set(works.map(w => w.id).filter(Number.isFinite)));
-      const authorsByWork = {};
-      if (workIdsForAuthors.length > 0) {
-        const placeholders = workIdsForAuthors.map(() => '?').join(',');
-        const authorRows = await sequelize.query(`
-          SELECT a.work_id, p.preferred_name
-          FROM authorships a
-          INNER JOIN persons p ON p.id = a.person_id
-          WHERE a.work_id IN (${placeholders})
-          ORDER BY a.work_id, a.position
-        `, {
-          replacements: workIdsForAuthors,
-          type: sequelize.QueryTypes.SELECT
-        });
-        for (const row of authorRows) {
-          if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
-          authorsByWork[row.work_id].push(row.preferred_name);
-        }
+      const data = works.map(work => formatAffiliatedWork({
+        ...work,
+        author_names: authorsByWork[work.id] || []
+      }));
+
+      let total = count.total;
+      let totalExact = count.exact;
+      if (total === null) {
+        total = offset + data.length + (data.length === limit ? limit : 0);
       }
-
-      const data = works.map(work => {
-        const authorsPreview = authorsByWork[work.id] || [];
-
-        return {
-          id: work.id,
-          title: work.title,
-          type: work.work_type,
-          language: work.language,
-          open_access: work.open_access === 1 || work.open_access === true,
-          publication: {
-            year: work.year,
-            doi: work.doi,
-            volume: work.volume,
-            issue: work.issue,
-            pages: work.pages,
-            peer_reviewed: work.peer_reviewed === 1,
-            open_access: work.open_access === 1
-          },
-          venue: work.venue_name ? {
-            id: work.venue_id,
-            name: work.venue_name,
-            abbreviated_name: work.venue_abbreviated_name || null,
-            type: work.venue_type
-          } : null,
-          authors: {
-            author_count: parseInt(work.author_count, 10) || authorsPreview.length,
-            first_author_name: work.first_author_name || authorsPreview[0] || null,
-            authors_preview: authorsPreview.slice(0, 3)
-          }
-        };
-      });
 
       const result = {
         data,
         pagination: createPagination(page, limit, total),
-        performance: {
-          engine: 'MariaDB',
-          query_type: 'organization_works'
+        performance: { engine: 'MariaDB', query_type: 'organization_works', elapsed_ms: 0 },
+        meta: {
+          match_mode: 'affiliation',
+          sort: { by: sort.by, order: sort.order },
+          pagination_total_exact: totalExact
         }
       };
 
-      await cacheService.set(cacheKey, result, 300);
-      logger.info(`Organization ${organizationId} works cached for 5 minutes`);
-      
+      await cacheService.set(cacheKey, result, 600);
+      logger.info(`Organization ${organizationId} works cached for 10 minutes`);
       return result;
     } catch (error) {
       logger.error(`Error fetching works for organization ${organizationId}:`, error);
+      throw error;
+    }
+  }
+
+  async getOrganizationFundedWorks(organizationId, filters = {}) {
+    const pagination = normalizePagination(filters);
+    const { page, limit, offset } = pagination;
+
+    const sort = this.buildWorksSort(filters);
+    const { where, replacements } = this.buildWorkFilters(filters);
+
+    const cacheKey = `organization:${organizationId}:funded:v1:${JSON.stringify({ page, limit, offset, filters })}`;
+
+    try {
+      const cached = await cacheService.get(cacheKey);
+      if (cached) {
+        logger.info(`Organization ${organizationId} funded works retrieved from cache`);
+        return cached;
+      }
+
+      const orgExists = await sequelize.query(`
+        SELECT 1 FROM organizations WHERE id = :organizationId LIMIT 1
+      `, { replacements: { organizationId }, type: sequelize.QueryTypes.SELECT });
+      if (!orgExists || orgExists.length === 0) {
+        return null;
+      }
+
+      const whereClause = ['f.funder_id = :organizationId', ...where].join(' AND ');
+      const listReplacements = { ...replacements, organizationId, limit: parseInt(limit, 10), offset: parseInt(offset, 10) };
+      const countReplacements = { ...replacements, organizationId };
+
+      const [works, count] = await Promise.all([
+        sequelize.query(`
+          SELECT
+            w.id, w.title, w.subtitle, w.work_type, w.language,
+            w.citation_count, w.reference_count,
+            MAX(f.grant_number) AS grant_number,
+            pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
+            pub.open_access, pub.peer_reviewed,
+            v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
+            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
+          FROM funding f
+          INNER JOIN works w ON w.id = f.work_id
+          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          LEFT JOIN venues v ON v.id = pub.venue_id
+          WHERE ${whereClause}
+          GROUP BY w.id
+          ORDER BY ${sort.clause}
+          LIMIT :limit OFFSET :offset
+        `, { replacements: listReplacements, type: sequelize.QueryTypes.SELECT }),
+        this.countWithBudget(`
+          SELECT COUNT(DISTINCT w.id) AS total
+          FROM funding f
+          INNER JOIN works w ON w.id = f.work_id
+          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          WHERE ${whereClause}
+        `, countReplacements)
+      ]);
+
+      const workIds = Array.from(new Set(works.map(w => w.id).filter(Number.isFinite)));
+      const authorsByWork = await this.hydrateAuthors(workIds);
+
+      const data = works.map(work => formatAffiliatedWork({
+        ...work,
+        author_names: authorsByWork[work.id] || []
+      }));
+
+      let total = count.total;
+      let totalExact = count.exact;
+      if (total === null) {
+        total = offset + data.length + (data.length === limit ? limit : 0);
+      }
+
+      const result = {
+        data,
+        pagination: createPagination(page, limit, total),
+        performance: { engine: 'MariaDB', query_type: 'organization_funded_works' },
+        meta: {
+          match_mode: 'funder',
+          sort: { by: sort.by, order: sort.order },
+          pagination_total_exact: totalExact
+        }
+      };
+
+      await cacheService.set(cacheKey, result, 600);
+      logger.info(`Organization ${organizationId} funded works cached for 10 minutes`);
+      return result;
+    } catch (error) {
+      logger.error(`Error fetching funded works for organization ${organizationId}:`, error);
       throw error;
     }
   }

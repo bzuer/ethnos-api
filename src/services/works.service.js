@@ -1273,7 +1273,8 @@ class WorksService {
           id: author.affiliation_id,
           name: author.affiliation_name,
           type: author.affiliation_type,
-          country: author.affiliation_country
+          country: author.affiliation_country,
+          _links: { self: author.affiliation_id ? `/institutions/${author.affiliation_id}` : null }
         } : null
       })),
 

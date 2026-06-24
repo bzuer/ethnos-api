@@ -182,9 +182,71 @@ describe('Integration smoke (real DB)', () => {
       }
     });
 
-    test('GET /institutions does not hit legacy views', async () => {
-      const body = assertSuccess(await fetchJson('/institutions?limit=2'), 'GET /institutions');
+    test('GET /institutions exposes organizations base-table surface', async () => {
+      const body = assertSuccess(await fetchJson('/institutions?limit=5'), 'GET /institutions');
       assert.ok(Array.isArray(body.data));
+      assert.equal(body.meta?.source, 'organizations');
+      assert.equal(body.meta?.sort?.by, 'works_count', 'default sort field is works_count');
+      assert.equal(body.meta?.sort?.order, 'DESC', 'default sort order is DESC');
+      if (body.data.length >= 2) {
+        const works = body.data.map((o) => o.metrics?.works_count ?? 0);
+        for (let i = 1; i < works.length; i += 1) {
+          assert.ok(works[i - 1] >= works[i], `institutions must order by works_count DESC (got ${works.join(', ')})`);
+        }
+        const first = body.data[0];
+        assert.ok('identifiers' in first, 'list item exposes grouped identifiers block');
+        assert.ok('metrics' in first, 'list item exposes metrics block');
+        assert.ok('location' in first, 'list item exposes location block');
+        assert.ok(!('ror_id' in first), 'identifiers are not duplicated at top level');
+      }
+    });
+
+    test('GET /institutions filters by type', async () => {
+      const body = assertSuccess(await fetchJson('/institutions?type=FUNDER&limit=3'), 'GET /institutions?type=FUNDER');
+      assert.ok(Array.isArray(body.data));
+      for (const org of body.data) {
+        assert.equal(org.type, 'FUNDER', 'type filter restricts to FUNDER');
+      }
+    });
+
+    test('GET /institutions/:id exposes grouped detail blocks', async () => {
+      const list = assertSuccess(await fetchJson('/institutions?limit=1'), 'institutions list for detail');
+      if (!list.data.length) return;
+      const id = list.data[0].id;
+      const body = assertSuccess(await fetchJson(`/institutions/${id}`), `GET /institutions/${id}`);
+      const org = body.data;
+      assert.equal(org.id, id);
+      for (const block of ['identifiers', 'names', 'metrics', 'funding_role', 'production_summary', 'relationships', '_links']) {
+        assert.ok(block in org, `detail exposes ${block} block`);
+      }
+      assert.ok(Array.isArray(org.names.acronyms), 'names.acronyms is an array');
+      assert.equal(org._links.works, `/institutions/${id}/works`);
+    });
+
+    test('GET /institutions/:id/works honours the work sort contract', async () => {
+      const list = assertSuccess(await fetchJson('/institutions?limit=1&sort_by=works_count'), 'institutions list for works');
+      if (!list.data.length) return;
+      const id = list.data[0].id;
+      const body = assertSuccess(
+        await fetchJson(`/institutions/${id}/works?sort_by=cited_by_count&limit=5`),
+        `GET /institutions/${id}/works`
+      );
+      assert.ok(Array.isArray(body.data));
+      assert.equal(body.meta?.match_mode, 'affiliation');
+      assert.equal(body.meta?.sort?.by, 'cited_by_count');
+      const cites = body.data.map((w) => w.cited_by_count ?? 0);
+      for (let i = 1; i < cites.length; i += 1) {
+        assert.ok(cites[i - 1] >= cites[i], `works ordered by cited_by_count DESC (got ${cites.join(', ')})`);
+      }
+    });
+
+    test('GET /institutions/:id/funded-works returns funder corpus', async () => {
+      const funders = assertSuccess(await fetchJson('/institutions?type=FUNDER&limit=1'), 'funder list for funded-works');
+      if (!funders.data.length) return;
+      const id = funders.data[0].id;
+      const body = assertSuccess(await fetchJson(`/institutions/${id}/funded-works?limit=3`), 'GET funded-works');
+      assert.ok(Array.isArray(body.data));
+      assert.equal(body.meta?.match_mode, 'funder');
     });
 
     test('GET /venues exposes venues base-table surface', async () => {

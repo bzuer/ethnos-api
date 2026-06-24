@@ -116,7 +116,8 @@ class PersonsService {
             organization_id: aff.organization_id,
             name: aff.name,
             type: aff.type || null,
-            country_code: aff.country_code || null
+            country_code: aff.country_code || null,
+            _links: { self: `/institutions/${aff.organization_id}` }
           } : null)
           .catch(() => null),
 

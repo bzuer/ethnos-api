@@ -62,7 +62,11 @@ const formatInstitutionProductivity = (institution, rank = null) => {
       total_works: parseInt(institution.total_works) || 0,
       total_citations: parseInt(institution.total_citations) || 0,
       avg_citations: parseFloat(institution.avg_citations) || 0,
-      unique_researchers: parseInt(institution.unique_researchers) || 0
+      unique_researchers: parseInt(institution.unique_researchers) || 0,
+      open_access_works_count: parseInt(institution.open_access_works_count) || 0,
+      h_index: institution.h_index === null || institution.h_index === undefined
+        ? null
+        : parseInt(institution.h_index, 10)
     },
     timespan: {
       first_publication_year: parseInt(institution.first_publication_year) || null,

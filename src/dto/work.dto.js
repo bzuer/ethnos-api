@@ -96,7 +96,8 @@ function formatWorkDetails(work = {}) {
                 id: author.affiliation.id || null,
                 name: author.affiliation.name,
                 type: author.affiliation.type ? normalizeType(author.affiliation.type) : null,
-                country: author.affiliation.country || null
+                country: author.affiliation.country || null,
+                _links: { self: author.affiliation.id ? `/institutions/${author.affiliation.id}` : null }
               }
             : null;
 

@@ -1,5 +1,5 @@
 function toOptionalInteger(value) {
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || value === '') {
     return null;
   }
   const parsed = Number(value);
@@ -9,12 +9,12 @@ function toOptionalInteger(value) {
   return Math.trunc(parsed);
 }
 
-function normalizeType(value) {
-  if (!value) {
+function toOptionalFloat(value) {
+  if (value === null || value === undefined || value === '') {
     return null;
   }
-  const str = String(value).trim();
-  return str ? str.toUpperCase() : null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function normalizeString(value) {
@@ -25,72 +25,122 @@ function normalizeString(value) {
   return trimmed.length ? trimmed : null;
 }
 
+function normalizeType(value) {
+  const str = normalizeString(value);
+  return str ? str.toUpperCase() : null;
+}
+
+function parseJsonArray(value) {
+  if (value === null || value === undefined || value === '') {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeString).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.map(normalizeString).filter(Boolean) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function toBoolean(value) {
+  return value === 1 || value === true || value === '1';
+}
+
 function normalizeLocation(row = {}) {
-  const source = row.location && typeof row.location === 'object'
-    ? row.location
-    : row;
-
-  const country = normalizeString(source.country_code || source.country);
-  const city = normalizeString(source.city);
-
+  const country = normalizeString(row.country_code || row.country);
+  const city = normalizeString(row.city);
   if (!country && !city) {
     return null;
   }
-
-  return {
-    country_code: country,
-    city
-  };
+  return { country_code: country, city };
 }
 
 function normalizeIdentifiers(row = {}) {
-  const identifiers = row.identifiers && typeof row.identifiers === 'object'
-    ? row.identifiers
-    : row;
-
   return {
-    ror_id: normalizeString(identifiers.ror_id || identifiers.ror || identifiers.rorId) || null,
-    grid_id: normalizeString(identifiers.grid_id || identifiers.gridId) || null,
-    wikidata_id: normalizeString(identifiers.wikidata_id || identifiers.wikidataId) || null,
-    openalex_id: normalizeString(identifiers.openalex_id) || null,
-    url: normalizeString(identifiers.url) || null
+    ror_id: normalizeString(row.ror_id),
+    grid_id: normalizeString(row.grid_id),
+    wikidata_id: normalizeString(row.wikidata_id),
+    openalex_id: normalizeString(row.openalex_id),
+    url: normalizeString(row.url)
   };
 }
 
-function formatMetrics(raw = {}) {
-  const metrics = raw.metrics && typeof raw.metrics === 'object'
-    ? raw.metrics
-    : raw;
-
-  const worksCount = toOptionalInteger(metrics.works_count ?? metrics.publication_count);
-  const affiliatedAuthors = toOptionalInteger(
-    metrics.affiliated_authors_count ?? metrics.unique_researchers ?? metrics.researcher_count
-  );
+function formatMetrics(row = {}) {
+  const works = toOptionalInteger(row.publication_count ?? row.works_count) || 0;
+  const oa = toOptionalInteger(row.open_access_works_count);
+  const openAccessPercentage = works > 0 && oa !== null
+    ? Math.round((oa / works) * 1000) / 10
+    : null;
 
   return {
-    works_count: worksCount === null ? 0 : worksCount,
-    affiliated_authors_count: affiliatedAuthors === null ? 0 : affiliatedAuthors,
-    total_citations: toOptionalInteger(metrics.total_citations),
-    open_access_works_count: toOptionalInteger(metrics.open_access_works_count),
-    first_publication_year: toOptionalInteger(metrics.first_publication_year),
-    latest_publication_year: toOptionalInteger(metrics.latest_publication_year)
+    works_count: works,
+    researchers_count: toOptionalInteger(row.researcher_count ?? row.researchers_count) || 0,
+    total_citations: toOptionalInteger(row.total_citations) || 0,
+    open_access_works_count: oa === null ? 0 : oa,
+    open_access_percentage: openAccessPercentage,
+    h_index: toOptionalInteger(row.h_index),
+    i10_index: toOptionalInteger(row.i10_index),
+    two_yr_mean_citedness: toOptionalFloat(row['2yr_mean_citedness'] ?? row.two_yr_mean_citedness)
   };
+}
+
+function buildSelfLink(id) {
+  const numericId = toOptionalInteger(id);
+  return numericId === null ? null : `/institutions/${numericId}`;
 }
 
 function formatOrganizationListItem(row = {}) {
+  const id = toOptionalInteger(row.id);
+  const item = {
+    id,
+    name: normalizeString(row.name),
+    type: normalizeType(row.type),
+    openalex_type: normalizeString(row.openalex_type),
+    status: normalizeString(row.status),
+    acronyms: parseJsonArray(row.acronyms),
+    location: normalizeLocation(row),
+    identifiers: normalizeIdentifiers(row),
+    metrics: formatMetrics(row),
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+    _links: { self: buildSelfLink(id) }
+  };
+
+  if (row.relevance !== undefined && row.relevance !== null) {
+    item.relevance = toOptionalFloat(row.relevance);
+  }
+
+  return item;
+}
+
+function formatRelatedOrganization(row = {}) {
   return {
     id: toOptionalInteger(row.id),
     name: normalizeString(row.name),
     type: normalizeType(row.type),
-    location: normalizeLocation(row),
-    ror_id: normalizeString(row.ror_id),
-    wikidata_id: normalizeString(row.wikidata_id),
-    openalex_id: normalizeString(row.openalex_id),
-    url: normalizeString(row.url),
-    identifiers: normalizeIdentifiers(row),
-    metrics: formatMetrics(row),
-    created_at: row.created_at || null,
-    updated_at: row.updated_at || null
+    country_code: normalizeString(row.country_code),
+    _links: { self: buildSelfLink(row.id) }
+  };
+}
+
+function formatRelationships(raw = {}) {
+  const mapList = (items) => (Array.isArray(items) ? items.map(formatRelatedOrganization) : []);
+  const parents = mapList(raw.parents);
+  const children = mapList(raw.children);
+  const related = mapList(raw.related);
+  return {
+    parents,
+    children,
+    related,
+    parents_count: toOptionalInteger(raw.parents_count) ?? parents.length,
+    children_count: toOptionalInteger(raw.children_count) ?? children.length,
+    related_count: toOptionalInteger(raw.related_count) ?? related.length
   };
 }
 
@@ -103,15 +153,14 @@ function formatTopAuthors(items = []) {
     preferred_name: normalizeString(item.preferred_name || item.name),
     works_count: toOptionalInteger(item.works_count) || 0,
     latest_publication_year: toOptionalInteger(item.latest_publication_year),
-    recent_works_count: toOptionalInteger(item.recent_works_count)
+    _links: item.person_id || item.id
+      ? { self: `/persons/${toOptionalInteger(item.person_id || item.id)}` }
+      : { self: null }
   }));
 }
 
 function formatProductionSummary(raw = {}) {
-  const summary = {
-    by_work_type: [],
-    publication_trend: []
-  };
+  const summary = { by_work_type: [], publication_trend: [] };
 
   if (Array.isArray(raw.by_work_type)) {
     summary.by_work_type = raw.by_work_type.map(item => ({
@@ -124,87 +173,101 @@ function formatProductionSummary(raw = {}) {
     summary.publication_trend = raw.publication_trend.map(item => ({
       year: toOptionalInteger(item.year),
       works_count: toOptionalInteger(item.works_count) || 0
-    }));
+    })).filter(entry => entry.year !== null);
   }
 
   return summary;
 }
 
-function parseAuthors(authorString) {
-  if (!authorString || typeof authorString !== 'string') {
-    return [];
-  }
-  return authorString
-    .split(';')
-    .map(author => author.trim())
-    .filter(Boolean);
-}
-
-function formatRecentWorks(items = []) {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  return items.map(work => {
-    const authors = parseAuthors(work.author_string);
-    return {
-      id: toOptionalInteger(work.id),
-      title: normalizeString(work.title),
-      abstract: normalizeString(work.abstract),
-      type: normalizeType(work.type || work.work_type),
-      language: normalizeString(work.language),
-      publication: {
-        year: toOptionalInteger(work.year),
-        doi: normalizeString(work.doi),
-        volume: normalizeString(work.volume),
-        issue: normalizeString(work.issue),
-        pages: normalizeString(work.pages),
-        peer_reviewed: work.peer_reviewed === true || work.peer_reviewed === 1,
-        open_access: work.open_access === true || work.open_access === 1
-      },
-      venue: work.venue_name || work.venue_type
-        ? {
-            id: toOptionalInteger(work.venue_id),
-            name: normalizeString(work.venue_name),
-            abbreviated_name: normalizeString(work.venue_abbreviated_name || work.venue_abbrev),
-            type: normalizeType(work.venue_type)
-          }
-        : null,
-      open_access: work.open_access === true || work.open_access === 1,
-      authors: {
-        author_count: toOptionalInteger(work.author_count) ?? authors.length,
-        first_author_name: normalizeString(work.first_author_name || authors[0]),
-        authors_preview: authors.slice(0, 3)
+function formatAffiliatedWork(work = {}) {
+  const year = toOptionalInteger(work.year ?? work.publication_year);
+  const venue = work.venue_name || work.venue_id
+    ? {
+        id: toOptionalInteger(work.venue_id),
+        name: normalizeString(work.venue_name),
+        abbreviated_name: normalizeString(work.venue_abbreviated_name),
+        type: normalizeType(work.venue_type)
       }
-    };
-  });
-}
+    : null;
 
-function formatOrganizationDetails(org = {}) {
-  const location = normalizeLocation(org);
-  const identifiers = normalizeIdentifiers(org);
-  const metrics = formatMetrics(org.metrics ? org : { ...org, metrics: org.metrics });
-  const productionSummary = formatProductionSummary(org.production_summary || {});
-  const topAuthors = formatTopAuthors(org.top_authors);
-  const recentWorks = formatRecentWorks(org.recent_works);
+  const authorNames = Array.isArray(work.author_names) ? work.author_names.filter(Boolean) : [];
 
   return {
-    id: toOptionalInteger(org.id),
-    name: normalizeString(org.name),
-    type: normalizeType(org.type),
-    location,
-    ror_id: normalizeString(org.ror_id) || identifiers.ror_id || null,
-    wikidata_id: normalizeString(org.wikidata_id) || identifiers.wikidata_id || null,
-    openalex_id: normalizeString(org.openalex_id) || identifiers.openalex_id || null,
-    url: normalizeString(org.url) || identifiers.url || null,
-    identifiers,
-    metrics,
-    production_summary: productionSummary,
-    top_authors: topAuthors,
-    recent_works: recentWorks,
-    created_at: org.created_at || null,
-    updated_at: org.updated_at || null
+    id: toOptionalInteger(work.id),
+    title: normalizeString(work.title),
+    subtitle: normalizeString(work.subtitle),
+    type: normalizeType(work.work_type || work.type),
+    language: normalizeString(work.language),
+    doi: normalizeString(work.doi),
+    publication_year: year,
+    open_access: toBoolean(work.open_access),
+    peer_reviewed: toBoolean(work.peer_reviewed),
+    cited_by_count: toOptionalInteger(work.citation_count ?? work.work_citation_count) || 0,
+    references_count: toOptionalInteger(work.reference_count ?? work.work_reference_count) || 0,
+    publication: {
+      id: toOptionalInteger(work.publication_id),
+      year,
+      doi: normalizeString(work.doi),
+      volume: normalizeString(work.volume),
+      issue: normalizeString(work.issue),
+      pages: normalizeString(work.pages),
+      open_access: toBoolean(work.open_access),
+      peer_reviewed: toBoolean(work.peer_reviewed)
+    },
+    venue,
+    authors: {
+      total_count: toOptionalInteger(work.author_count ?? work.total_authors) || authorNames.length,
+      author_string: authorNames.length ? authorNames.join('; ') : null,
+      authors_preview: authorNames.slice(0, 3)
+    },
+    grant_number: work.grant_number !== undefined ? normalizeString(work.grant_number) : undefined,
+    _links: { self: toOptionalInteger(work.id) === null ? null : `/works/${toOptionalInteger(work.id)}` }
   };
 }
 
-module.exports = { formatOrganizationListItem, formatOrganizationDetails };
+function formatOrganizationDetails(org = {}) {
+  const id = toOptionalInteger(org.id);
+  const corpus = org.corpus || {};
+
+  const metrics = formatMetrics(org);
+  metrics.first_publication_year = toOptionalInteger(corpus.first_publication_year);
+  metrics.latest_publication_year = toOptionalInteger(corpus.latest_publication_year);
+
+  return {
+    id,
+    name: normalizeString(org.name),
+    type: normalizeType(org.type),
+    openalex_type: normalizeString(org.openalex_type),
+    status: normalizeString(org.status),
+    location: normalizeLocation(org),
+    names: {
+      acronyms: parseJsonArray(org.acronyms),
+      alternative_names: parseJsonArray(org.alternative_names),
+      aliases_count: toOptionalInteger(org.aliases_count) || 0
+    },
+    identifiers: normalizeIdentifiers(org),
+    metrics,
+    funding_role: {
+      funded_works_count: toOptionalInteger(org.funded_works_count) || 0,
+      grants_count: toOptionalInteger(org.grants_count) || 0
+    },
+    production_summary: formatProductionSummary(org.production_summary || {}),
+    relationships: formatRelationships(org.relationships || {}),
+    top_authors: formatTopAuthors(org.top_authors),
+    recent_works: Array.isArray(org.recent_works) ? org.recent_works.map(formatAffiliatedWork) : [],
+    created_at: org.created_at || null,
+    updated_at: org.updated_at || null,
+    _links: {
+      self: buildSelfLink(id),
+      works: id === null ? null : `/institutions/${id}/works`,
+      funded_works: id === null ? null : `/institutions/${id}/funded-works`
+    }
+  };
+}
+
+module.exports = {
+  formatOrganizationListItem,
+  formatOrganizationDetails,
+  formatAffiliatedWork,
+  formatRelatedOrganization
+};

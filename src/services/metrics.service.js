@@ -187,59 +187,51 @@ class MetricsService {
 
       const topOrgsRows = await sequelize.query(`
         SELECT
-          top.affiliation_id AS organization_id,
+          o.id AS organization_id,
           o.name AS organization_name,
           o.country_code,
-          top.total_works,
-          top.unique_researchers
-        FROM (
-          SELECT
-            affiliation_id,
-            COUNT(DISTINCT work_id) AS total_works,
-            COUNT(DISTINCT person_id) AS unique_researchers
-          FROM authorships
-          WHERE affiliation_id IS NOT NULL
-          GROUP BY affiliation_id
-          ORDER BY total_works DESC
-          LIMIT :pickLimit
-        ) top
-        INNER JOIN organizations o ON o.id = top.affiliation_id
-        WHERE TRIM(o.name) != ''
-        ${countryFilter}
-        ORDER BY top.total_works DESC
+          o.publication_count AS total_works,
+          o.researcher_count AS unique_researchers,
+          o.total_citations,
+          o.open_access_works_count,
+          o.h_index
+        FROM organizations o
+        WHERE o.publication_count > 0
+          AND NOT EXISTS (SELECT 1 FROM organization_unresolved u WHERE u.org_id = o.id)
+          AND CHAR_LENGTH(TRIM(o.name)) >= 2
+          ${countryFilter}
+        ORDER BY o.publication_count DESC, o.id ASC
         LIMIT :limit OFFSET :offset
       `, {
-        replacements: { ...replacements, pickLimit: parseInt(limit) + parseInt(offset) + 50 },
+        replacements,
         type: sequelize.QueryTypes.SELECT
       });
 
       const orgIds = topOrgsRows.map(r => r.organization_id);
-      const enrichedMap = Object.create(null);
+      const timespanMap = Object.create(null);
       if (orgIds.length > 0) {
-        const enriched = await sequelize.query(`
+        const timespans = await sequelize.query(`
           SELECT
             a.affiliation_id AS organization_id,
-            SUM(COALESCE(w.citation_count, 0)) AS total_citations,
             MIN(pub.year) AS first_publication_year,
             MAX(pub.year) AS latest_publication_year
           FROM authorships a
-          LEFT JOIN works w ON w.id = a.work_id
-          LEFT JOIN publications pub ON pub.work_id = a.work_id
-          WHERE a.affiliation_id IN (:orgIds)
+          JOIN publications pub ON pub.work_id = a.work_id
+          WHERE a.affiliation_id IN (:orgIds) AND pub.year IS NOT NULL
           GROUP BY a.affiliation_id
         `, {
           replacements: { orgIds },
           type: sequelize.QueryTypes.SELECT
         });
-        for (const row of enriched) {
-          enrichedMap[row.organization_id] = row;
+        for (const row of timespans) {
+          timespanMap[row.organization_id] = row;
         }
       }
 
       const institutions = topOrgsRows.map(row => {
-        const enrichment = enrichedMap[row.organization_id] || {};
+        const timespan = timespanMap[row.organization_id] || {};
         const totalWorks = parseInt(row.total_works, 10) || 0;
-        const totalCitations = parseInt(enrichment.total_citations, 10) || 0;
+        const totalCitations = parseInt(row.total_citations, 10) || 0;
         return {
           organization_id: row.organization_id,
           organization_name: row.organization_name,
@@ -248,8 +240,10 @@ class MetricsService {
           total_citations: totalCitations,
           avg_citations: totalWorks > 0 ? Math.round((totalCitations / totalWorks) * 100) / 100 : null,
           unique_researchers: parseInt(row.unique_researchers, 10) || 0,
-          first_publication_year: enrichment.first_publication_year || null,
-          latest_publication_year: enrichment.latest_publication_year || null
+          open_access_works_count: parseInt(row.open_access_works_count, 10) || 0,
+          h_index: row.h_index === null || row.h_index === undefined ? null : parseInt(row.h_index, 10),
+          first_publication_year: timespan.first_publication_year || null,
+          latest_publication_year: timespan.latest_publication_year || null
         };
       });
 
