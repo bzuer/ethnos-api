@@ -17,8 +17,8 @@ const validateWorksQuery = [
   
   query('limit')
     .optional()
-    .isInt({ min: 1, max: 20 })
-    .withMessage('Limit must be between 1 and 20'),
+    .isInt({ min: 1, max: 100 })
+    .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
     .optional()
@@ -101,9 +101,9 @@ const validateWorksQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1
- *           maximum: 20
+ *           maximum: 100
  *           default: 20
- *         description: Number of results per page (max 20)
+ *         description: Number of results per page (max 100)
  *       - in: query
  *         name: offset
  *         schema:

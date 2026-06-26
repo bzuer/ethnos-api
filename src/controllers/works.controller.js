@@ -75,10 +75,10 @@ class WorksController {
       };
 
       const result = await worksService.getWorks(filters);
-      
+
       return res.success(result.data, {
         pagination: result.pagination,
-        meta: result.performance
+        meta: result.meta || result.performance
       });
     } catch (error) {
       logger.error('Error retrieving works list', {

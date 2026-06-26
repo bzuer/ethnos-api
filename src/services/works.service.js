@@ -382,8 +382,8 @@ class WorksService {
     const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
     const sortBy = filters.sort_by ?? filters.sortBy ?? null;
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
-    const effectiveLimit = Math.min(limit, 50);
-    const cacheKey = `works:list:v5:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
+    const effectiveLimit = Math.min(limit, 100);
+    const cacheKey = `works:list:v6:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -421,7 +421,7 @@ class WorksService {
       cited_by_min: toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min),
       cited_by_max: toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max)
     };
-    const cacheKey = `works:vitrine:v5:p${page}:l${effectiveLimit}:t${filters.type || 'all'}:y${filters.year_from || 'all'}-${filters.year_to || 'all'}:lang${filters.language || 'all'}:cb${enriched.cited_by_min ?? 'all'}-${enriched.cited_by_max ?? 'all'}:sb${filters.sort_by || filters.sortBy || 'default'}:so${filters.sort_order || filters.sortOrder || 'desc'}`;
+    const cacheKey = `works:vitrine:v6:p${page}:l${effectiveLimit}:t${filters.type || 'all'}:y${filters.year_from || 'all'}-${filters.year_to || 'all'}:lang${filters.language || 'all'}:cb${enriched.cited_by_min ?? 'all'}-${enriched.cited_by_max ?? 'all'}:sb${filters.sort_by || filters.sortBy || 'default'}:so${filters.sort_order || filters.sortOrder || 'desc'}`;
 
     const cached = await cacheService.get(cacheKey);
     if (cached) return cached;
@@ -482,6 +482,7 @@ class WorksService {
 
     const hasPubFilters = publicationConds.length > 0;
     const orderNeedsPub = customOrder ? customOrder.needsPub : false;
+    const isDefaultBrowse = innerWhere.length === 0 && !hasPubFilters && !customOrder;
     const innerJoin = hasPubFilters
       ? `INNER JOIN publications p ON p.work_id = w.id AND ${publicationConds.join(' AND ')}`
       : (orderNeedsPub ? 'LEFT JOIN publications p ON p.work_id = w.id' : '');
@@ -491,7 +492,7 @@ class WorksService {
     const innerWhereClause = innerWhere.length ? `WHERE ${innerWhere.join(' AND ')}` : '';
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000', 10);
     const COUNT_BUDGET_MS = 2000;
-    const ESTIMATED_WORKS_TOTAL = 6628134;
+    const ESTIMATED_WORKS_TOTAL = 6187180;
 
     let totalItems;
     let totalIsExact = true;
@@ -518,7 +519,9 @@ class WorksService {
     const innerOrderClause = customOrder
       ? ((hasPubFilters || orderNeedsPub) ? customOrder.withPub : customOrder.noPub)
       : 'w.id DESC';
-    const innerSql = `
+    const innerSql = isDefaultBrowse
+      ? 'SELECT DISTINCT work_id FROM publications ORDER BY work_id DESC LIMIT ? OFFSET ?'
+      : `
       SELECT w.id AS work_id
       FROM works w
       ${innerJoin}
@@ -527,10 +530,13 @@ class WorksService {
       ORDER BY ${innerOrderClause}
       LIMIT ? OFFSET ?
     `;
+    const innerReplacements = isDefaultBrowse
+      ? [limit, offset]
+      : [...innerJoinParams, ...innerParams, limit, offset];
 
     const primaryStart = process.hrtime.bigint();
     const innerRows = await sequelize.query(withTimeout(innerSql, dbTimeoutMs), {
-      replacements: [...innerJoinParams, ...innerParams, limit, offset],
+      replacements: innerReplacements,
       type: sequelize.QueryTypes.SELECT
     });
     const innerQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());

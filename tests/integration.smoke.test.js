@@ -119,6 +119,29 @@ describe('Integration smoke (real DB)', () => {
       }
     });
 
+    test('GET /works fills the requested page with publication-bearing works', async () => {
+      const limit = 50;
+      const body = assertSuccess(await fetchJson(`/works?limit=${limit}`), 'GET /works?limit=50');
+      assert.equal(body.data.length, limit, 'first page must fill to the requested limit');
+      assert.ok(body.data.every((w) => w.publication_id), 'every listed work must carry a publication_id');
+      assert.ok('pagination_total_exact' in (body.meta || {}), 'meta must surface pagination_total_exact');
+    });
+
+    test('GET /works enforces the 1..100 limit bound', async () => {
+      const ok = assertSuccess(await fetchJson('/works?limit=100'), 'GET /works?limit=100');
+      assert.equal(ok.data.length, 100, 'limit=100 must be accepted and fill');
+      const tooBig = await fetchJson('/works?limit=101');
+      assert.equal(tooBig.status, 400, 'limit=101 must be rejected');
+      assert.equal(tooBig.body?.code, 'VALIDATION_ERROR');
+    });
+
+    test('GET /works/showcase fills to the requested limit', async () => {
+      const limit = 50;
+      const body = assertSuccess(await fetchJson(`/works/showcase?limit=${limit}`), 'GET /works/showcase?limit=50');
+      assert.equal(body.data.length, limit, 'showcase first page must fill to the requested limit');
+      assert.ok(body.data.every((w) => w.publication_id), 'every showcase work must carry a publication_id');
+    });
+
     test('GET /search/works free-text q returns ranked matches', async () => {
       const body = assertSuccess(await fetchJson('/search/works?q=social&limit=5'), 'GET /search/works?q');
       assert.ok(Array.isArray(body.data), 'data must be array');
