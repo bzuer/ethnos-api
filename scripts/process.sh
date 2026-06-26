@@ -37,7 +37,6 @@ run_docs_cache() {
 case "$ACTION" in
   build)
     require_env_file
-    npm cache clean --force
     clean_workspace
     install_dependencies
     run_docs_cache

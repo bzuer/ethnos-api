@@ -22,7 +22,12 @@ app.use((req, res, next) => {
   try {
     const base = `${req.protocol || 'http'}://localhost`;
     const u = new URL(req.url, base);
-    req.query = Object.fromEntries(u.searchParams.entries());
+    Object.defineProperty(req, 'query', {
+      value: Object.fromEntries(u.searchParams.entries()),
+      writable: true,
+      configurable: true,
+      enumerable: true
+    });
   } catch (_) {
   }
   next();
@@ -403,7 +408,7 @@ app.get(/^\/((?:https?:\/\/)?doi\.org\/)?(\d{2}\..+)$/, (req, res, next) => {
   next();
 }, relationalLimiter, publicationsController.getPublicationByDoi);
 
-app.use('*', notFoundHandler);
+app.use(notFoundHandler);
 
 app.use(errorMonitoring);
 app.use(globalErrorHandler);

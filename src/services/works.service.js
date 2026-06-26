@@ -85,16 +85,16 @@ const resolveWorksOrderClause = (sortBy, sortOrder) => {
     case 'cited_by_count':
     case 'citation_count':
     case 'citations':
-      return { outer: `w.citation_count ${dir}, p.year DESC, w.id DESC`, includesRelevance: false, dir };
+      return { withPub: `w.citation_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.citation_count ${dir}, w.id DESC`, needsPub: false };
     case 'references_count':
     case 'reference_count':
-      return { outer: `w.reference_count ${dir}, p.year DESC, w.id DESC`, includesRelevance: false, dir };
+      return { withPub: `w.reference_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.reference_count ${dir}, w.id DESC`, needsPub: false };
     case 'publication_year':
     case 'year':
-      return { outer: `p.year ${dir}, w.id DESC`, includesRelevance: false, dir };
+      return { withPub: `MAX(p.year) ${dir}, w.id DESC`, noPub: `MAX(p.year) ${dir}, w.id DESC`, needsPub: true };
     case 'id':
     case 'work_id':
-      return { outer: `w.id ${dir}`, includesRelevance: false, dir };
+      return { withPub: `w.id ${dir}`, noPub: `w.id ${dir}`, needsPub: false };
     default:
       return null;
   }
@@ -481,11 +481,12 @@ class WorksService {
     }
 
     const hasPubFilters = publicationConds.length > 0;
+    const orderNeedsPub = customOrder ? customOrder.needsPub : false;
     const innerJoin = hasPubFilters
       ? `INNER JOIN publications p ON p.work_id = w.id AND ${publicationConds.join(' AND ')}`
-      : '';
+      : (orderNeedsPub ? 'LEFT JOIN publications p ON p.work_id = w.id' : '');
     const innerJoinParams = hasPubFilters ? publicationParams : [];
-    const groupByClause = hasPubFilters ? 'GROUP BY w.id' : '';
+    const groupByClause = (hasPubFilters || orderNeedsPub) ? 'GROUP BY w.id' : '';
 
     const innerWhereClause = innerWhere.length ? `WHERE ${innerWhere.join(' AND ')}` : '';
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000', 10);
@@ -514,7 +515,9 @@ class WorksService {
       }
     }
 
-    const innerOrderClause = customOrder ? customOrder.outer.replace(/p\.year/g, 'MAX(p.year)') : 'w.id DESC';
+    const innerOrderClause = customOrder
+      ? ((hasPubFilters || orderNeedsPub) ? customOrder.withPub : customOrder.noPub)
+      : 'w.id DESC';
     const innerSql = `
       SELECT w.id AS work_id
       FROM works w
@@ -526,13 +529,10 @@ class WorksService {
     `;
 
     const primaryStart = process.hrtime.bigint();
-    const innerRows = await Promise.race([
-      sequelize.query(innerSql, {
-        replacements: [...innerJoinParams, ...innerParams, limit, offset],
-        type: sequelize.QueryTypes.SELECT
-      }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), dbTimeoutMs))
-    ]);
+    const innerRows = await sequelize.query(withTimeout(innerSql, dbTimeoutMs), {
+      replacements: [...innerJoinParams, ...innerParams, limit, offset],
+      type: sequelize.QueryTypes.SELECT
+    });
     const innerQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
 
     const workIds = innerRows.map(r => r.work_id).filter(Boolean);
@@ -723,11 +723,12 @@ class WorksService {
       publicationParams.push(peerFlag);
     }
     const hasPubFilters = publicationConds.length > 0;
+    const orderNeedsPub = customOrder ? customOrder.needsPub : false;
     const innerJoin = hasPubFilters
       ? `INNER JOIN publications p ON p.work_id = w.id AND ${publicationConds.join(' AND ')}`
-      : '';
+      : (orderNeedsPub ? 'LEFT JOIN publications p ON p.work_id = w.id' : '');
     const innerJoinParams = hasPubFilters ? publicationParams : [];
-    const groupByClause = hasPubFilters ? 'GROUP BY w.id' : '';
+    const groupByClause = (hasPubFilters || orderNeedsPub) ? 'GROUP BY w.id' : '';
 
     const relevanceExpr = hasContent
       ? 'MATCH(w.full_title_normalized, w.subjects_search) AGAINST (? IN BOOLEAN MODE)'
@@ -740,7 +741,7 @@ class WorksService {
 
     const innerWhereClause = `WHERE ${innerWhere.join(' AND ')}`;
     const innerOrderClause = customOrder
-      ? customOrder.outer.replace(/p\.year/g, 'MAX(p.year)')
+      ? ((hasPubFilters || orderNeedsPub) ? customOrder.withPub : customOrder.noPub)
       : (hasContent || hasMetadata
         ? 'relevance DESC, w.citation_count DESC, w.id DESC'
         : 'w.citation_count DESC, w.id DESC');

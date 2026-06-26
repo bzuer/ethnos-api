@@ -6,12 +6,14 @@ function requestTimeout(opts = {}) {
     if (timeoutMs <= 0) return next();
 
     let timedOut = false;
+    const originalJson = res.json.bind(res);
     const timer = setTimeout(() => {
       if (res.headersSent) return;
       timedOut = true;
       req.timedout = true;
       try {
-        res.status(503).json({
+        res.status(503);
+        originalJson({
           status: 'error',
           code: 'REQUEST_TIMEOUT',
           message: `Request timed out after ${timeoutMs}ms`,
@@ -25,7 +27,6 @@ function requestTimeout(opts = {}) {
     res.on('finish', clear);
     res.on('close', clear);
 
-    const originalJson = res.json.bind(res);
     res.json = function (...args) {
       if (timedOut) return;
       return originalJson(...args);
