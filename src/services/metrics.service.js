@@ -172,7 +172,7 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { country_code } = filters;
-    const cacheKey = `metrics:institutions:${JSON.stringify({ page, limit, offset, country_code })}`;
+    const cacheKey = `metrics:institutions:v2:${JSON.stringify({ page, limit, offset, country_code })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -197,8 +197,6 @@ class MetricsService {
           o.h_index
         FROM organizations o
         WHERE o.publication_count > 0
-          AND NOT EXISTS (SELECT 1 FROM organization_unresolved u WHERE u.org_id = o.id)
-          AND CHAR_LENGTH(TRIM(o.name)) >= 2
           ${countryFilter}
         ORDER BY o.publication_count DESC, o.id ASC
         LIMIT :limit OFFSET :offset

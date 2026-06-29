@@ -43,6 +43,8 @@ const { relationalLimiter } = require('../middleware/rateLimiting');
  *                       example: 255
  *       500:
  *         description: Internal server error
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  */
 router.get(
   '/statistics',
@@ -112,6 +114,10 @@ router.get(
  *                   example: false
  *       400:
  *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get(
   '/search',
@@ -167,6 +173,10 @@ router.get(
  *                   $ref: '#/components/schemas/Signature'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get(
   '/:id',
@@ -228,6 +238,10 @@ router.get(
  *                   type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 /**
  * @swagger
@@ -362,6 +376,8 @@ router.get(
  *         description: Signature not found
  *       500:
  *         description: Internal server error
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  */
 const validateWorksQuery = [
   param('id')

@@ -151,6 +151,26 @@ app.use(performanceMonitoring);
 
 homepageStatsService.refresh();
 
+/**
+ * @swagger
+ * /:
+ *   get:
+ *     summary: API root and service metadata
+ *     description: Returns service metadata — name, version, environment, documentation links, live totals, and the catalogue of available endpoint groups. Public; no access key required.
+ *     tags: [System]
+ *     responses:
+ *       200:
+ *         description: Service metadata
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
+ */
 app.get('/', (req, res) => {
   const homepageStats = homepageStatsService.getSnapshot();
   const totals = homepageStats?.totals || {};
@@ -359,11 +379,8 @@ const publicationsController = require('./controllers/publications.controller');
  *       - `/doi.org/{doi}` (e.g. `/doi.org/10.4324/9781003371694`)
  *       - `/https://doi.org/{doi}` (e.g. `/https://doi.org/10.4324/9781003371694`)
  *
- *       Phase 7 flipped the resolver from `worksController.getWorkByDoi` to
- *       `publicationsController.getPublicationByDoi`. The response is the
- *       publication-shaped payload (with the parent `work` block embedded);
- *       DOIs that previously collapsed to the latest sibling now resolve to
- *       the exact publication that owns the DOI.
+ *       Returns the publication-shaped payload with the parent `work` block embedded,
+ *       resolving to the exact publication that owns the DOI.
  *     tags: [Publications]
  *     parameters:
  *       - in: path
@@ -400,6 +417,8 @@ const publicationsController = require('./controllers/publications.controller');
  *                   type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */

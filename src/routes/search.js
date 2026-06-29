@@ -197,6 +197,10 @@ const validateWorksSearch = [
  *         $ref: '#/components/responses/Success'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/works', validateWorksSearch, enhancedValidationHandler, searchController.searchWorks);
 
@@ -260,6 +264,10 @@ router.get('/works', validateWorksSearch, enhancedValidationHandler, searchContr
  *                       type: integer
  *       400:
  *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/global', commonValidations.searchQuery, enhancedValidationHandler, searchController.globalSearch);
 
@@ -459,6 +467,10 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  *                           type: boolean
  *       400:
  *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 const worksService = require('../services/works.service');
 
@@ -604,6 +616,10 @@ router.get('/advanced', validateAdvancedSearch, enhancedValidationHandler, advan
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/health', async (req, res, next) => {
   try {
@@ -700,6 +716,10 @@ const autocompleteService = require('../services/autocomplete.service');
  *                       type: array
  *                       items:
  *                         type: object
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/autocomplete', async (req, res, next) => {
   try {
@@ -751,6 +771,10 @@ router.get('/autocomplete', async (req, res, next) => {
  *     responses:
  *       200:
  *         description: Popular search terms
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/popular', async (req, res, next) => {
   try {

@@ -53,6 +53,7 @@ const BASE_SELECT = `
   v.aggregation_type,
   v.open_access,
   v.country_code,
+  v.lang,
   v.homepage_url,
   v.issn,
   v.eissn,
@@ -78,9 +79,7 @@ const BASE_SELECT = `
   v.total_score,
   v.subject_score,
   v.oa_score,
-  v.authorship_score,
-  v.affiliation_score,
-  v.citation_score,
+  v.impact_score,
   v.llm_score,
   v.llm_relevance,
   v.llm_justification,
@@ -102,9 +101,7 @@ const buildScoreBreakdown = (row) => ({
   total: toNullableFloat(row.total_score),
   subject: toNullableFloat(row.subject_score),
   oa: toNullableFloat(row.oa_score),
-  authorship: toNullableFloat(row.authorship_score),
-  affiliation: toNullableFloat(row.affiliation_score),
-  citation: toNullableFloat(row.citation_score),
+  impact: toNullableFloat(row.impact_score),
   llm: toNullableFloat(row.llm_score),
   llm_relevance: row.llm_relevance ?? null,
   llm_justification: row.llm_justification ?? null
@@ -121,6 +118,7 @@ const mapVenueRow = (row) => {
     open_access: toNullableBoolean(row.open_access),
     open_access_status: toNullableBoolean(row.open_access),
     country_code: row.country_code || null,
+    language: row.lang || null,
     homepage_url: row.homepage_url || null,
     issn: row.issn || null,
     eissn: row.eissn || null,
@@ -132,7 +130,6 @@ const mapVenueRow = (row) => {
     coverage_end_year: toNullableInt(row.coverage_end_year),
     works_count: toInt(row.works_count, 0),
     cited_by_count: toInt(row.cited_by_count, 0),
-    open_access_percentage: null,
     impact_factor: toNullableFloat(row.impact_factor),
     citescore: toNullableFloat(row.citescore),
     sjr: toNullableFloat(row.sjr),
@@ -440,7 +437,7 @@ class VenuesService {
     const currentOffset = Math.max(0, parseInt(pagination.offset, 10) || 0);
     const type = options.type;
 
-    const cacheKey = `venues:search:v3:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
+    const cacheKey = `venues:search:v4:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info(`Venues search "${query}" retrieved from cache`);
@@ -508,7 +505,7 @@ class VenuesService {
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v5:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v6:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -680,7 +677,7 @@ class VenuesService {
     const includeTopAuthors = options.includeTopAuthors !== false;
     const includeRecentWorks = options.includeRecentWorks !== false;
 
-    const cacheKey = `venue:v4:${venueId}:${JSON.stringify({
+    const cacheKey = `venue:v5:${venueId}:${JSON.stringify({
       includeSubjects,
       includeYearly,
       includeTopAuthors,

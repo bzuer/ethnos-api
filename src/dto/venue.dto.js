@@ -28,7 +28,7 @@ const toNullableBoolean = (value) => {
   return null;
 };
 
-const SCORE_COMPONENT_KEYS = ['subject', 'snip', 'oa', 'authorship', 'affiliation', 'citation', 'llm'];
+const SCORE_COMPONENT_KEYS = ['subject', 'oa', 'impact', 'llm'];
 
 const buildRanking = (venue = {}) => {
   const source = venue.score_breakdown && typeof venue.score_breakdown === 'object' ? venue.score_breakdown : null;
@@ -114,9 +114,9 @@ const baseVenue = (venue = {}) => ({
   type: venue.type || null,
   aggregation_type: venue.aggregation_type || null,
   country_code: venue.country_code || null,
+  language: venue.language || null,
   homepage_url: venue.homepage_url || null,
   open_access: toNullableBoolean(venue.open_access),
-  open_access_percentage: toNullableNumber(venue.open_access_percentage),
   coverage_start_year: toNullableInt(venue.coverage_start_year),
   coverage_end_year: toNullableInt(venue.coverage_end_year),
   works_count: toInteger(venue.works_count, 0),
@@ -154,9 +154,18 @@ function formatVenueDetails(venue = {}, options = {}) {
   const firstYear = venue.coverage_start_year ?? (yearsWithWorks.length ? Math.min(...yearsWithWorks) : null);
   const latestYear = venue.coverage_end_year ?? (yearsWithWorks.length ? Math.max(...yearsWithWorks) : null);
 
+  const totalWorksFromYearly = yearly.reduce((sum, y) => sum + toInteger(y.works_count, 0), 0);
+  const oaWorksFromYearly = yearly.reduce((sum, y) => sum + toInteger(y.oa_works_count, 0), 0);
+  const openAccessPercentage = totalWorksFromYearly > 0
+    ? Math.round((oaWorksFromYearly / totalWorksFromYearly) * 1000) / 10
+    : null;
+
   detail.publication_summary = {
     first_publication_year: firstYear,
     latest_publication_year: latestYear,
+    total_works_count: totalWorksFromYearly,
+    open_access_works_count: oaWorksFromYearly,
+    open_access_percentage: openAccessPercentage,
     publication_trend: yearly.map((y) => ({
       year: y.year,
       works_count: toInteger(y.works_count, 0),

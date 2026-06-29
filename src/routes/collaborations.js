@@ -153,6 +153,10 @@ const validateNetworkDepth = [
  *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollaborationFilters], collaborationsController.getPersonCollaborators);
 
@@ -238,6 +242,10 @@ router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollab
  *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth], collaborationsController.getCollaborationNetwork);
 
@@ -320,6 +328,10 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *                           type: integer
  *       400:
  *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/collaborations/top', validateTopCollaborations, collaborationsController.getTopCollaborations);
 

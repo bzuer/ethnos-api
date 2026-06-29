@@ -80,6 +80,10 @@ const validateSubjectCourses = [
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/statistics', subjectsController.getSubjectsStatistics);
 
@@ -100,6 +104,10 @@ router.get('/statistics', subjectsController.getSubjectsStatistics);
  *         $ref: '#/components/responses/Success'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id', validateSubjectId, subjectsController.getSubjectById);
 
@@ -121,6 +129,10 @@ router.get('/:id', validateSubjectId, subjectsController.getSubjectById);
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id/children', [...validateSubjectId, ...validatePagination], subjectsController.getSubjectChildren);
 /**
@@ -140,6 +152,10 @@ router.get('/:id/children', [...validateSubjectId, ...validatePagination], subje
  *         $ref: '#/components/responses/Success'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id/hierarchy', validateSubjectId, subjectsController.getSubjectHierarchy);
 /**
@@ -180,6 +196,10 @@ router.get('/:id/hierarchy', validateSubjectId, subjectsController.getSubjectHie
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id/works', [...validateSubjectId, ...validateSubjectWorks], subjectsController.getSubjectWorks);
 /**
@@ -216,6 +236,10 @@ router.get('/:id/works', [...validateSubjectId, ...validateSubjectWorks], subjec
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id/courses', [...validateSubjectId, ...validateSubjectCourses], subjectsController.getSubjectCourses);
 

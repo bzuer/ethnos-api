@@ -141,6 +141,10 @@ const validateBibliographyAnalysis = [
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 
 router.get('/', validateBibliographyList, bibliographyController.getBibliography);
@@ -175,6 +179,10 @@ router.get('/', validateBibliographyList, bibliographyController.getBibliography
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/analyses', validateBibliographyAnalysis, bibliographyController.getBibliographyAnalysis);
 /**
@@ -186,6 +194,10 @@ router.get('/analyses', validateBibliographyAnalysis, bibliographyController.get
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/statistics', bibliographyController.getBibliographyStatistics);
 

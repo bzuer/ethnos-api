@@ -40,6 +40,10 @@ router.use(rateLimit.generalLimiter);
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 
 const validateCoursesList = [
@@ -83,6 +87,10 @@ router.get('/', validateCoursesList, coursesController.getCourses);
  *     responses:
  *       200:
  *         $ref: '#/components/responses/CoursesStatisticsSuccess'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/statistics', coursesController.getCoursesStatistics);
 
@@ -103,6 +111,10 @@ router.get('/statistics', coursesController.getCoursesStatistics);
  *         $ref: '#/components/responses/CourseDetailsSuccess'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id', validateCourseId, coursesController.getCourseById);
 
@@ -129,6 +141,10 @@ router.get('/:id', validateCourseId, coursesController.getCourseById);
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 
 router.get('/:id/instructors', validateCourseId, coursesController.getCourseInstructors);
@@ -161,6 +177,10 @@ router.get('/:id/instructors', validateCourseId, coursesController.getCourseInst
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id/bibliographies', validateCourseId, coursesController.getCourseBibliography);
 
@@ -187,6 +207,10 @@ router.get('/:id/bibliographies', validateCourseId, coursesController.getCourseB
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id/subjects', validateCourseId, coursesController.getCourseSubjects);
 

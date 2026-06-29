@@ -176,7 +176,7 @@ CREATE TABLE `files` (
   KEY `idx_files_content_version` (`content_version`),
   KEY `idx_files_publication_id` (`publication_id`),
   CONSTRAINT `fk_files_publication` FOREIGN KEY (`publication_id`) REFERENCES `publications` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=39516222 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=46246250 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -198,7 +198,25 @@ CREATE TABLE `funding` (
   KEY `idx_funding_work_funder` (`work_id`,`funder_id`),
   CONSTRAINT `funding_ibfk_1` FOREIGN KEY (`work_id`) REFERENCES `works` (`id`) ON DELETE CASCADE,
   CONSTRAINT `funding_ibfk_2` FOREIGN KEY (`funder_id`) REFERENCES `organizations` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=926690 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1074956 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `organization_relationships`
+--
+
+DROP TABLE IF EXISTS `organization_relationships`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `organization_relationships` (
+  `parent_id` int(11) NOT NULL,
+  `child_id` int(11) NOT NULL,
+  `relationship_type` enum('PARENT_CHILD','RELATED') NOT NULL,
+  PRIMARY KEY (`parent_id`,`child_id`,`relationship_type`),
+  KEY `idx_org_relationships_child` (`child_id`),
+  CONSTRAINT `fk_org_relationships_child` FOREIGN KEY (`child_id`) REFERENCES `organizations` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_org_relationships_parent` FOREIGN KEY (`parent_id`) REFERENCES `organizations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -212,6 +230,7 @@ CREATE TABLE `organizations` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(512) NOT NULL,
   `type` enum('UNIVERSITY','INSTITUTE','PUBLISHER','FUNDER','COMPANY','OTHER') NOT NULL,
+  `openalex_type` varchar(20) DEFAULT NULL,
   `country_code` char(2) DEFAULT NULL,
   `city` varchar(100) DEFAULT NULL,
   `url` varchar(512) DEFAULT NULL,
@@ -221,13 +240,21 @@ CREATE TABLE `organizations` (
   `mag_id` varchar(50) DEFAULT NULL,
   `cluster_key` varchar(100) DEFAULT NULL,
   `semantic_key` varchar(512) DEFAULT NULL,
+  `acronyms` longtext DEFAULT NULL CHECK (json_valid(`acronyms`)),
+  `alternative_names` longtext DEFAULT NULL CHECK (json_valid(`alternative_names`)),
   `publication_count` int(11) NOT NULL DEFAULT 0,
   `researcher_count` int(11) NOT NULL DEFAULT 0,
   `total_citations` int(11) NOT NULL DEFAULT 0,
   `open_access_works_count` int(11) NOT NULL DEFAULT 0,
+  `h_index` int(11) DEFAULT NULL,
+  `i10_index` int(11) DEFAULT NULL,
+  `2yr_mean_citedness` decimal(10,5) DEFAULT NULL,
   `standardized_name` varchar(512) GENERATED ALWAYS AS (trim(lcase(`name`))) STORED,
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `status` enum('active','inactive','withdrawn') DEFAULT NULL,
+  `unresolved_reason` enum('SUBENTITY','COMPOUND','OTHER') DEFAULT NULL,
+  `grid_id` varchar(20) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_name_type` (`name`(255),`type`),
   UNIQUE KEY `uq_organizations_ror_id` (`ror_id`),
@@ -241,8 +268,14 @@ CREATE TABLE `organizations` (
   KEY `idx_organizations_publication_count` (`publication_count`),
   KEY `idx_organizations_researcher_count` (`researcher_count`),
   KEY `idx_semantic_key` (`semantic_key`),
+  KEY `idx_org_grid` (`grid_id`),
+  KEY `idx_org_stdname_type` (`standardized_name`(255),`type`),
+  KEY `idx_organizations_total_citations` (`total_citations`),
+  KEY `idx_organizations_h_index` (`h_index`),
+  KEY `idx_organizations_i10_index` (`i10_index`),
+  KEY `idx_org_unresolved_reason` (`unresolved_reason`),
   FULLTEXT KEY `ft_organizations_name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=2231577 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2587451 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -289,7 +322,7 @@ CREATE TABLE `persons` (
   KEY `idx_persons_signature_id` (`signature_id`),
   FULLTEXT KEY `ft_persons_names` (`preferred_name`,`given_names`,`family_name`),
   CONSTRAINT `fk_persons_signature` FOREIGN KEY (`signature_id`) REFERENCES `signatures` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=8758809 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=9190345 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -362,32 +395,6 @@ CREATE TABLE `publication_relevance` (
   KEY `idx_class` (`rel_class`),
   KEY `idx_score` (`score`),
   CONSTRAINT `fk_pubrel_pub` FOREIGN KEY (`publication_id`) REFERENCES `publications` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Table structure for table `publication_relevance_preview`
---
-
-DROP TABLE IF EXISTS `publication_relevance_preview`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `publication_relevance_preview` (
-  `publication_id` int(11) NOT NULL,
-  `work_id` int(11) NOT NULL,
-  `venue_id` int(11) DEFAULT NULL,
-  `score` decimal(6,2) NOT NULL,
-  `rel_class` varchar(16) NOT NULL COMMENT 'CORE|ADJACENT|BORDERLINE|OFF',
-  `positive_signal` decimal(6,2) NOT NULL,
-  `negative_signal` decimal(6,2) NOT NULL,
-  `venue_bonus` decimal(6,2) NOT NULL,
-  `no_signal_flag` tinyint(1) NOT NULL,
-  `computed_at` datetime NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`publication_id`),
-  KEY `idx_work` (`work_id`),
-  KEY `idx_venue` (`venue_id`),
-  KEY `idx_class` (`rel_class`),
-  KEY `idx_score` (`score`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -472,7 +479,7 @@ CREATE TABLE `publications` (
   CONSTRAINT `publications_ibfk_1` FOREIGN KEY (`work_id`) REFERENCES `works` (`id`) ON DELETE CASCADE,
   CONSTRAINT `publications_ibfk_2` FOREIGN KEY (`venue_id`) REFERENCES `venues` (`id`) ON DELETE SET NULL,
   CONSTRAINT `publications_ibfk_3` FOREIGN KEY (`publisher_id`) REFERENCES `organizations` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=1124124407 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1125123483 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -576,7 +583,7 @@ CREATE TABLE `signatures` (
   UNIQUE KEY `uq_signature` (`signature`),
   KEY `idx_signature_search` (`signature`(20)),
   KEY `idx_signatures_signature` (`signature`)
-) ENGINE=InnoDB AUTO_INCREMENT=29667660 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=30041427 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -589,7 +596,7 @@ DROP TABLE IF EXISTS `subject_relevance_tiers`;
 CREATE TABLE `subject_relevance_tiers` (
   `subject_id` int(11) NOT NULL,
   `vocabulary` varchar(50) NOT NULL COMMENT 'Scopus | OpenAlex',
-  `tier` char(1) NOT NULL COMMENT 'A=core, B=strong, C=related, D=peripheral, E=generic, S=socio-political broad, N=negative penalty',
+  `tier` char(1) NOT NULL COMMENT 'A=core B=strong S=socio-political C=related D=peripheral E=generic N=negative X=neutralised',
   `weight` decimal(5,2) NOT NULL,
   PRIMARY KEY (`subject_id`),
   KEY `idx_tier` (`tier`),
@@ -645,7 +652,7 @@ CREATE TABLE `subjects` (
   KEY `idx_external_id` (`external_id`),
   FULLTEXT KEY `ft_subjects_term` (`term`),
   CONSTRAINT `subjects_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `subjects` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=2071635 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2090119 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -729,6 +736,7 @@ CREATE TABLE `venues` (
   `authorship_score` decimal(10,3) DEFAULT 0.000,
   `affiliation_score` decimal(10,3) DEFAULT 0.000,
   `citation_score` decimal(10,3) DEFAULT 0.000,
+  `impact_score` decimal(10,3) NOT NULL DEFAULT 0.000,
   `llm_score` decimal(10,3) NOT NULL DEFAULT 0.000,
   `llm_relevance` tinyint(4) DEFAULT NULL,
   `llm_justification` varchar(512) DEFAULT NULL,
@@ -755,7 +763,7 @@ CREATE TABLE `venues` (
   KEY `idx_venues_abbreviated_name` (`abbreviated_name`),
   FULLTEXT KEY `ft_venues_search` (`name`,`abbreviated_name`),
   CONSTRAINT `venues_ibfk_1` FOREIGN KEY (`publisher_id`) REFERENCES `organizations` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=1081740 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=1114830 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -781,7 +789,7 @@ CREATE TABLE `work_references` (
   KEY `fk_ref_cited_work` (`cited_work_id`),
   CONSTRAINT `fk_ref_cited_work` FOREIGN KEY (`cited_work_id`) REFERENCES `works` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_ref_citing_work` FOREIGN KEY (`citing_work_id`) REFERENCES `works` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=79630491 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=92588738 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -900,10 +908,7 @@ CREATE TABLE `works` (
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `metrics_last_updated` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `title_normalized` varchar(255) GENERATED ALWAYS AS (left(trim(lcase(`title`)),255)) STORED,
   `full_title_normalized` varchar(255) GENERATED ALWAYS AS (left(trim(lcase(concat(`title`,coalesce(concat(' ',`subtitle`),'')))),255)) STORED,
-  `authors_search` mediumtext DEFAULT NULL,
-  `subjects_search` mediumtext DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_language` (`language`),
   KEY `idx_works_type_language` (`work_type`,`language`),
@@ -913,11 +918,8 @@ CREATE TABLE `works` (
   KEY `idx_works_citation_year` (`citation_count` DESC,`created_at` DESC),
   KEY `idx_works_metrics_updated` (`metrics_last_updated` DESC),
   KEY `idx_works_full_title_normalized` (`full_title_normalized`),
-  KEY `idx_work_type` (`work_type`),
-  FULLTEXT KEY `ft_works_metadata` (`authors_search`,`subjects_search`),
-  FULLTEXT KEY `ft_works_content` (`full_title_normalized`,`subjects_search`),
-  FULLTEXT KEY `ft_works_authors_content` (`full_title_normalized`,`authors_search`,`subjects_search`)
-) ENGINE=InnoDB AUTO_INCREMENT=19034728 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
+  KEY `idx_work_type` (`work_type`)
+) ENGINE=InnoDB AUTO_INCREMENT=20033805 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1070,6 +1072,80 @@ DELIMITER ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `sp_build_summary_venues` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
+DELIMITER ;;
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_build_summary_venues`()
+BEGIN
+    SET SESSION group_concat_max_len = 1000000;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_venue_subjects;
+    CREATE TEMPORARY TABLE tmp_venue_subjects (
+        venue_id INT PRIMARY KEY,
+        top_subjects_json LONGTEXT
+    ) ENGINE=InnoDB;
+
+    INSERT INTO tmp_venue_subjects (venue_id, top_subjects_json)
+    SELECT venue_id, JSON_ARRAYAGG(JSON_OBJECT('id', subject_id, 'term', term, 'score', score))
+    FROM (
+        SELECT vs.venue_id, s.id AS subject_id, s.term, vs.score,
+               ROW_NUMBER() OVER (PARTITION BY vs.venue_id ORDER BY vs.score DESC) AS rn
+        FROM venue_subjects vs
+        JOIN subjects s ON vs.subject_id = s.id
+    ) ranked
+    WHERE rn <= 10
+    GROUP BY venue_id;
+
+    TRUNCATE TABLE summary_venues;
+
+    INSERT INTO summary_venues (
+        venue_id, publisher_id, name_search, abbrev_search, publisher_search,
+        venue_type, country_code, issn, eissn, scopus_id, open_access_status,
+        total_publications_count, total_cited_by_count, coverage_start_year, coverage_end_year,
+        global_ranking_score, score_breakdown_json,
+        impact_factor, citescore, sjr, snip, h_index, i10_index, two_yr_mean_citedness,
+        is_in_doaj, is_in_scielo, is_indexed_in_scopus, homepage_url,
+        validation_status, top_subjects_json
+    )
+    SELECT
+        v.id, v.publisher_id, v.name, v.abbreviated_name, o.name,
+        v.type, v.country_code, v.issn, v.eissn, v.scopus_id, v.open_access,
+        v.works_count, v.cited_by_count, v.coverage_start_year, v.coverage_end_year,
+        v.total_score,
+        JSON_OBJECT(
+            'total',       v.total_score,
+            'subject',     v.subject_score,
+            'oa',          v.oa_score,
+            'authorship',  v.authorship_score,
+            'affiliation', v.affiliation_score,
+            'citation',    v.citation_score,
+            'impact',      v.impact_score,
+            'llm',         v.llm_score,
+            'llm_relevance',     v.llm_relevance,
+            'llm_justification', v.llm_justification
+        ),
+        v.impact_factor, v.citescore, v.sjr, v.snip,
+        v.h_index, v.i10_index, v.`2yr_mean_citedness`,
+        v.is_in_doaj, v.is_in_scielo, v.is_indexed_in_scopus, v.homepage_url,
+        v.validation_status, tvs.top_subjects_json
+    FROM venues v
+    LEFT JOIN organizations o ON v.publisher_id = o.id
+    LEFT JOIN tmp_venue_subjects tvs ON v.id = tvs.venue_id;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_venue_subjects;
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
 /*!50003 DROP PROCEDURE IF EXISTS `sp_calculate_venue_ranking` */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -1082,20 +1158,11 @@ CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_calculate_venue_ranking`()
 BEGIN
     DECLARE scored_count INT DEFAULT 0;
 
-    
-    
-    
     UPDATE venues SET
-        subject_score     = 0.000,
-        oa_score          = 0.000,
-        authorship_score  = 0.000,
-        affiliation_score = 0.000,
-        citation_score    = 0.000,
-        llm_score         = 0.000,
-        total_score       = 0.000;
+        subject_score=0.000, oa_score=0.000, authorship_score=0.000,
+        affiliation_score=0.000, citation_score=0.000, impact_score=0.000,
+        llm_score=0.000, total_score=0.000;
 
-    
-    
     
 
     
@@ -1105,6 +1172,7 @@ BEGIN
         FROM venue_subjects vs
         INNER JOIN subject_relevance_tiers srt
             ON vs.subject_id = srt.subject_id AND srt.vocabulary = 'Scopus'
+           AND srt.tier IN ('A','B','C','D','E','S')
         GROUP BY vs.venue_id
     ) scopus ON v.id = scopus.id
     SET v.subject_score = scopus.sub_score;
@@ -1115,12 +1183,16 @@ BEGIN
     UPDATE venues v
     INNER JOIN (
         SELECT vs.venue_id AS id,
-               SUM(COALESCE(srt.weight, 0)) / COUNT(*) AS sub_score
+               SUM(COALESCE(own.weight, par.weight, 0)) / COUNT(*) AS sub_score
         FROM venue_subjects vs
         INNER JOIN subjects s ON vs.subject_id = s.id
-        LEFT JOIN subject_relevance_tiers srt
-            ON s.parent_id = srt.subject_id AND srt.vocabulary = 'OpenAlex'
-                AND srt.tier <> 'N'
+        LEFT JOIN subject_relevance_tiers own
+            ON own.subject_id = s.id AND own.vocabulary = 'OpenAlex'
+           AND own.tier IN ('A','B','C','D','E','S')
+        LEFT JOIN subject_relevance_tiers par
+            ON par.subject_id = s.parent_id AND par.vocabulary = 'OpenAlex'
+           AND par.tier IN ('A','B','C','D','E','S')
+           AND NOT EXISTS (SELECT 1 FROM subject_relevance_tiers o2 WHERE o2.subject_id = s.id)
         WHERE s.vocabulary = 'OpenAlex' AND s.subject_type = 'Topic'
         GROUP BY vs.venue_id
     ) oa ON v.id = oa.id
@@ -1131,22 +1203,13 @@ BEGIN
     
     
     
-    UPDATE venues v
-    INNER JOIN (
-        SELECT vs.venue_id AS id, SUM(srt.weight) AS penalty
-        FROM venue_subjects vs
-        INNER JOIN subject_relevance_tiers srt
-            ON vs.subject_id = srt.subject_id AND srt.tier = 'N'
-        GROUP BY vs.venue_id
-    ) neg ON v.id = neg.id
-    SET v.subject_score = GREATEST(0, v.subject_score - neg.penalty)
-    WHERE v.subject_score > 0;
+    UPDATE venues
+    SET subject_score = GREATEST(subject_score, (llm_relevance - 1) * 2.0)
+    WHERE llm_relevance >= 4;
 
     
-    
-    
     UPDATE venues
-    SET oa_score = CASE WHEN COALESCE(open_access, 0) = 1 THEN 0.2 ELSE 0.0 END
+    SET oa_score = CASE WHEN COALESCE(open_access,0)=1 THEN 0.2 ELSE 0.0 END
     WHERE subject_score > 0;
 
     
@@ -1155,80 +1218,8 @@ BEGIN
     
     
     
-    UPDATE venues v
-    INNER JOIN (
-        SELECT p.venue_id AS id,
-               LEAST(
-                   COUNT(DISTINCT CASE WHEN pe.h_index >= 5 THEN a.person_id END)
-                   * 100.0
-                   / NULLIF(COUNT(DISTINCT a.person_id), 0)
-                   / 10.0,
-                   2.0
-               )
-               * LEAST(
-                   1.0,
-                   LN(1 + COUNT(DISTINCT a.person_id)) / LN(51)
-               ) AS a_score
-        FROM publications p
-        INNER JOIN authorships a ON a.work_id = p.work_id
-        INNER JOIN persons pe ON a.person_id = pe.id
-        WHERE p.venue_id IS NOT NULL
-        GROUP BY p.venue_id
-    ) auth ON v.id = auth.id
-    SET v.authorship_score = ROUND(auth.a_score, 3)
-    WHERE v.subject_score > 0 AND auth.a_score > 0;
-
     
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    DROP TEMPORARY TABLE IF EXISTS _tmp_core_institutions;
-    CREATE TEMPORARY TABLE _tmp_core_institutions (
-        org_id INT NOT NULL PRIMARY KEY
-    );
-
-    INSERT INTO _tmp_core_institutions (org_id)
-    SELECT a.affiliation_id
-    FROM authorships a
-    INNER JOIN publications p ON a.work_id = p.work_id
-    INNER JOIN venues v ON p.venue_id = v.id
-    WHERE v.llm_relevance >= 4 AND a.affiliation_id IS NOT NULL
-    GROUP BY a.affiliation_id
-    ORDER BY COUNT(DISTINCT a.person_id) DESC
-    LIMIT 500;
-
-    UPDATE venues v
-    INNER JOIN (
-        SELECT p.venue_id AS id,
-               LEAST(
-                   COUNT(DISTINCT CASE WHEN ci.org_id IS NOT NULL THEN a.person_id END)
-                   * 100.0
-                   / NULLIF(COUNT(DISTINCT CASE WHEN a.affiliation_id IS NOT NULL THEN a.person_id END), 0)
-                   / 15.0,
-                   2.0
-               )
-               * LEAST(
-                   1.0,
-                   LN(1 + COUNT(DISTINCT a.person_id)) / LN(51)
-               ) AS af_score
-        FROM publications p
-        INNER JOIN authorships a ON a.work_id = p.work_id
-        LEFT JOIN _tmp_core_institutions ci ON a.affiliation_id = ci.org_id
-        WHERE p.venue_id IS NOT NULL
-        GROUP BY p.venue_id
-    ) aff ON v.id = aff.id
-    SET v.affiliation_score = ROUND(aff.af_score, 3)
-    WHERE v.subject_score > 0 AND aff.af_score > 0;
-
-    DROP TEMPORARY TABLE IF EXISTS _tmp_core_institutions;
-
     
     
     
@@ -1236,46 +1227,42 @@ BEGIN
     
     
     UPDATE venues v
-    INNER JOIN (
-        SELECT p_src.venue_id AS id,
-               LEAST(
-                   COUNT(CASE WHEN v_cited.subject_score >= 5 THEN 1 END)
-                   * 100.0
-                   / NULLIF(COUNT(*), 0)
-                   / 40.0,
-                   2.0
-               ) AS c_score
-        FROM work_references wr
-        INNER JOIN publications p_src ON wr.citing_work_id = p_src.work_id
-        INNER JOIN publications p_tgt ON wr.cited_work_id = p_tgt.work_id
-        LEFT JOIN venues v_cited ON p_tgt.venue_id = v_cited.id
-        WHERE p_src.venue_id IS NOT NULL
-          AND wr.cited_work_id IS NOT NULL
-        GROUP BY p_src.venue_id
-    ) cit ON v.id = cit.id
-    SET v.citation_score = ROUND(cit.c_score, 3)
-    WHERE v.subject_score > 0 AND cit.c_score > 0;
+    JOIN (
+        SELECT id,
+               (COALESCE(n_cs,0)+COALESCE(n_mc,0)+COALESCE(n_cpw,0))
+                   / NULLIF((n_cs IS NOT NULL)+(n_mc IS NOT NULL)+(n_cpw IS NOT NULL),0) AS ci,
+               (COALESCE(n_sjr,0)+COALESCE(n_h,0))
+                   / NULLIF((n_sjr IS NOT NULL)+(n_h IS NOT NULL),0) AS pr
+        FROM (
+            SELECT id,
+                CASE WHEN citescore > 0            THEN LEAST(citescore/6.0, 1.0) END AS n_cs,
+                CASE WHEN `2yr_mean_citedness` > 0 THEN LEAST(`2yr_mean_citedness`/1.0, 1.0) END AS n_mc,
+                CASE WHEN works_count > 0 AND cited_by_count > 0
+                     THEN LEAST((cited_by_count/works_count)/20.0, 1.0) END AS n_cpw,
+                CASE WHEN sjr > 0                  THEN LEAST(sjr/1.0, 1.0) END AS n_sjr,
+                CASE WHEN h_index > 0              THEN LEAST(h_index/100.0, 1.0) END AS n_h
+            FROM venues
+        ) z
+    ) m ON m.id = v.id
+    SET v.impact_score = COALESCE(ROUND(
+        6.0 * (0.7*COALESCE(m.ci,0) + 0.3*COALESCE(m.pr,0))
+            / NULLIF(0.7*(m.ci IS NOT NULL) + 0.3*(m.pr IS NOT NULL), 0)
+    , 3), 0.000)
+    WHERE v.llm_relevance >= 3 OR v.subject_score >= 5;
+    
+    
+    
+    
+    
 
-    
-    
-    
-    
-    
-    
     
     UPDATE venues
-    SET llm_score = COALESCE(llm_relevance, 0) * 2
+    SET llm_score = COALESCE(llm_relevance,0) * 2
     WHERE llm_relevance IS NOT NULL OR subject_score > 0;
 
     
-    
-    
-    
-    
     UPDATE venues
-    SET total_score = subject_score + oa_score
-                    + authorship_score + affiliation_score + citation_score
-                    + llm_score
+    SET total_score = subject_score + llm_score + impact_score + oa_score
     WHERE subject_score > 0 OR llm_score > 0;
 
     SET scored_count = (SELECT COUNT(*) FROM venues WHERE total_score > 0);
@@ -1723,14 +1710,12 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_compute_publication_relevance`(
     IN p_only_venue_id INT,
-    IN p_limit         BIGINT,
     IN p_mode          VARCHAR(16),
     IN p_dry_run       TINYINT
 )
 BEGIN
     DECLARE v_target_table VARCHAR(64);
     DECLARE v_verb         VARCHAR(32);
-    DECLARE v_limit_clause VARCHAR(64);
 
     
     DROP TEMPORARY TABLE IF EXISTS tmp_pub_pos;
@@ -1745,23 +1730,27 @@ BEGIN
     JOIN work_subjects ws ON ws.work_id = p.work_id
     JOIN subjects s ON s.id = ws.subject_id
     JOIN (
+        
+        
         SELECT subject_id, weight AS w
         FROM subject_relevance_tiers
-        WHERE tier IN ('A','B','C','D','S')
+        WHERE tier IN ('A','B','C','D','E','S')
 
         UNION ALL
 
+        
+        
         SELECT t.id AS subject_id, srt.weight AS w
         FROM subjects t
         JOIN subjects parent ON parent.id = t.parent_id
         JOIN subject_relevance_tiers srt
           ON srt.subject_id = parent.id
+         AND srt.vocabulary = 'OpenAlex'
          AND srt.tier IN ('A','B','C','D','S')
         WHERE t.vocabulary  = 'OpenAlex'
           AND t.subject_type = 'Topic'
           AND NOT EXISTS (
-              SELECT 1 FROM subject_relevance_tiers srt_neg
-              WHERE srt_neg.subject_id = t.id AND srt_neg.tier = 'N'
+              SELECT 1 FROM subject_relevance_tiers o WHERE o.subject_id = t.id
           )
     ) weights ON weights.subject_id = s.id
     WHERE (p_only_venue_id = 0 OR p.venue_id = p_only_venue_id)
@@ -1784,7 +1773,6 @@ BEGIN
     GROUP BY p.id;
 
     
-    
     DROP TEMPORARY TABLE IF EXISTS tmp_pub_scored;
     CREATE TEMPORARY TABLE tmp_pub_scored (
         publication_id   INT          PRIMARY KEY,
@@ -1804,20 +1792,14 @@ BEGIN
         (publication_id, work_id, venue_id, score, rel_class,
          positive_signal, negative_signal, venue_bonus, no_signal_flag)
     SELECT
-        d.publication_id,
-        d.work_id,
-        d.venue_id,
-        d.score,
+        d.publication_id, d.work_id, d.venue_id, d.score,
         CASE
             WHEN d.score >= 7 THEN 'CORE'
             WHEN d.score >= 3 THEN 'ADJACENT'
             WHEN d.score >= 0 THEN 'BORDERLINE'
             ELSE 'OFF'
         END AS rel_class,
-        d.positive_signal,
-        d.negative_signal,
-        d.venue_bonus,
-        d.no_signal_flag
+        d.positive_signal, d.negative_signal, d.venue_bonus, d.no_signal_flag
     FROM (
         SELECT
             p.id        AS publication_id,
@@ -1826,32 +1808,26 @@ BEGIN
             COALESCE(pp.positive_signal, 0) AS positive_signal,
             COALESCE(pn.negative_signal, 0) AS negative_signal,
             CASE
-                WHEN v.llm_relevance >= 4   THEN  1.0
-                WHEN v.llm_relevance  = 3   THEN  0.5
-                WHEN v.llm_relevance  = 2   THEN  0.0
-                WHEN v.llm_relevance IS NULL THEN 0.0
+                WHEN v.llm_relevance >= 4    THEN  1.0
+                WHEN v.llm_relevance  = 3    THEN  0.5
+                WHEN v.llm_relevance  = 2    THEN  0.0
+                WHEN v.llm_relevance IS NULL THEN  0.0
                 ELSE -0.5
             END AS venue_bonus,
-            CASE
-                WHEN pp.positive_signal IS NULL
-                 AND pn.negative_signal IS NULL THEN 1
-                ELSE 0
-            END AS no_signal_flag,
+            CASE WHEN pp.positive_signal IS NULL AND pn.negative_signal IS NULL THEN 1 ELSE 0 END AS no_signal_flag,
             ROUND(
                 COALESCE(pp.positive_signal, 0)
               - COALESCE(pn.negative_signal, 0)
               + CASE
-                    WHEN v.llm_relevance >= 4   THEN  1.0
-                    WHEN v.llm_relevance  = 3   THEN  0.5
-                    WHEN v.llm_relevance  = 2   THEN  0.0
-                    WHEN v.llm_relevance IS NULL THEN 0.0
+                    WHEN v.llm_relevance >= 4    THEN  1.0
+                    WHEN v.llm_relevance  = 3    THEN  0.5
+                    WHEN v.llm_relevance  = 2    THEN  0.0
+                    WHEN v.llm_relevance IS NULL THEN  0.0
                     ELSE -0.5
                 END
-              + CASE
-                    WHEN pp.positive_signal IS NULL
-                     AND pn.negative_signal IS NULL THEN -1.0
-                    ELSE 0.0
-                END
+              + CASE WHEN pp.positive_signal IS NULL AND pn.negative_signal IS NULL
+                          AND v.llm_relevance <= 1
+                     THEN -1.0 ELSE 0.0 END
             , 2) AS score
         FROM publications p
         LEFT JOIN venues       v  ON v.id  = p.venue_id
@@ -1861,9 +1837,14 @@ BEGIN
     ) d;
 
     
-    SET v_target_table = IF(p_dry_run = 1, 'publication_relevance_preview', 'publication_relevance');
-    SET v_verb         = IF(p_mode = 'incremental', 'INSERT IGNORE INTO', 'REPLACE INTO');
-    SET v_limit_clause = IF(p_limit > 0, CONCAT(' LIMIT ', p_limit), '');
+    IF p_dry_run = 1 THEN
+        CREATE TEMPORARY TABLE IF NOT EXISTS tmp_publication_relevance_preview
+            LIKE publication_relevance;
+        SET v_target_table = 'tmp_publication_relevance_preview';
+    ELSE
+        SET v_target_table = 'publication_relevance';
+    END IF;
+    SET v_verb = IF(p_mode = 'incremental', 'INSERT IGNORE INTO', 'REPLACE INTO');
 
     SET @sql_write = CONCAT(
         v_verb, ' ', v_target_table, ' ',
@@ -1871,8 +1852,7 @@ BEGIN
         ' positive_signal, negative_signal, venue_bonus, no_signal_flag, computed_at) ',
         'SELECT publication_id, work_id, venue_id, score, rel_class, ',
         ' positive_signal, negative_signal, venue_bonus, no_signal_flag, NOW() ',
-        'FROM tmp_pub_scored',
-        v_limit_clause
+        'FROM tmp_pub_scored'
     );
 
     PREPARE stmt FROM @sql_write;
@@ -1882,6 +1862,40 @@ BEGIN
     DROP TEMPORARY TABLE IF EXISTS tmp_pub_pos;
     DROP TEMPORARY TABLE IF EXISTS tmp_pub_neg;
     DROP TEMPORARY TABLE IF EXISTS tmp_pub_scored;
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `sp_delete_publication` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
+DELIMITER ;;
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_delete_publication`(IN p_venue_id INT)
+BEGIN
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION
+  BEGIN
+    ROLLBACK;
+    SELECT 'Erro ao deletar' AS mensagem;
+  END;
+
+  START TRANSACTION;
+  
+  IF EXISTS (SELECT 1 FROM publications WHERE venue_id = p_venue_id) THEN
+    DELETE FROM publications WHERE venue_id = p_venue_id;
+    SELECT CONCAT('Deletado venue_id ', p_venue_id) AS mensagem;
+  ELSE
+    SELECT CONCAT('venue_id ', p_venue_id, ' não existe, nada feito') AS mensagem;
+  END IF;
+  
+  COMMIT;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -2297,6 +2311,96 @@ DELIMITER ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `sp_merge_organizations_by_map` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
+DELIMITER ;;
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_merge_organizations_by_map`(IN p_batch INT)
+proc_body: BEGIN
+    DECLARE v_lo INT;
+    DECLARE v_hi INT;
+    DECLARE v_cur INT;
+    DECLARE v_end INT;
+
+    IF p_batch IS NULL OR p_batch < 1 THEN SET p_batch = 20000; END IF;
+
+    SELECT MIN(secondary_id), MAX(secondary_id) INTO v_lo, v_hi FROM organization_merge_map;
+    IF v_lo IS NULL THEN
+        SELECT 'organization_merge_map is empty; nothing to merge.' AS status;
+        LEAVE proc_body;
+    END IF;
+
+    SET v_cur = v_lo;
+    WHILE v_cur <= v_hi DO
+        SET v_end = v_cur + p_batch - 1;
+
+        
+        INSERT INTO organization_merge_audit
+            (secondary_id, primary_id, secondary_name, secondary_type,
+             secondary_ror, secondary_openalex, secondary_wikidata, match_tier)
+        SELECT m.secondary_id, m.primary_id, s.name, s.type,
+               s.ror_id, s.openalex_id, s.wikidata_id, m.match_tier
+        FROM organization_merge_map m
+        JOIN organizations s ON s.id = m.secondary_id
+        WHERE m.secondary_id BETWEEN v_cur AND v_end;
+
+        
+        UPDATE organizations p
+        JOIN (
+            SELECT m.primary_id,
+                   MAX(s.country_code) AS cc,
+                   MAX(s.city)         AS city,
+                   MAX(s.url)          AS url
+            FROM organization_merge_map m
+            JOIN organizations s ON s.id = m.secondary_id
+            WHERE m.secondary_id BETWEEN v_cur AND v_end
+            GROUP BY m.primary_id
+        ) x ON p.id = x.primary_id
+        SET p.country_code = COALESCE(p.country_code, x.cc),
+            p.city         = COALESCE(p.city, x.city),
+            p.url          = COALESCE(p.url, x.url),
+            p.updated_at   = NOW();
+
+        
+        UPDATE IGNORE authorships a JOIN organization_merge_map m ON a.affiliation_id = m.secondary_id
+            SET a.affiliation_id = m.primary_id WHERE m.secondary_id BETWEEN v_cur AND v_end;
+        UPDATE IGNORE funding f JOIN organization_merge_map m ON f.funder_id = m.secondary_id
+            SET f.funder_id = m.primary_id WHERE m.secondary_id BETWEEN v_cur AND v_end;
+        UPDATE IGNORE programs pr JOIN organization_merge_map m ON pr.institution_id = m.secondary_id
+            SET pr.institution_id = m.primary_id WHERE m.secondary_id BETWEEN v_cur AND v_end;
+        UPDATE IGNORE publications pub JOIN organization_merge_map m ON pub.publisher_id = m.secondary_id
+            SET pub.publisher_id = m.primary_id WHERE m.secondary_id BETWEEN v_cur AND v_end;
+        UPDATE IGNORE venues v JOIN organization_merge_map m ON v.publisher_id = m.secondary_id
+            SET v.publisher_id = m.primary_id WHERE m.secondary_id BETWEEN v_cur AND v_end;
+
+        UPDATE IGNORE organization_relationships r JOIN organization_merge_map m ON r.parent_id = m.secondary_id
+            SET r.parent_id = m.primary_id WHERE m.secondary_id BETWEEN v_cur AND v_end;
+        UPDATE IGNORE organization_relationships r JOIN organization_merge_map m ON r.child_id = m.secondary_id
+            SET r.child_id = m.primary_id WHERE m.secondary_id BETWEEN v_cur AND v_end;
+        DELETE FROM organization_relationships WHERE parent_id = child_id;
+
+        
+        DELETE s FROM organizations s JOIN organization_merge_map m ON s.id = m.secondary_id
+            WHERE m.secondary_id BETWEEN v_cur AND v_end;
+
+        COMMIT;
+        SET v_cur = v_end + 1;
+    END WHILE;
+
+    SELECT CONCAT('Merged ', (SELECT COUNT(*) FROM organization_merge_audit),
+                  ' organizations via map.') AS status;
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
 /*!50003 DROP PROCEDURE IF EXISTS `sp_merge_persons_in_batches` */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -2418,19 +2522,15 @@ CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_merge_single_organization_pair`(
     IN p_secondary_org_id INT   
 )
 BEGIN
-    
     DECLARE v_primary_exists INT DEFAULT 0;
     DECLARE v_secondary_exists INT DEFAULT 0;
 
-    
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
-        
         RESIGNAL;
     END;
 
-    
     IF p_primary_org_id IS NULL OR p_secondary_org_id IS NULL THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Both primary and secondary IDs must be provided.';
     END IF;
@@ -2439,7 +2539,6 @@ BEGIN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Primary and secondary IDs cannot be the same.';
     END IF;
 
-    
     SELECT COUNT(*) INTO v_primary_exists FROM organizations WHERE id = p_primary_org_id;
     SELECT COUNT(*) INTO v_secondary_exists FROM organizations WHERE id = p_secondary_org_id;
 
@@ -2447,10 +2546,8 @@ BEGIN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'One or both organization IDs do not exist.';
     END IF;
 
-    
     START TRANSACTION;
 
-    
     UPDATE organizations o_primary
     JOIN organizations o_secondary ON o_secondary.id = p_secondary_org_id
     SET
@@ -2462,19 +2559,20 @@ BEGIN
         o_primary.updated_at = NOW()
     WHERE o_primary.id = p_primary_org_id;
 
-    
     UPDATE IGNORE authorships SET affiliation_id = p_primary_org_id WHERE affiliation_id = p_secondary_org_id;
     UPDATE IGNORE funding SET funder_id = p_primary_org_id WHERE funder_id = p_secondary_org_id;
     UPDATE IGNORE programs SET institution_id = p_primary_org_id WHERE institution_id = p_secondary_org_id;
     UPDATE IGNORE publications SET publisher_id = p_primary_org_id WHERE publisher_id = p_secondary_org_id;
     UPDATE IGNORE venues SET publisher_id = p_primary_org_id WHERE publisher_id = p_secondary_org_id;
 
-    
+    UPDATE IGNORE organization_relationships SET parent_id = p_primary_org_id WHERE parent_id = p_secondary_org_id;
+    UPDATE IGNORE organization_relationships SET child_id = p_primary_org_id WHERE child_id = p_secondary_org_id;
+    DELETE FROM organization_relationships WHERE parent_id = child_id;
+
     DELETE FROM organizations WHERE id = p_secondary_org_id;
 
     COMMIT;
 
-    
     SELECT CONCAT('Successfully merged organization ID ', p_secondary_org_id, ' into ID ', p_primary_org_id) as Result;
 
 END ;;
@@ -3119,114 +3217,6 @@ DELIMITER ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
-/*!50003 DROP PROCEDURE IF EXISTS `sp_refresh_works_search` */;
-/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
-/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
-/*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb4 */ ;
-/*!50003 SET character_set_results = utf8mb4 */ ;
-/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
-DELIMITER ;;
-CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_refresh_works_search`()
-BEGIN
-      DECLARE v_min INT;
-      DECLARE v_max INT;
-      DECLARE v_cur INT;
-      DECLARE v_batch INT DEFAULT 100000;
-
-      SET SESSION group_concat_max_len = 16777216;
-
-      DROP TEMPORARY TABLE IF EXISTS tmp_works_search;
-      CREATE TEMPORARY TABLE tmp_works_search (
-          work_id    INT PRIMARY KEY,
-          authors_s  MEDIUMTEXT,
-          subjects_s MEDIUMTEXT
-      ) ENGINE=InnoDB;
-
-      
-      INSERT INTO tmp_works_search (work_id, authors_s)
-      SELECT a.work_id,
-             GROUP_CONCAT(p.preferred_name ORDER BY a.position SEPARATOR ' ')
-      FROM authorships a
-      JOIN persons p ON p.id = a.person_id
-      WHERE a.role = 'AUTHOR'
-      GROUP BY a.work_id;
-
-      
-      INSERT INTO tmp_works_search (work_id, subjects_s)
-      SELECT ws.work_id,
-             GROUP_CONCAT(s.term ORDER BY s.term SEPARATOR ' ')
-      FROM work_subjects ws
-      JOIN subjects s ON s.id = ws.subject_id
-      GROUP BY ws.work_id
-      ON DUPLICATE KEY UPDATE subjects_s = VALUES(subjects_s);
-
-      SELECT MIN(id), MAX(id) INTO v_min, v_max FROM works;
-      SET v_cur = COALESCE(v_min, 0);
-
-      WHILE v_cur <= v_max DO
-          UPDATE works w
-          JOIN tmp_works_search t ON t.work_id = w.id
-          SET w.authors_search  = t.authors_s,
-              w.subjects_search = t.subjects_s
-          WHERE w.id BETWEEN v_cur AND v_cur + v_batch - 1
-            AND NOT (w.authors_search  <=> t.authors_s
-                 AND w.subjects_search <=> t.subjects_s);
-
-          SET v_cur = v_cur + v_batch;
-      END WHILE;
-  
-      DROP TEMPORARY TABLE tmp_works_search;
-  END ;;
-DELIMITER ;
-/*!50003 SET sql_mode              = @saved_sql_mode */ ;
-/*!50003 SET character_set_client  = @saved_cs_client */ ;
-/*!50003 SET character_set_results = @saved_cs_results */ ;
-/*!50003 SET collation_connection  = @saved_col_connection */ ;
-/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
-/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
-/*!50003 DROP PROCEDURE IF EXISTS `sp_refresh_work_search_fields` */;
-/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
-/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
-/*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb4 */ ;
-/*!50003 SET character_set_results = utf8mb4 */ ;
-/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
-DELIMITER ;;
-CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_refresh_work_search_fields`(IN p_work_id INT)
-BEGIN
-      DECLARE v_authors  MEDIUMTEXT DEFAULT NULL;
-      DECLARE v_subjects MEDIUMTEXT DEFAULT NULL;
-
-      SET SESSION group_concat_max_len = 16777216;
-
-      SELECT GROUP_CONCAT(p.preferred_name ORDER BY a.position SEPARATOR ' ')
-      INTO v_authors
-      FROM authorships a
-      JOIN persons p ON p.id = a.person_id
-      WHERE a.work_id = p_work_id
-        AND a.role = 'AUTHOR';
-  
-      SELECT GROUP_CONCAT(s.term ORDER BY s.term SEPARATOR ' ')
-      INTO v_subjects
-      FROM work_subjects ws
-      JOIN subjects s ON s.id = ws.subject_id
-      WHERE ws.work_id = p_work_id;
-
-      UPDATE works
-      SET authors_search  = v_authors,
-          subjects_search = v_subjects
-      WHERE id = p_work_id
-        AND NOT (authors_search  <=> v_authors
-             AND subjects_search <=> v_subjects);
-  END ;;
-DELIMITER ;
-/*!50003 SET sql_mode              = @saved_sql_mode */ ;
-/*!50003 SET character_set_client  = @saved_cs_client */ ;
-/*!50003 SET character_set_results = @saved_cs_results */ ;
-/*!50003 SET collation_connection  = @saved_col_connection */ ;
-/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
-/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
 /*!50003 DROP PROCEDURE IF EXISTS `sp_reindex_database` */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -3251,6 +3241,69 @@ BEGIN
     SET FOREIGN_KEY_CHECKS = 1;
     
     SELECT 'Reindexação concluída' AS status;
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `sp_remove_all_orphans` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
+DELIMITER ;;
+CREATE DEFINER=`dev`@`%` PROCEDURE `sp_remove_all_orphans`()
+BEGIN
+    
+    DELETE FROM signatures
+    WHERE NOT EXISTS (
+        SELECT 1 FROM persons WHERE signature_id = signatures.id
+    );
+
+    DELETE FROM persons
+    WHERE NOT EXISTS (SELECT 1 FROM authorships WHERE person_id = persons.id)
+      AND NOT EXISTS (SELECT 1 FROM course_instructors WHERE person_id = persons.id)
+      AND NOT EXISTS (SELECT 1 FROM course_instructors WHERE canonical_person_id = persons.id);
+
+    DELETE FROM organizations
+    WHERE NOT EXISTS (SELECT 1 FROM authorships WHERE affiliation_id = organizations.id)
+      AND NOT EXISTS (SELECT 1 FROM funding WHERE funder_id = organizations.id)
+      AND NOT EXISTS (SELECT 1 FROM programs WHERE institution_id = organizations.id)
+      AND NOT EXISTS (SELECT 1 FROM publications WHERE publisher_id = organizations.id)
+      AND NOT EXISTS (SELECT 1 FROM venues WHERE publisher_id = organizations.id)
+      AND NOT EXISTS (SELECT 1 FROM organization_relationships WHERE parent_id = organizations.id OR child_id = organizations.id);
+
+    DELETE FROM subjects
+    WHERE NOT EXISTS (SELECT 1 FROM work_subjects WHERE subject_id = subjects.id)
+      AND NOT EXISTS (SELECT 1 FROM venue_subjects WHERE subject_id = subjects.id)
+      AND NOT EXISTS (SELECT 1 FROM subject_relevance_tiers WHERE subject_id = subjects.id)
+      AND NOT EXISTS (SELECT 1 FROM subjects child WHERE child.parent_id = subjects.id);
+
+    DELETE FROM venues
+    WHERE NOT EXISTS (SELECT 1 FROM publications WHERE venue_id = venues.id)
+      AND NOT EXISTS (SELECT 1 FROM venue_subjects WHERE venue_id = venues.id);
+
+    DELETE FROM programs
+    WHERE NOT EXISTS (SELECT 1 FROM courses WHERE program_id = programs.id);
+
+    DELETE FROM courses
+    WHERE NOT EXISTS (SELECT 1 FROM course_bibliography WHERE course_id = courses.id)
+      AND NOT EXISTS (SELECT 1 FROM course_instructors WHERE course_id = courses.id);
+
+    DELETE FROM works
+    WHERE NOT EXISTS (SELECT 1 FROM publications WHERE work_id = works.id)
+      AND NOT EXISTS (SELECT 1 FROM authorships WHERE work_id = works.id)
+      AND NOT EXISTS (SELECT 1 FROM funding WHERE work_id = works.id)
+      AND NOT EXISTS (SELECT 1 FROM work_subjects WHERE work_id = works.id)
+      AND NOT EXISTS (SELECT 1 FROM course_bibliography WHERE work_id = works.id)
+      AND NOT EXISTS (SELECT 1 FROM work_references WHERE citing_work_id = works.id)
+      AND NOT EXISTS (SELECT 1 FROM work_references WHERE cited_work_id = works.id);
+
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -3688,6 +3741,95 @@ DELIMITER ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `sp_update_organization_bibliometrics` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
+DELIMITER ;;
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_update_organization_bibliometrics`()
+BEGIN
+    
+    
+    DECLARE v_refyear INT;
+    SET v_refyear = YEAR(CURDATE());
+
+    
+    
+    DROP TEMPORARY TABLE IF EXISTS tmp_org_work;
+    CREATE TEMPORARY TABLE tmp_org_work (
+        affiliation_id INT NOT NULL,
+        work_id INT NOT NULL,
+        citations INT NOT NULL DEFAULT 0,
+        is_recent TINYINT NOT NULL DEFAULT 0,
+        KEY idx_aff (affiliation_id)
+    ) ENGINE=InnoDB;
+
+    INSERT INTO tmp_org_work (affiliation_id, work_id, citations, is_recent)
+    SELECT DISTINCT
+        a.affiliation_id,
+        a.work_id,
+        COALESCE(w.citation_count, 0),
+        CASE WHEN p.year BETWEEN v_refyear - 1 AND v_refyear THEN 1 ELSE 0 END
+    FROM authorships a
+    JOIN works w ON a.work_id = w.id
+    LEFT JOIN publications p ON a.work_id = p.work_id
+    WHERE a.affiliation_id IS NOT NULL;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_org_biblio;
+    CREATE TEMPORARY TABLE tmp_org_biblio (
+        affiliation_id INT PRIMARY KEY,
+        h_index INT NOT NULL DEFAULT 0,
+        i10 INT NOT NULL DEFAULT 0,
+        mc2 DECIMAL(10,5) DEFAULT NULL
+    ) ENGINE=InnoDB;
+
+    INSERT INTO tmp_org_biblio (affiliation_id, h_index, i10)
+    SELECT
+        affiliation_id,
+        MAX(CASE WHEN citations >= rn THEN rn ELSE 0 END) AS h_index,
+        SUM(CASE WHEN citations >= 10 THEN 1 ELSE 0 END) AS i10
+    FROM (
+        SELECT affiliation_id, citations,
+               ROW_NUMBER() OVER (PARTITION BY affiliation_id ORDER BY citations DESC) AS rn
+        FROM tmp_org_work
+    ) ranked
+    GROUP BY affiliation_id;
+
+    UPDATE tmp_org_biblio b
+    JOIN (
+        SELECT affiliation_id, AVG(citations) AS mc
+        FROM tmp_org_work WHERE is_recent = 1 GROUP BY affiliation_id
+    ) r ON b.affiliation_id = r.affiliation_id
+    SET b.mc2 = r.mc;
+
+    UPDATE organizations o
+    JOIN tmp_org_biblio b ON o.id = b.affiliation_id
+    SET o.h_index = b.h_index,
+        o.i10_index = b.i10,
+        o.`2yr_mean_citedness` = b.mc2;
+
+    
+    UPDATE organizations o
+    LEFT JOIN tmp_org_biblio b ON o.id = b.affiliation_id
+    SET o.h_index = NULL, o.i10_index = NULL, o.`2yr_mean_citedness` = NULL
+    WHERE b.affiliation_id IS NULL
+      AND (o.h_index IS NOT NULL OR o.i10_index IS NOT NULL OR o.`2yr_mean_citedness` IS NOT NULL);
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_org_work;
+    DROP TEMPORARY TABLE IF EXISTS tmp_org_biblio;
+
+    SELECT 'organization bibliometrics recomputed from corpus' AS status;
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
 /*!50003 DROP PROCEDURE IF EXISTS `sp_update_organization_stats` */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -3810,6 +3952,91 @@ DELIMITER ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
 /*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
+/*!50003 DROP PROCEDURE IF EXISTS `sp_update_venue_bibliometrics` */;
+/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
+/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
+/*!50003 SET @saved_col_connection = @@collation_connection */ ;
+/*!50003 SET character_set_client  = utf8mb4 */ ;
+/*!50003 SET character_set_results = utf8mb4 */ ;
+/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
+DELIMITER ;;
+CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_update_venue_bibliometrics`()
+BEGIN
+    DECLARE v_refyear INT;
+    SET v_refyear = YEAR(CURDATE());
+
+    
+    DROP TEMPORARY TABLE IF EXISTS tmp_venue_work;
+    CREATE TEMPORARY TABLE tmp_venue_work (
+        venue_id INT NOT NULL,
+        work_id INT NOT NULL,
+        citations INT NOT NULL DEFAULT 0,
+        is_recent TINYINT NOT NULL DEFAULT 0,
+        KEY idx_venue (venue_id)
+    ) ENGINE=InnoDB;
+
+    INSERT INTO tmp_venue_work (venue_id, work_id, citations, is_recent)
+    SELECT DISTINCT
+        p.venue_id,
+        p.work_id,
+        COALESCE(w.citation_count, 0),
+        CASE WHEN p.year BETWEEN v_refyear - 1 AND v_refyear THEN 1 ELSE 0 END
+    FROM publications p
+    JOIN works w ON p.work_id = w.id
+    WHERE p.venue_id IS NOT NULL;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_venue_biblio;
+    CREATE TEMPORARY TABLE tmp_venue_biblio (
+        venue_id INT PRIMARY KEY,
+        h_index INT NOT NULL DEFAULT 0,
+        i10 INT NOT NULL DEFAULT 0,
+        mc2 DECIMAL(10,5) DEFAULT NULL
+    ) ENGINE=InnoDB;
+
+    INSERT INTO tmp_venue_biblio (venue_id, h_index, i10)
+    SELECT
+        venue_id,
+        MAX(CASE WHEN citations >= rn THEN rn ELSE 0 END) AS h_index,
+        SUM(CASE WHEN citations >= 10 THEN 1 ELSE 0 END) AS i10
+    FROM (
+        SELECT venue_id, citations,
+               ROW_NUMBER() OVER (PARTITION BY venue_id ORDER BY citations DESC) AS rn
+        FROM tmp_venue_work
+    ) ranked
+    GROUP BY venue_id;
+
+    UPDATE tmp_venue_biblio b
+    JOIN (
+        SELECT venue_id, AVG(citations) AS mc
+        FROM tmp_venue_work WHERE is_recent = 1 GROUP BY venue_id
+    ) r ON b.venue_id = r.venue_id
+    SET b.mc2 = r.mc;
+
+    UPDATE venues v
+    JOIN tmp_venue_biblio b ON v.id = b.venue_id
+    SET v.h_index = b.h_index,
+        v.i10_index = b.i10,
+        v.`2yr_mean_citedness` = b.mc2;
+
+    
+    UPDATE venues v
+    LEFT JOIN tmp_venue_biblio b ON v.id = b.venue_id
+    SET v.h_index = NULL, v.i10_index = NULL, v.`2yr_mean_citedness` = NULL
+    WHERE b.venue_id IS NULL
+      AND (v.h_index IS NOT NULL OR v.i10_index IS NOT NULL OR v.`2yr_mean_citedness` IS NOT NULL);
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_venue_work;
+    DROP TEMPORARY TABLE IF EXISTS tmp_venue_biblio;
+
+    SELECT 'venue bibliometrics recomputed from corpus' AS status;
+END ;;
+DELIMITER ;
+/*!50003 SET sql_mode              = @saved_sql_mode */ ;
+/*!50003 SET character_set_client  = @saved_cs_client */ ;
+/*!50003 SET character_set_results = @saved_cs_results */ ;
+/*!50003 SET collation_connection  = @saved_col_connection */ ;
+/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
+/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
 /*!50003 DROP PROCEDURE IF EXISTS `sp_update_venue_stats` */;
 /*!50003 SET @saved_cs_client      = @@character_set_client */ ;
 /*!50003 SET @saved_cs_results     = @@character_set_results */ ;
@@ -3853,71 +4080,6 @@ DELIMITER ;
 /*!50003 SET character_set_client  = @saved_cs_client */ ;
 /*!50003 SET character_set_results = @saved_cs_results */ ;
 /*!50003 SET collation_connection  = @saved_col_connection */ ;
-/*!50003 SET @saved_sql_mode       = @@sql_mode */ ;
-/*!50003 SET sql_mode              = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION' */ ;
-/*!50003 DROP PROCEDURE IF EXISTS `sp_validate_schema_fixes` */;
-/*!50003 SET @saved_cs_client      = @@character_set_client */ ;
-/*!50003 SET @saved_cs_results     = @@character_set_results */ ;
-/*!50003 SET @saved_col_connection = @@collation_connection */ ;
-/*!50003 SET character_set_client  = utf8mb4 */ ;
-/*!50003 SET character_set_results = utf8mb4 */ ;
-/*!50003 SET collation_connection  = utf8mb4_uca1400_ai_ci */ ;
-DELIMITER ;;
-CREATE DEFINER=`dev`@`localhost` PROCEDURE `sp_validate_schema_fixes`()
-BEGIN
-    DECLARE v_error_count INT DEFAULT 0;
-    DECLARE v_message TEXT;
-    
-    CREATE TEMPORARY TABLE IF NOT EXISTS temp_test_table (id INT);
-    DROP TEMPORARY TABLE IF EXISTS temp_test_table;
-    
-    SET v_message = '✓ Tabelas temporárias funcionando';
-    SELECT v_message AS check_result;
-    
-    BEGIN
-        DECLARE CONTINUE HANDLER FOR SQLEXCEPTION
-        BEGIN
-            SET v_error_count = v_error_count + 1;
-        END;
-        
-        CALL sp_generate_name_signature('John Doe', @test_sig);
-        
-        IF @test_sig IS NOT NULL THEN
-            SET v_message = CONCAT('✓ Procedure sp_generate_name_signature nativa: ', @test_sig);
-        ELSE
-            SET v_message = '✗ Procedure sp_generate_name_signature falhou';
-            SET v_error_count = v_error_count + 1;
-        END IF;
-        
-        SELECT v_message AS check_result;
-    END;
-    
-    IF EXISTS (
-        SELECT 1 FROM information_schema.statistics 
-        WHERE table_schema = DATABASE() 
-          AND table_name = 'authorships' 
-          AND index_name = 'idx_authorships_created_at'
-    ) THEN
-        SET v_message = '✓ Índice idx_authorships_created_at validado';
-    ELSE
-        SET v_message = '✗ Índice idx_authorships_created_at faltando';
-        SET v_error_count = v_error_count + 1;
-    END IF;
-    
-    SELECT v_message AS check_result;
-    
-    IF v_error_count = 0 THEN
-        SELECT '✅ TODAS AS CORREÇÕES APLICADAS COM SUCESSO' AS final_status;
-    ELSE
-        SELECT CONCAT('⚠️ ', v_error_count, ' ERROS ENCONTRADOS. VERIFIQUE OS LOGS.') AS final_status;
-    END IF;
-    
-END ;;
-DELIMITER ;
-/*!50003 SET sql_mode              = @saved_sql_mode */ ;
-/*!50003 SET character_set_client  = @saved_cs_client */ ;
-/*!50003 SET character_set_results = @saved_cs_results */ ;
-/*!50003 SET collation_connection  = @saved_col_connection */ ;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -3928,4 +4090,4 @@ DELIMITER ;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*M!100616 SET NOTE_VERBOSITY=@OLD_NOTE_VERBOSITY */;
 
--- Dump completed on 2026-05-23 15:38:49
+-- Dump completed on 2026-06-29 13:08:43

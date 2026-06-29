@@ -109,6 +109,10 @@ const validateCollaborations = [
  *                         type: integer
  *       400:
  *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
 

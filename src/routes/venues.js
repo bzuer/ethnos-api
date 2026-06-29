@@ -112,6 +112,12 @@ const venuesController = require('../controllers/venues.controller');
  *           minimum: 0
  *         description: Keep only venues whose coverage range covers the supplied year (coverage_start_year <= year <= coverage_end_year).
  *         example: 2010
+ *       - in: query
+ *         name: min_id
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: Keyset-pagination helper — return only venues with `id` greater than or equal to this value.
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
@@ -119,6 +125,8 @@ const venuesController = require('../controllers/venues.controller');
  *         $ref: '#/components/responses/BadRequest'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  */
 router.get(
   '/',
@@ -232,6 +240,8 @@ router.get(
  *                       example: 3.2
  *       500:
  *         description: Internal server error
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  */
 router.get(
   '/statistics',
@@ -295,6 +305,10 @@ router.get(
  *                   type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get(
   '/search',
@@ -336,6 +350,22 @@ router.get(
  *           minimum: 1
  *         description: Venue ID
  *         example: 1
+ *       - in: query
+ *         name: include_subjects
+ *         schema: { type: boolean, default: true }
+ *         description: Include the venue's top subjects.
+ *       - in: query
+ *         name: include_yearly
+ *         schema: { type: boolean, default: true }
+ *         description: Include yearly publication statistics.
+ *       - in: query
+ *         name: include_top_authors
+ *         schema: { type: boolean, default: true }
+ *         description: Include the venue's top authors.
+ *       - in: query
+ *         name: include_recent_works
+ *         schema: { type: boolean, default: true }
+ *         description: Include the venue's most recent works.
  *     responses:
  *       200:
  *         description: Venue details
@@ -351,6 +381,10 @@ router.get(
  *                   $ref: '#/components/schemas/Venue'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get(
   '/:id',
@@ -479,6 +513,10 @@ router.get(
  *                   type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get(
   '/:id/works',

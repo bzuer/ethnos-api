@@ -70,6 +70,8 @@ const emptyHealthStatus = () => ({
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Complete dashboard overview
  *         content:
@@ -88,6 +90,10 @@ const emptyHealthStatus = () => ({
  *                       type: object
  *                     recent_activity:
  *                       type: object
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/overview', async (req, res) => {
     try {
@@ -161,8 +167,14 @@ router.get('/overview', async (req, res) => {
  *           maximum: 168
  *           default: 24
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Performance metrics for visualization
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/performance', validatePerformanceParams, async (req, res) => {
     try {
@@ -214,8 +226,14 @@ router.get('/performance', validatePerformanceParams, async (req, res) => {
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Search trends analysis
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/search-trends', validateTrendParams, async (req, res) => {
     try {
@@ -264,8 +282,14 @@ router.get('/search-trends', validateTrendParams, async (req, res) => {
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Current system alerts
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/alerts', async (req, res) => {
     try {

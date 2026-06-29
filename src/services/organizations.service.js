@@ -21,7 +21,6 @@ const LIST_SORT_COLUMNS = {
   citations: 'o.total_citations',
   total_citations: 'o.total_citations',
   cited_by_count: 'o.total_citations',
-  open_access_works_count: 'o.open_access_works_count',
   h_index: 'o.h_index',
   i10_index: 'o.i10_index',
   name: 'o.name',
@@ -48,14 +47,6 @@ function toBooleanFlag(value, fallback) {
   return fallback;
 }
 
-function normalizeSearchTerm(term) {
-  return String(term || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
 class OrganizationsService {
   resolveListSort(filters = {}) {
     const rawKey = (typeof filters.sort_by === 'string'
@@ -65,7 +56,7 @@ class OrganizationsService {
       ? filters.sort_order
       : (typeof filters.sortOrder === 'string' ? filters.sortOrder : '')).trim().toUpperCase();
 
-    const hasSearch = Boolean(filters.search && String(filters.search).trim());
+    const hasSearch = Boolean((filters.search || filters.q) && String(filters.search || filters.q).trim());
 
     if (rawKey === 'relevance' || (!rawKey && hasSearch)) {
       return { by: 'relevance', order: rawOrder === 'ASC' ? 'ASC' : 'DESC', column: null };
@@ -78,15 +69,9 @@ class OrganizationsService {
     return { by: key, order, column };
   }
 
-  buildListFilters(filters = {}, { aliasMatch = false } = {}) {
-    const where = [];
+  buildListFilters(filters = {}) {
+    const where = ['o.publication_count > 0'];
     const replacements = {};
-
-    const includeUnresolved = toBooleanFlag(filters.include_unresolved, false);
-    if (!includeUnresolved) {
-      where.push('NOT EXISTS (SELECT 1 FROM organization_unresolved u WHERE u.org_id = o.id)');
-      where.push('CHAR_LENGTH(TRIM(o.name)) >= 2');
-    }
 
     const type = (filters.type || '').trim().toUpperCase();
     if (type && ORG_TYPES.has(type)) {
@@ -150,14 +135,12 @@ class OrganizationsService {
       replacements.hIndexMin = hIndexMin;
     }
 
-    const term = (filters.search || '').trim();
+    const term = (filters.search || filters.q || '').trim();
     if (term) {
       replacements.q = term;
-      replacements.qnorm = normalizeSearchTerm(term);
-      if (aliasMatch) {
-        where.push(`(MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE)
-          OR EXISTS (SELECT 1 FROM organization_aliases al WHERE al.org_id = o.id AND al.alias_norm = :qnorm))`);
-      }
+      replacements.qupper = term.toUpperCase();
+      where.push(`(MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE)
+        OR JSON_CONTAINS(o.acronyms, JSON_QUOTE(:qupper)))`);
     }
 
     return { where, replacements, term };
@@ -181,7 +164,7 @@ class OrganizationsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
 
-    const cacheKey = `organizations:v4:${JSON.stringify({ ...filters, page, limit, offset })}`;
+    const cacheKey = `organizations:v6:${JSON.stringify({ ...filters, page, limit, offset })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -191,16 +174,16 @@ class OrganizationsService {
       }
 
       const sort = this.resolveListSort(filters);
-      const { where, replacements, term } = this.buildListFilters(filters, { aliasMatch: Boolean(filters.search) });
+      const { where, replacements, term } = this.buildListFilters(filters);
       const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
       let orderClause;
       let relevanceSelect = '';
       if (sort.by === 'relevance' && term) {
         relevanceSelect = `,
-            (EXISTS (SELECT 1 FROM organization_aliases al WHERE al.org_id = o.id AND al.alias_norm = :qnorm)) AS alias_exact,
+            COALESCE(JSON_CONTAINS(o.acronyms, JSON_QUOTE(:qupper)), 0) AS acronym_exact,
             MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE) AS relevance`;
-        orderClause = 'alias_exact DESC, o.publication_count DESC, relevance DESC, o.id ASC';
+        orderClause = 'acronym_exact DESC, o.publication_count DESC, relevance DESC, o.id ASC';
       } else {
         const column = sort.column || 'o.publication_count';
         const tieBreak = column === 'o.id' ? '' : ', o.id ASC';
@@ -215,7 +198,7 @@ class OrganizationsService {
             o.id, o.name, o.type, o.openalex_type, o.status,
             o.country_code, o.city, o.url, o.ror_id, o.grid_id, o.wikidata_id, o.openalex_id,
             o.acronyms,
-            o.publication_count, o.researcher_count, o.total_citations, o.open_access_works_count,
+            o.publication_count, o.researcher_count, o.total_citations,
             o.h_index, o.i10_index, o.\`2yr_mean_citedness\`,
             o.created_at, o.updated_at
             ${relevanceSelect}
@@ -272,7 +255,7 @@ class OrganizationsService {
     const includeWorks = toBooleanFlag(options.include_works, true);
     const includeRelationships = toBooleanFlag(options.include_relationships, true);
 
-    const cacheKey = `organization:v3:${id}:${[
+    const cacheKey = `organization:v5:${id}:${[
       includeProduction ? 1 : 0,
       includeAuthors ? 1 : 0,
       includeWorks ? 1 : 0,
@@ -291,7 +274,7 @@ class OrganizationsService {
           o.id, o.name, o.type, o.openalex_type, o.status,
           o.country_code, o.city, o.url, o.ror_id, o.grid_id, o.wikidata_id, o.openalex_id,
           o.acronyms, o.alternative_names,
-          o.publication_count, o.researcher_count, o.total_citations, o.open_access_works_count,
+          o.publication_count, o.researcher_count, o.total_citations,
           o.h_index, o.i10_index, o.\`2yr_mean_citedness\`,
           o.created_at, o.updated_at
         FROM organizations o
@@ -365,10 +348,6 @@ class OrganizationsService {
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
 
         sequelize.query(withTimeout(`
-          SELECT COUNT(*) AS aliases_count FROM organization_aliases WHERE org_id = :id
-        `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
-
-        sequelize.query(withTimeout(`
           SELECT COUNT(*) AS funded_works_count, COUNT(DISTINCT grant_number) AS grants_count
           FROM funding WHERE funder_id = :id
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
@@ -382,14 +361,12 @@ class OrganizationsService {
       const publicationTrend = value(2, []);
       const topAuthors = value(3, []);
       const recentWorks = value(4, []);
-      const aliasesCount = value(5, [])[0]?.aliases_count || 0;
-      const fundingRow = value(6, [])[0] || {};
-      const relationships = value(7, {});
+      const fundingRow = value(5, [])[0] || {};
+      const relationships = value(6, {});
 
       const shaped = formatOrganizationDetails({
         ...organization,
         corpus: corpusRow,
-        aliases_count: aliasesCount,
         funded_works_count: fundingRow.funded_works_count,
         grants_count: fundingRow.grants_count,
         production_summary: { by_work_type: productionByType, publication_trend: publicationTrend },

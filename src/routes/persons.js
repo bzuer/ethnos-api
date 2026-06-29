@@ -313,6 +313,8 @@ router.get('/:id', validatePersonId, personsController.getPerson);
  *         description: Person not found
  *       500:
  *         description: Internal server error
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  */
 const validateSignaturesQuery = [
   query('page')
@@ -379,7 +381,7 @@ const validateSignaturesQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1000
- *         description: Inclusive lower bound on publication year (matches `publications.year` or the parent work's latest publication_year).
+ *         description: Inclusive lower bound on publication year.
  *       - in: query
  *         name: year_to
  *         schema:
@@ -514,6 +516,8 @@ const validateSignaturesQuery = [
  *         description: Person not found
  *       500:
  *         description: Internal server error
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  */
 const validateWorksQuery = [
   query('page')

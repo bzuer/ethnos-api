@@ -62,7 +62,6 @@ class OrganizationsController {
         cited_by_min: clean(req.query.cited_by_min),
         cited_by_max: clean(req.query.cited_by_max),
         h_index_min: clean(req.query.h_index_min),
-        include_unresolved: clean(req.query.include_unresolved),
         sort_by: clean(req.query.sort_by ?? req.query.sortBy),
         sort_order: clean(req.query.sort_order ?? req.query.sortOrder)
       };

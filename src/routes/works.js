@@ -309,6 +309,10 @@ const validateWorksQuery = [
  *                       example: works+publications
  *                     performance:
  *                       $ref: '#/components/schemas/PerformanceMeta'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/showcase', validateWorksQuery, worksController.getWorksVitrine);
 
@@ -690,6 +694,8 @@ router.get('/:id', validateWorkId, worksController.getWork);
  *         $ref: '#/components/responses/NotFound'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
  */
 router.get('/:id/bibliographies', validateWorkId, worksController.getWorkBibliography);
 

@@ -17,10 +17,16 @@ const router = express.Router();
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         $ref: '#/components/responses/Success'
  *       503:
  *         $ref: '#/components/responses/ServiceUnavailable'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/readiness', requireInternalAccessKey, catchAsync(async (req, res) => {
   const dbStatus = await testConnection().catch(() => false);
@@ -49,6 +55,10 @@ router.get('/readiness', requireInternalAccessKey, catchAsync(async (req, res) =
  *     responses:
  *       200:
  *         $ref: '#/components/responses/Success'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/liveness', (req, res) => {
   return res.success({
@@ -67,8 +77,14 @@ router.get('/liveness', (req, res) => {
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         $ref: '#/components/responses/HealthMetricsSuccess'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/metrics', requireInternalAccessKey, catchAsync(async (req, res) => {
   const metrics = getMetrics();

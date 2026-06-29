@@ -73,17 +73,11 @@ function normalizeIdentifiers(row = {}) {
 
 function formatMetrics(row = {}) {
   const works = toOptionalInteger(row.publication_count ?? row.works_count) || 0;
-  const oa = toOptionalInteger(row.open_access_works_count);
-  const openAccessPercentage = works > 0 && oa !== null
-    ? Math.round((oa / works) * 1000) / 10
-    : null;
 
   return {
     works_count: works,
     researchers_count: toOptionalInteger(row.researcher_count ?? row.researchers_count) || 0,
     total_citations: toOptionalInteger(row.total_citations) || 0,
-    open_access_works_count: oa === null ? 0 : oa,
-    open_access_percentage: openAccessPercentage,
     h_index: toOptionalInteger(row.h_index),
     i10_index: toOptionalInteger(row.i10_index),
     two_yr_mean_citedness: toOptionalFloat(row['2yr_mean_citedness'] ?? row.two_yr_mean_citedness)
@@ -233,6 +227,9 @@ function formatOrganizationDetails(org = {}) {
   metrics.first_publication_year = toOptionalInteger(corpus.first_publication_year);
   metrics.latest_publication_year = toOptionalInteger(corpus.latest_publication_year);
 
+  const acronyms = parseJsonArray(org.acronyms);
+  const alternativeNames = parseJsonArray(org.alternative_names);
+
   return {
     id,
     name: normalizeString(org.name),
@@ -241,9 +238,9 @@ function formatOrganizationDetails(org = {}) {
     status: normalizeString(org.status),
     location: normalizeLocation(org),
     names: {
-      acronyms: parseJsonArray(org.acronyms),
-      alternative_names: parseJsonArray(org.alternative_names),
-      aliases_count: toOptionalInteger(org.aliases_count) || 0
+      acronyms,
+      alternative_names: alternativeNames,
+      aliases_count: acronyms.length + alternativeNames.length
     },
     identifiers: normalizeIdentifiers(org),
     metrics,

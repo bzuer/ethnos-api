@@ -72,6 +72,10 @@ const validateNetworkDepth = [
  *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/works/:id/citations', [...validateWorkId, ...validatePagination, ...validateCitationType], citationsController.getWorkCitations);
 
@@ -114,6 +118,10 @@ router.get('/works/:id/citations', [...validateWorkId, ...validatePagination, ..
  *                         type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/works/:id/references', [...validateWorkId, ...validatePagination], citationsController.getWorkReferences);
 
@@ -137,6 +145,10 @@ router.get('/works/:id/references', [...validateWorkId, ...validatePagination], 
  *         $ref: '#/components/responses/Success'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/works/:id/metrics', validateWorkId, citationsController.getWorkMetrics);
 
@@ -170,6 +182,10 @@ router.get('/works/:id/metrics', validateWorkId, citationsController.getWorkMetr
  *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/works/:id/network', [...validateWorkId, ...validateNetworkDepth], citationsController.getCitationNetwork);
 

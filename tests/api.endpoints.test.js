@@ -455,6 +455,7 @@ describe('DTOs structure', () => {
       name: 'Test Venue',
       abbreviated_name: 'T. Venue',
       type: 'JOURNAL',
+      language: 'en',
       scopus_id: '12345',
       wikidata_id: 'Q123',
       openalex_id: 'V123',
@@ -470,11 +471,12 @@ describe('DTOs structure', () => {
       is_indexed_in_scopus: 1,
       validation_status: 'VALIDATED',
       global_ranking_score: 15.5,
-      score_breakdown: { total: 15.5, subject: 5, oa: 0.5, authorship: 1, affiliation: 2, citation: 3, llm: 4, llm_relevance: 5, llm_justification: 'core' }
+      score_breakdown: { total: 15.5, subject: 5, oa: 0.5, impact: 6, llm: 4, llm_relevance: 5, llm_justification: 'core' }
     };
     const out = formatVenueListItem(input);
 
     expect(out.abbreviated_name).toBe('T. Venue');
+    expect(out.language).toBe('en');
     expect(out.identifiers).toEqual({
       issn: '1111-2222',
       eissn: '3333-4444',
@@ -486,7 +488,13 @@ describe('DTOs structure', () => {
     expect(out.metrics).toMatchObject({ impact_factor: 3.2, h_index: 42, citescore: 2.8, sjr: 1.1, snip: 0.9 });
     expect(out.indexing).toEqual({ is_in_doaj: true, is_in_scielo: false, is_indexed_in_scopus: true, validation_status: 'VALIDATED' });
     expect(out.ranking).toMatchObject({ score: 15.5 });
-    expect(out.ranking.components).toMatchObject({ subject: 5, oa: 0.5, citation: 3, llm: 4 });
+    expect(out.ranking.components).toEqual({ subject: 5, oa: 0.5, impact: 6, llm: 4 });
+    const c = out.ranking.components;
+    expect(Math.round((c.subject + c.oa + c.impact + c.llm) * 1000) / 1000).toBe(out.ranking.score);
+    expect(out.ranking.components).not.toHaveProperty('authorship');
+    expect(out.ranking.components).not.toHaveProperty('affiliation');
+    expect(out.ranking.components).not.toHaveProperty('citation');
+    expect(out.ranking.components).not.toHaveProperty('snip');
     expect(out.ranking.llm).toEqual({ relevance: 5, justification: 'core' });
 
     expect(out).not.toHaveProperty('issn');
@@ -494,6 +502,7 @@ describe('DTOs structure', () => {
     expect(out).not.toHaveProperty('scopus_id');
     expect(out).not.toHaveProperty('impact_factor');
     expect(out).not.toHaveProperty('h_index');
+    expect(out).not.toHaveProperty('open_access_percentage');
     expect(out).not.toHaveProperty('global_ranking_score');
     expect(out).not.toHaveProperty('score_breakdown');
     expect(out).not.toHaveProperty('legacy_metrics');
@@ -553,10 +562,10 @@ describe('DTOs structure', () => {
       researcher_count: 40,
       total_citations: 500,
       open_access_works_count: 25,
+      open_access_percentage: 99,
       h_index: 12,
       i10_index: 30,
       '2yr_mean_citedness': 1.5,
-      aliases_count: 3,
       corpus: { first_publication_year: 1990, latest_publication_year: 2025 }
     };
     const details = formatOrganizationDetails(org);
@@ -565,8 +574,10 @@ describe('DTOs structure', () => {
     expect(details).not.toHaveProperty('ror_id');
     expect(details.names.acronyms).toEqual(['TU']);
     expect(details.names.alternative_names).toEqual(['Test U', 'Universidade Teste']);
+    expect(details.names.aliases_count).toBe(3);
     expect(details.metrics).toMatchObject({ works_count: 100, researchers_count: 40, total_citations: 500, h_index: 12, i10_index: 30 });
-    expect(details.metrics.open_access_percentage).toBe(25);
+    expect(details.metrics).not.toHaveProperty('open_access_works_count');
+    expect(details.metrics).not.toHaveProperty('open_access_percentage');
     expect(details.metrics.first_publication_year).toBe(1990);
     expect(details._links.self).toBe('/institutions/2');
 

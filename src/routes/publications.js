@@ -161,7 +161,7 @@ const validatePublicationsQuery = [
  *           type: string
  *           minLength: 1
  *           maxLength: 200
- *         description: Free-text query against ft_works_content (full_title_normalized + subjects_search)
+ *         description: Free-text query over the work title and subjects of each publication.
  *         example: machine learning
  *       - in: query
  *         name: type
@@ -242,13 +242,13 @@ const validatePublicationsQuery = [
  *         schema:
  *           type: string
  *           maxLength: 255
- *         description: Substring match against authors_search
+ *         description: Match publications whose work has an author matching this term.
  *       - in: query
  *         name: subject
  *         schema:
  *           type: string
  *           maxLength: 255
- *         description: Substring match against subjects_search
+ *         description: Match publications whose work is tagged with this subject term.
  *       - in: query
  *         name: cited_by_min
  *         schema:

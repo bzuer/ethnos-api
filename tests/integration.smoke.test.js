@@ -243,7 +243,18 @@ describe('Integration smoke (real DB)', () => {
         assert.ok(block in org, `detail exposes ${block} block`);
       }
       assert.ok(Array.isArray(org.names.acronyms), 'names.acronyms is an array');
+      assert.ok(Array.isArray(org.names.alternative_names), 'names.alternative_names is an array');
+      assert.equal(typeof org.names.aliases_count, 'number', 'names.aliases_count is numeric');
+      assert.equal(org.names.aliases_count, org.names.acronyms.length + org.names.alternative_names.length, 'aliases_count derives from name arrays');
       assert.equal(org._links.works, `/institutions/${id}/works`);
+    });
+
+    test('GET /institutions?q=USP resolves via acronym', async () => {
+      const body = assertSuccess(await fetchJson('/institutions?q=USP&limit=5'), 'GET /institutions?q=USP');
+      assert.ok(Array.isArray(body.data));
+      assert.ok(body.data.length > 0, 'acronym search returns matches');
+      const hasUsp = body.data.some((o) => Array.isArray(o.acronyms) && o.acronyms.includes('USP'));
+      assert.ok(hasUsp, 'an org with the USP acronym surfaces for q=USP');
     });
 
     test('GET /institutions/:id/works honours the work sort contract', async () => {
@@ -297,11 +308,22 @@ describe('Integration smoke (real DB)', () => {
         assert.ok(venue.ranking && typeof venue.ranking === 'object', 'ranking block');
         assert.ok('score' in venue.ranking, 'ranking.score');
         assert.ok(venue.ranking.components && typeof venue.ranking.components === 'object', 'ranking.components');
+        const comps = venue.ranking.components;
+        for (const k of ['subject', 'oa', 'impact', 'llm']) {
+          assert.ok(k in comps, `ranking.components.${k}`);
+        }
+        assert.ok(!('authorship' in comps) && !('affiliation' in comps) && !('citation' in comps) && !('snip' in comps), 'legacy ranking components removed');
+        if (typeof venue.ranking.score === 'number') {
+          const sum = ['subject', 'oa', 'impact', 'llm'].reduce((s, k) => s + (Number(comps[k]) || 0), 0);
+          assert.ok(Math.abs(sum - venue.ranking.score) < 0.01, 'ranking components sum to score');
+        }
+        assert.ok('language' in venue, 'venue language field present');
         assert.ok(Array.isArray(venue.subjects), 'subjects array');
         assert.ok(!('terms' in venue), 'terms removed');
         assert.ok(!('keywords' in venue), 'keywords removed');
         assert.ok(!('legacy_metrics' in venue), 'legacy_metrics removed');
         assert.ok(!('issn' in venue), 'top-level issn removed');
+        assert.ok(!('open_access_percentage' in venue), 'top-level open_access_percentage removed');
         assert.ok(!('global_ranking_score' in venue), 'top-level global_ranking_score removed');
       }
     });
@@ -317,6 +339,10 @@ describe('Integration smoke (real DB)', () => {
       assert.ok(Array.isArray(body.data.top_authors), 'detail.top_authors array');
       assert.ok(body.data.publication_summary, 'publication_summary block');
       assert.ok(Array.isArray(body.data.publication_summary.publication_trend), 'publication_trend array');
+      assert.equal(typeof body.data.publication_summary.total_works_count, 'number', 'publication_summary.total_works_count');
+      assert.equal(typeof body.data.publication_summary.open_access_works_count, 'number', 'publication_summary.open_access_works_count');
+      const oaPct = body.data.publication_summary.open_access_percentage;
+      assert.ok(oaPct === null || (typeof oaPct === 'number' && oaPct >= 0 && oaPct <= 100), 'open_access_percentage in [0,100] or null');
     });
 
     test('GET /persons', async () => {

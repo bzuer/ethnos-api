@@ -50,6 +50,8 @@ const handleValidation = (req, res) => {
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Security headers snapshot
  *         content:
@@ -70,6 +72,10 @@ const handleValidation = (req, res) => {
  *                     missing_headers:
  *                       type: array
  *                       items: { type: string }
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/headers', requireAccessKey, (req, res) => {
   const headers = {
@@ -117,8 +123,14 @@ router.get('/headers', requireAccessKey, (req, res) => {
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Audit results
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/audit', requireAccessKey, (req, res) => {
   const audit = {};
@@ -158,6 +170,8 @@ router.get('/audit', requireAccessKey, (req, res) => {
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Security statistics
  *         content:
@@ -186,6 +200,10 @@ router.get('/audit', requireAccessKey, (req, res) => {
  *                           type: number
  *                         total_violations:
  *                           type: number
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/stats', requireAccessKey, (req, res) => {
   try {
@@ -229,6 +247,8 @@ router.get('/stats', requireAccessKey, (req, res) => {
  *           type: string
  *         description: IP address to unblock
  *     responses:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: IP unblocked successfully
  *         content:
@@ -246,6 +266,10 @@ router.get('/stats', requireAccessKey, (req, res) => {
  *         description: Invalid IP format
  *       404:
  *         description: IP not found in blocked list
+ *       429:
+ *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.post('/unblock/:ip', requireAccessKey, validateIpParam, (req, res) => {
   try {

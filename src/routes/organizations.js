@@ -28,7 +28,6 @@ const validateOrganizationsQuery = [
   query('openalex_type').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 30 }),
   query('status').optional({ values: 'falsy' }).trim().toLowerCase().isIn(ORG_STATUSES).withMessage(`Status must be one of: ${ORG_STATUSES.join(', ')}`),
   query('has_ror').optional({ values: 'falsy' }).isBoolean().withMessage('has_ror must be a boolean'),
-  query('include_unresolved').optional({ values: 'falsy' }).isBoolean().withMessage('include_unresolved must be a boolean'),
   query('works_min').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('works_min must be a non-negative integer'),
   query('works_max').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('works_max must be a non-negative integer'),
   query('researchers_min').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('researchers_min must be a non-negative integer'),
@@ -62,7 +61,7 @@ const validateOrganizationWorksQuery = [
  *       Paginated catalogue of organizations (universities, institutes, publishers, funders, companies)
  *       backed by operator-maintained metric columns. Supports full-text + acronym search, faceted
  *       filtering (type, OpenAlex type, country, status, identifier presence, metric bounds) and rich
- *       sorting. Unresolved compound affiliation strings and blank names are excluded by default.
+ *       sorting. Only organizations with at least one work (publication_count > 0) are listed.
  *     tags: [Institutions]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -71,7 +70,7 @@ const validateOrganizationWorksQuery = [
  *       - in: query
  *         name: search
  *         schema: { type: string, minLength: 2, maxLength: 255 }
- *         description: Free-text query over institution name (FULLTEXT) and aliases/acronyms (exact normalized match). Alias of `q`.
+ *         description: Free-text query over institution name (FULLTEXT) and acronyms (exact match against the acronyms array, e.g. `USP`). Alias of `q`.
  *         example: Universidade de São Paulo
  *       - in: query
  *         name: type
@@ -120,12 +119,8 @@ const validateOrganizationWorksQuery = [
  *         schema: { type: integer, minimum: 0 }
  *         description: Inclusive lower bound on h_index.
  *       - in: query
- *         name: include_unresolved
- *         schema: { type: boolean, default: false }
- *         description: Include unresolved compound/sub-entity organizations and blank names.
- *       - in: query
  *         name: sort_by
- *         schema: { type: string, enum: [works_count, researchers_count, citations, h_index, i10_index, name, id, created_at, updated_at, relevance], default: works_count }
+ *         schema: { type: string, enum: [works_count, researchers_count, citations, cited_by_count, h_index, i10_index, name, id, created_at, updated_at, relevance], default: works_count }
  *         description: Sort key. `relevance` applies only with a search term and is the default when searching.
  *       - in: query
  *         name: sort_order
@@ -146,7 +141,7 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
  *     summary: Get an institution by ID
  *     description: >-
  *       Full institution profile: identifiers, names (acronyms + alternative names), operator-maintained
- *       metrics (works, researchers, citations, open-access, h-index, i10-index, 2-yr mean citedness),
+ *       metrics (works, researchers, citations, h-index, i10-index, 2-yr mean citedness),
  *       corpus production summary (by work type + yearly trend), affiliated top authors, recent works,
  *       organizational hierarchy (parents/children/related), and funding role.
  *     tags: [Institutions]
