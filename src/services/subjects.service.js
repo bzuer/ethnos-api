@@ -295,7 +295,7 @@ class SubjectsService {
         w.title,
         pub.year as publication_year,
         w.language,
-        w.work_type as document_type,
+        pub.type as document_type,
         pub.open_access,
         CAST(ws.relevance_score AS DOUBLE) as relevance_score,
         ws.assigned_by,
@@ -325,7 +325,7 @@ class SubjectsService {
     }
 
     if (document_type) {
-      query += ' AND w.work_type = ?';
+      query += ' AND pub.type = ?';
       params.push(document_type);
     }
 
@@ -335,7 +335,7 @@ class SubjectsService {
     }
 
     query += `
-      GROUP BY w.id, w.title, pub.year, w.language, w.work_type, ws.relevance_score, ws.assigned_by
+      GROUP BY w.id, w.title, pub.year, w.language, pub.type, ws.relevance_score, ws.assigned_by
       ORDER BY ws.relevance_score DESC, used_in_courses DESC, pub.year DESC
       LIMIT ? OFFSET ?
     `;
@@ -353,7 +353,7 @@ class SubjectsService {
           ${min_relevance ? ' AND ws.relevance_score >= ?' : ''}
           ${year_from ? ' AND pub.year >= ?' : ''}
           ${year_to ? ' AND pub.year <= ?' : ''}
-          ${document_type ? ' AND w.work_type = ?' : ''}
+          ${document_type ? ' AND pub.type = ?' : ''}
           ${language ? ' AND w.language = ?' : ''}
         `,
         params.slice(0, params.length - 2)

@@ -347,7 +347,7 @@ const PUBLICATION_LIST_COLUMNS = `
   w.title,
   w.subtitle,
   w.abstract,
-  w.work_type,
+  p.type AS work_type,
   w.language,
   w.citation_count AS work_citation_count,
   w.reference_count AS work_reference_count,
@@ -444,10 +444,6 @@ class WorksService {
     const publicationConds = [];
     const publicationParams = [];
 
-    if (type) {
-      innerWhere.push('w.work_type = ?');
-      innerParams.push(type);
-    }
     if (language) {
       innerWhere.push('w.language = ?');
       innerParams.push(language);
@@ -461,6 +457,10 @@ class WorksService {
       innerParams.push(citedByMax);
     }
 
+    if (type) {
+      publicationConds.push('p.type = ?');
+      publicationParams.push(type);
+    }
     if (year_from !== undefined && year_from !== null && year_from !== '') {
       publicationConds.push('p.year >= ?');
       publicationParams.push(parseInt(year_from, 10));
@@ -693,10 +693,6 @@ class WorksService {
       )`);
       innerParams.push(venueExpr);
     }
-    if (type) {
-      innerWhere.push('w.work_type = ?');
-      innerParams.push(type);
-    }
     if (language) {
       innerWhere.push('w.language = ?');
       innerParams.push(language);
@@ -710,6 +706,10 @@ class WorksService {
       innerParams.push(citedByMax);
     }
 
+    if (type) {
+      publicationConds.push('p.type = ?');
+      publicationParams.push(type);
+    }
     if (year_from !== undefined && year_from !== null && year_from !== '') {
       publicationConds.push('p.year >= ?');
       publicationParams.push(parseInt(year_from, 10));
@@ -911,7 +911,6 @@ class WorksService {
         w.id,
         w.title,
         w.subtitle,
-        w.work_type,
         w.language,
         w.abstract,
         w.reference_count,
@@ -1237,7 +1236,7 @@ class WorksService {
       title: workData.title,
       subtitle: workData.subtitle,
       abstract: workData.abstract,
-      type: workData.work_type,
+      type: primaryRow ? primaryRow.work_type : null,
       language: workData.language,
       created_at: workData.created_at,
       updated_at: workData.updated_at,
@@ -1368,7 +1367,7 @@ class WorksService {
         SELECT
           w.id AS work_id,
           w.title,
-          w.work_type,
+          p.type AS work_type,
           p.year,
           p.doi,
           p.open_access,

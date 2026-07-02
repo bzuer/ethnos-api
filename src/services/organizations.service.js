@@ -298,11 +298,11 @@ class OrganizationsService {
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
 
         includeProduction ? sequelize.query(withTimeout(`
-          SELECT w.work_type AS type, COUNT(DISTINCT w.id) AS works_count
+          SELECT pub.type AS type, COUNT(DISTINCT a.work_id) AS works_count
           FROM authorships a
-          JOIN works w ON w.id = a.work_id
+          JOIN publications pub ON pub.work_id = a.work_id
           WHERE a.affiliation_id = :id
-          GROUP BY w.work_type
+          GROUP BY pub.type
           ORDER BY works_count DESC
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
 
@@ -331,7 +331,7 @@ class OrganizationsService {
 
         includeWorks ? sequelize.query(withTimeout(`
           SELECT
-            w.id, w.title, w.subtitle, w.work_type, w.language,
+            w.id, w.title, w.subtitle, pub.type AS work_type, w.language,
             w.citation_count, w.reference_count,
             pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
             pub.open_access, pub.peer_reviewed,
@@ -449,7 +449,7 @@ class OrganizationsService {
 
     const type = (options.type || '').trim();
     if (type) {
-      where.push('w.work_type = :type');
+      where.push('EXISTS (SELECT 1 FROM publications ptype WHERE ptype.work_id = w.id AND ptype.type = :type)');
       replacements.type = type.toUpperCase();
     }
     const language = (options.language || '').trim();
@@ -539,7 +539,7 @@ class OrganizationsService {
       const [works, count] = await Promise.all([
         sequelize.query(`
           SELECT
-            w.id, w.title, w.subtitle, w.work_type, w.language,
+            w.id, w.title, w.subtitle, pub.type AS work_type, w.language,
             w.citation_count, w.reference_count,
             pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
             pub.open_access, pub.peer_reviewed,
@@ -627,7 +627,7 @@ class OrganizationsService {
       const [works, count] = await Promise.all([
         sequelize.query(`
           SELECT
-            w.id, w.title, w.subtitle, w.work_type, w.language,
+            w.id, w.title, w.subtitle, pub.type AS work_type, w.language,
             w.citation_count, w.reference_count,
             MAX(f.grant_number) AS grant_number,
             pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,

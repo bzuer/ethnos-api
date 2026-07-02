@@ -126,7 +126,7 @@ const PUBLICATION_BASE_COLUMNS = `
   w.title,
   w.subtitle,
   w.abstract,
-  w.work_type,
+  p.type AS work_type,
   w.language,
   w.citation_count AS work_citation_count,
   w.reference_count AS work_reference_count,
@@ -445,7 +445,7 @@ class PublicationsService {
 
     const workType = filters.type || filters.work_type;
     if (workType) {
-      where.push('w.work_type = ?');
+      where.push('p.type = ?');
       params.push(workType);
     }
     if (filters.language) {
@@ -693,7 +693,7 @@ class PublicationsService {
         SELECT
           w.id AS work_id,
           w.title,
-          w.work_type,
+          p.type AS work_type,
           p.year,
           p.doi,
           p.open_access,

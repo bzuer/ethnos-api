@@ -11,7 +11,7 @@ const fetchWorkSummaryByIds = async (workIds) => {
     `SELECT
        w.id AS work_id,
        w.title,
-       w.work_type,
+       p.type AS work_type,
        p.year,
        p.doi,
        v.name AS venue_name,
@@ -268,7 +268,7 @@ class CitationsService {
       }
 
       const workExists = await sequelize.query(
-        'SELECT id, title, work_type FROM works WHERE id = :workId LIMIT 1',
+        'SELECT id, title FROM works WHERE id = :workId LIMIT 1',
         { replacements: { workId: parseInt(workId) }, type: sequelize.QueryTypes.SELECT }
       );
 
@@ -281,7 +281,7 @@ class CitationsService {
           SELECT 
             w.id as work_id,
             w.title,
-            w.work_type,
+            (SELECT p3.type FROM publications p3 WHERE p3.work_id = w.id ORDER BY p3.year DESC, p3.id DESC LIMIT 1) AS work_type,
             pub_year.year,
             COALESCE(cite_stats.total_citations_received, 0) as total_citations_received,
             COALESCE(ref_stats.total_references_made, 0) as total_references_made,

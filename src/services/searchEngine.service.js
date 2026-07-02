@@ -11,6 +11,26 @@ const PERSONS_FIELD_WEIGHTS = 'preferred_name=10, family_name=6, given_names=4';
 
 const WORKS_TEXT_FIELDS = 'title,subtitle,abstract,authors,subjects,venue';
 
+const WORK_TYPE_CODES = {
+  ARTICLE: 1,
+  BOOK: 2,
+  CHAPTER: 3,
+  THESIS: 4,
+  CONFERENCE: 5,
+  CONFERENCE_PAPER: 6,
+  REPORT: 7,
+  DATASET: 8,
+  PREPRINT: 9,
+  REVIEW: 10,
+  EDITORIAL: 11,
+  OTHER: 12
+};
+
+function workTypeCode(value) {
+  if (value === undefined || value === null) return null;
+  return WORK_TYPE_CODES[String(value).trim().toUpperCase()] ?? null;
+}
+
 const WORKS_RELEVANCE_RANKER = "ranker=expr('sum(lcs*user_weight)*1000 + bm25 + min(citation_count,1000)*50')";
 const PERSONS_RELEVANCE_RANKER = "ranker=expr('sum(lcs*user_weight)*1000 + bm25 + min(total_works,500)*20')";
 
@@ -64,7 +84,8 @@ function buildWorksMatch({ q, author, subject, venue_name }) {
 
 function buildWorksAttrConditions(filters) {
   const conds = [];
-  if (filters.type) conds.push(`work_type = ${quoteAttr(String(filters.type).toUpperCase())}`);
+  const typeCode = workTypeCode(filters.type);
+  if (typeCode !== null) conds.push(`type_codes = ${typeCode}`);
   if (filters.language) conds.push(`language = ${quoteAttr(filters.language)}`);
 
   const citedMin = toInt(filters.cited_by_min ?? filters.citation_count_min);

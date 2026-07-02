@@ -47,8 +47,8 @@ class MetricsService {
             COUNT(DISTINCT p.work_id) AS unique_works,
             SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) AS open_access_count,
             ROUND(SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS open_access_percentage,
-            SUM(CASE WHEN w.work_type = 'ARTICLE' THEN 1 ELSE 0 END) AS articles,
-            SUM(CASE WHEN w.work_type = 'BOOK' THEN 1 ELSE 0 END) AS books,
+            SUM(CASE WHEN p.type = 'ARTICLE' THEN 1 ELSE 0 END) AS articles,
+            SUM(CASE WHEN p.type = 'BOOK' THEN 1 ELSE 0 END) AS books,
             ROUND(AVG(w.citation_count), 2) AS avg_citations,
             0 AS total_downloads,
             0 AS unique_organizations

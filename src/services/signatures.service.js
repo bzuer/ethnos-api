@@ -302,7 +302,7 @@ class SignaturesService {
             w.title,
             a.person_id,
             p.preferred_name AS person_name,
-            w.work_type,
+            pub.type AS work_type,
             w.language,
             w.subtitle,
             w.created_at,

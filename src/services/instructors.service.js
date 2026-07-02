@@ -365,7 +365,7 @@ class InstructorsService {
         w.title,
         pub.year as publication_year,
         w.language,
-        w.work_type as document_type,
+        pub.type as document_type,
         pub.open_access,
         cb.reading_type,
         (SELECT COUNT(*) FROM authorships a WHERE a.work_id = w.id) AS author_count,
@@ -397,7 +397,7 @@ class InstructorsService {
     }
 
     query += `
-      GROUP BY w.id, w.title, pub.year, w.language, w.work_type, cb.reading_type
+      GROUP BY w.id, w.title, pub.year, w.language, pub.type, cb.reading_type
       ORDER BY used_in_courses DESC, pub.year DESC
       LIMIT ? OFFSET ?
     `;
@@ -552,7 +552,7 @@ class InstructorsService {
         w.id,
         w.title,
         pub.year,
-        w.work_type,
+        pub.type AS work_type,
         w.language,
         pub.open_access,
         s.signature AS signature_text

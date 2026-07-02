@@ -48,12 +48,12 @@ class BibliographyService {
         COALESCE(pm.publication_year, NULL) AS publication_year,
         COALESCE(pm.open_access, NULL) AS open_access,
         w.language,
-        w.work_type AS document_type
+        pm.document_type AS document_type
       FROM course_bibliography cb
       JOIN courses c ON cb.course_id = c.id
       JOIN works w ON cb.work_id = w.id
       LEFT JOIN (
-        SELECT p.work_id, p.year AS publication_year, p.open_access
+        SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
         FROM publications p
         INNER JOIN (
           SELECT work_id, MAX(year) AS max_year
@@ -78,7 +78,7 @@ class BibliographyService {
         COALESCE(bm.publication_year, NULL) AS publication_year,
         COALESCE(bm.open_access, NULL) AS open_access,
         w.language,
-        w.work_type AS document_type,
+        bm.document_type AS document_type,
         COALESCE(bm.author_count, 0) AS author_count,
         COALESCE(bm.instructors, '') AS instructors
       FROM course_bibliography cb
@@ -90,11 +90,12 @@ class BibliographyService {
           cb.work_id,
           latest.publication_year,
           latest.open_access,
+          MAX(latest.document_type) AS document_type,
           (SELECT COUNT(*) FROM authorships a WHERE a.work_id = cb.work_id) AS author_count,
           GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') AS instructors
         FROM course_bibliography cb
         LEFT JOIN (
-          SELECT p.work_id, p.year AS publication_year, p.open_access
+          SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
           FROM publications p
           INNER JOIN (
             SELECT work_id, MAX(year) AS max_year
@@ -160,12 +161,12 @@ class BibliographyService {
       ${baseQuery}
       GROUP BY cb.course_id, cb.work_id, cb.reading_type, cb.week_number, cb.notes,
                c.code, c.name, c.year, c.semester, c.program_id,
-               w.title, pm.publication_year, w.language, w.work_type
+               w.title, pm.publication_year, w.language, pm.document_type
     ` : `
       ${baseQuery}
       GROUP BY cb.course_id, cb.work_id, cb.reading_type, cb.week_number, cb.notes,
                c.code, c.name, c.year, c.semester, c.program_id,
-               w.title, bm.publication_year, w.language, w.work_type,
+               w.title, bm.publication_year, w.language, bm.document_type,
                bm.author_count, bm.instructors
     `;
 
@@ -349,7 +350,7 @@ class BibliographyService {
           w.title,
           latest_pub.publication_year,
           latest_pub.open_access,
-          w.work_type as document_type,
+          latest_pub.document_type,
           COUNT(DISTINCT cb.course_id) as used_in_courses,
           COUNT(DISTINCT c.program_id) as used_in_programs,
           GROUP_CONCAT(DISTINCT cb.reading_type ORDER BY cb.reading_type) as reading_types
@@ -357,7 +358,7 @@ class BibliographyService {
         JOIN course_bibliography cb ON w.id = cb.work_id
         JOIN courses c ON cb.course_id = c.id
         LEFT JOIN (
-          SELECT p.work_id, p.year AS publication_year, p.open_access
+          SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
           FROM publications p
           INNER JOIN (
             SELECT work_id, MAX(year) AS max_year
@@ -366,7 +367,7 @@ class BibliographyService {
           ) latest ON latest.work_id = p.work_id AND latest.max_year = p.year
         ) latest_pub ON w.id = latest_pub.work_id
         ${baseWhere}
-        GROUP BY w.id, w.title, w.work_type, latest_pub.publication_year, latest_pub.open_access
+        GROUP BY w.id, w.title, latest_pub.document_type, latest_pub.publication_year, latest_pub.open_access
         ORDER BY used_in_courses DESC, used_in_programs DESC
         LIMIT ?
       `, [...params, parseInt(limit)]),
@@ -401,16 +402,25 @@ class BibliographyService {
       `, params),
 
       pool.execute(`
-        SELECT 
-          w.work_type as document_type,
+        SELECT
+          latest_pub.document_type,
           COUNT(*) as usage_count,
           COUNT(DISTINCT w.id) as unique_works,
           COUNT(DISTINCT cb.course_id) as courses_count
         FROM works w
         JOIN course_bibliography cb ON w.id = cb.work_id
         JOIN courses c ON cb.course_id = c.id
+        LEFT JOIN (
+          SELECT p.work_id, p.type AS document_type
+          FROM publications p
+          INNER JOIN (
+            SELECT work_id, MAX(id) AS max_id
+            FROM publications
+            GROUP BY work_id
+          ) mp ON mp.work_id = p.work_id AND mp.max_id = p.id
+        ) latest_pub ON w.id = latest_pub.work_id
         ${baseWhere}
-        GROUP BY w.work_type
+        GROUP BY latest_pub.document_type
         ORDER BY usage_count DESC
         LIMIT 10
       `, params)

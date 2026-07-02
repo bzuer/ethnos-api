@@ -343,7 +343,7 @@ class CoursesService {
         w.title,
         pub.year as publication_year,
         w.language,
-        w.work_type as document_type,
+        pub.type as document_type,
         pub.open_access
       FROM course_bibliography cb
       JOIN works w ON cb.work_id = w.id
