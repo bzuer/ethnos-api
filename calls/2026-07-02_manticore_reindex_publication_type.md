@@ -45,17 +45,25 @@ consistent with every other publication-level filter.
    sudo ENV_FILE=/etc/node-backend.env scripts/manticore/render-config.sh
    ```
 
-2. **Full rebuild of the works tables** (live rotate; `persons_*` untouched):
+2. **Full rebuild — run as the `manticore` user via the installed helper** (running the
+   indexer as root leaves root-owned index files that the `manticore`-user `searchd` can't
+   rotate later; the helper lives on a system path because `/home/ubuntu` is not traversable
+   by the `manticore` user). `works_main` MUST be rebuilt — a delta-only run leaves the full
+   corpus on the old `work_type` schema and the distributed `works` table ends up mixed-schema,
+   so `type_codes` filters fail. One-shot rebuild of all four tables (no mixed-schema window):
    ```
-   scripts/manticore/reindex.sh main
+   sudo -u manticore manticore-ethnos-reindex init
    ```
-   then confirm the delta path is healthy again:
+   or, minimally, the two that matter in order:
    ```
-   scripts/manticore/reindex.sh delta
+   sudo -u manticore manticore-ethnos-reindex main
+   sudo -u manticore manticore-ethnos-reindex delta
    ```
+   NB: the bare `manticore-ethnos-reindex` with no argument defaults to `delta` (last-48h
+   works only) — not sufficient for this migration.
 
 3. **Restore the delta cron** (no change needed if it survived; it simply starts succeeding
-   again once the config is re-rendered).
+   again once the config is re-rendered and `works_main` carries `type_codes`).
 
 ## Verification
 - `indexer` completes without `Unknown column` and rotates `works_main` / `works_delta`.
