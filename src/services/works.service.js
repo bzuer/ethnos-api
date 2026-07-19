@@ -91,7 +91,7 @@ const resolveWorksOrderClause = (sortBy, sortOrder) => {
       return { withPub: `w.reference_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.reference_count ${dir}, w.id DESC`, needsPub: false };
     case 'publication_year':
     case 'year':
-      return { withPub: `MAX(p.year) ${dir}, w.id DESC`, noPub: `MAX(p.year) ${dir}, w.id DESC`, needsPub: true };
+      return { withPub: `MAX(p.year) ${dir}, w.id DESC`, noPub: `w.latest_publication_year ${dir}, w.id ${dir}`, needsPub: false };
     case 'id':
     case 'work_id':
       return { withPub: `w.id ${dir}`, noPub: `w.id ${dir}`, needsPub: false };
