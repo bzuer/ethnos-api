@@ -85,7 +85,7 @@ const resolveWorksOrderClause = (sortBy, sortOrder) => {
     case 'cited_by_count':
     case 'citation_count':
     case 'citations':
-      return { withPub: `w.citation_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.citation_count ${dir}, w.id DESC`, needsPub: false };
+      return { withPub: `w.citation_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.citation_count ${dir}, w.id ${dir === 'ASC' ? 'DESC' : 'ASC'}`, needsPub: false };
     case 'references_count':
     case 'reference_count':
       return { withPub: `w.reference_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.reference_count ${dir}, w.id DESC`, needsPub: false };
