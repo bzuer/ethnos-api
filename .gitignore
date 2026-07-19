@@ -21,11 +21,11 @@ backup/
 .env*
 *.env*
 
-# Database dumps
+# Database: schema snapshots are tracked under backups/ (dated, via
+# scripts/maintenance/publications/regenerate_schema_dump.sh). database/ holds
+# only the operator-side DDL contract.
 database/*.sql
-!database/schema.sql
-!database/data.schema.sql
-!database/README.md
+!database/required_objects.sql
 
 # SSL certificates and artifacts
 ssl/*.pem

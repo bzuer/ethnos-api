@@ -6,7 +6,8 @@
 #   sudo -u manticore scripts/manticore/reindex.sh delta   # frequent: works_delta + persons_delta (live rotate)
 #   sudo -u manticore scripts/manticore/reindex.sh main     # nightly: works_main + persons_main (live rotate)
 #
-# Requires libmysqlclient.so.21 resolvable (see calls/2026-06-11_manticore_deploy_and_index.md).
+# Requires libmysqlclient.so.21 resolvable (symlink it to libmysqlclient.so.24;
+# the MariaDB connector libmariadb.so.3 crashes in joined-field collection).
 #
 set -euo pipefail
 

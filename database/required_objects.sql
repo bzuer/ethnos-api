@@ -1,0 +1,24 @@
+-- =============================================================================
+-- Ethnos_API — required database objects (operator-side DDL contract)
+-- =============================================================================
+-- The API is strict consumer-only: it NEVER executes this file. This is the
+-- single, canonical record of the schema changes the API needs from the
+-- operator pipeline. It replaces the former per-request `calls/` log.
+--
+-- Workflow:
+--   1. Operator reviews and applies the statements below against `data`.
+--   2. Operator regenerates the schema snapshot:
+--        mysqldump -d --routines --events --order-by-primary --single-transaction \
+--          --compact --skip-comments --skip-tz-utc --default-character-set=utf8mb4 \
+--          data > backups/data.schema.$(date +%Y-%m-%d).sql
+--   3. The API is updated to consult the new snapshot.
+--
+-- Statements are idempotent. Empty a section once the operator confirms it is
+-- applied.
+-- =============================================================================
+
+-- No pending operator DDL. The latest applied change was the works
+-- publication-year denormalization: `works.latest_publication_year` +
+-- `idx_works_latest_pub_year`, maintained by `sp_refresh_works_publication_years`
+-- (call it on the stat-refresh cadence). Recorded in
+-- backups/data.schema.<date>.sql.

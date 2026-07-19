@@ -6,11 +6,11 @@ Public RESTful API for academic bibliographic research with high-performance sea
 
 ## System Status
 
-Production-ready system with 79 documented endpoints (per OpenAPI), MariaDB FULLTEXT search against the base tables (`works.ft_works_content`, `works.ft_works_metadata`, `venues.ft_venues_search`, `persons.ft_persons_names`), Redis caching, and standardized response envelopes. The legacy `summary_*` denormalized layer was dissolved in 2026-05-23.
+Production-ready system with 78 documented endpoints (per OpenAPI). Full-text search for `works` and `persons` runs on a Manticore Search daemon; `venues`, `subjects`, and `organizations` use their own MariaDB FULLTEXT indexes. Redis caching and standardized response envelopes throughout.
 
 ## Database Schema
 
-Source of truth: `database/schema.sql`.
+Source of truth: the latest dated snapshot under `backups/` (e.g. `backups/data.schema.YYYY-MM-DD.sql`), regenerated via `scripts/maintenance/publications/regenerate_schema_dump.sh`. Operator-side DDL the API depends on is tracked in `database/required_objects.sql`.
 
 ## Prerequisites
 
@@ -114,7 +114,7 @@ Deploy sequence:
 
 - Use `scripts/manage.sh deploy` as the only deploy pipeline.
 - Ensure logs and caches are cleared on deploy/restart as defined in `scripts/manage.sh`.
-- Do not commit generated artifacts, logs, backups, or dumps.
+- Do not commit generated artifacts (`docs/`), logs, or caches. Dated schema snapshots under `backups/` are tracked deliberately.
 
 ## Response Format
 
@@ -149,13 +149,11 @@ Deploy sequence:
 
 ## Search Engine
 
-All full-text search runs against MariaDB FULLTEXT indexes pinned on the base tables:
-- `works.ft_works_content` over `full_title_normalized` + `subjects_search` for the free-text `q`.
-- `works.ft_works_metadata` over `authors_search` + `subjects_search` for `author` / `subject` filters (AND-scoped via `+token` BOOLEAN MODE).
+Full-text search for `works` and `persons` runs against a Manticore Search daemon (SphinxQL on `127.0.0.1:9306`), selected by `SEARCH_BACKEND=manticore`. Matching ids resolve in Manticore and hydrate from MariaDB. The remaining lookups use MariaDB FULLTEXT indexes on the base tables:
 - `venues.ft_venues_search` over `name` + `abbreviated_name` for the `venue_name` filter and venue search.
-- `persons.ft_persons_names` over `preferred_name` + `given_names` + `family_name` for person searches.
+- `persons.ft_persons_names`, `subjects.ft_subjects_term`, `organizations.ft_organizations_name` for their respective lookups.
 
-There is no Sphinx daemon, RT index, external indexer process, or `summary_*` denormalized layer. Every listing reports `meta.engine = "MariaDB"`.
+There is no Sphinx daemon, RT index, or `summary_*` denormalized layer. On `/publications`, `meta.engine` is `"Manticore"` when a full-text term participates, else `"MariaDB"`.
 
 ## Testing
 
