@@ -9,7 +9,7 @@ const { formatPersonListItem } = require('../dto/person.dto');
 
 class SignaturesService {
   async getSignatureById(id) {
-    const cacheKey = `signature:${id}`;
+    const cacheKey = `signature:v2:${id}`;
     
     try {
       const cached = await cacheService.get(cacheKey);

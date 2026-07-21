@@ -134,7 +134,7 @@ class InstructorsService {
   }
 
   async getInstructorById(personId) {
-    const cacheKey = `instructor:${personId}`;
+    const cacheKey = `instructor:v2:${personId}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 

@@ -150,7 +150,7 @@ class CoursesService {
   }
 
   async getCourseDetailsById(id, options = {}) {
-    const cacheKey = `course:details:${id}:${JSON.stringify(options)}`;
+    const cacheKey = `course:details:v2:${id}:${JSON.stringify(options)}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 

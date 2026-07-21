@@ -436,7 +436,7 @@ class VenuesService {
     const currentOffset = Math.max(0, parseInt(pagination.offset, 10) || 0);
     const type = options.type;
 
-    const cacheKey = `venues:search:v4:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
+    const cacheKey = `venues:search:v5:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info(`Venues search "${query}" retrieved from cache`);
@@ -469,7 +469,7 @@ class VenuesService {
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v6:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v7:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -641,7 +641,7 @@ class VenuesService {
     const includeTopAuthors = options.includeTopAuthors !== false;
     const includeRecentWorks = options.includeRecentWorks !== false;
 
-    const cacheKey = `venue:v5:${venueId}:${JSON.stringify({
+    const cacheKey = `venue:v6:${venueId}:${JSON.stringify({
       includeSubjects,
       includeYearly,
       includeTopAuthors,
