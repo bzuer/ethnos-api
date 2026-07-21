@@ -2,6 +2,7 @@ const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
+const { withTimeout } = require('../utils/db');
 const { formatSignatureListItem, formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
 const { formatPersonListItem } = require('../dto/person.dto');
 
@@ -290,7 +291,7 @@ class SignaturesService {
     const { page = 1, limit = 20 } = options;
     const offset = (page - 1) * limit;
     
-    const cacheKey = `signature:${signatureId}:works:${JSON.stringify(options)}`;
+    const cacheKey = `signature:${signatureId}:works:v2:${JSON.stringify(options)}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -300,12 +301,12 @@ class SignaturesService {
       }
 
       const [works, countResult] = await Promise.all([
-        sequelize.query(`
+        sequelize.query(withTimeout(`
           SELECT
             a.work_id AS id,
             w.title,
-            a.person_id,
-            p.preferred_name AS person_name,
+            MIN(a.person_id) AS person_id,
+            MAX(p.preferred_name) AS person_name,
             pub.type AS work_type,
             w.language,
             w.subtitle,
@@ -317,9 +318,9 @@ class SignaturesService {
             pub.issue,
             pub.pages AS pages,
             pub.open_access,
-            a.role,
-            a.position,
-            a.is_corresponding,
+            MIN(a.role) AS role,
+            MIN(a.position) AS position,
+            MAX(a.is_corresponding) AS is_corresponding,
             (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
           FROM persons p
           INNER JOIN authorships a ON a.person_id = p.id
@@ -329,9 +330,11 @@ class SignaturesService {
           )
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE p.signature_id = ?
+          GROUP BY a.work_id, w.title, w.language, w.subtitle, w.created_at,
+                   pub.type, pub.year, pub.doi, v.name, pub.volume, pub.issue, pub.pages, pub.open_access
           ORDER BY COALESCE(pub.year, 2024) DESC, a.work_id DESC
           LIMIT ? OFFSET ?
-        `, {
+        `), {
           replacements: [signatureId, parseInt(limit), parseInt(offset)],
           type: sequelize.QueryTypes.SELECT
         }),

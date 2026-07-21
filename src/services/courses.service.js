@@ -111,12 +111,12 @@ class CoursesService {
   }
 
   async getCourseById(id) {
-    const cacheKey = `course:${id}`;
+    const cacheKey = `course:v2:${id}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
     const query = `
-      SELECT 
+      SELECT
         c.id,
         c.program_id,
         c.code,
@@ -128,9 +128,11 @@ class CoursesService {
         c.source_file,
         COUNT(DISTINCT ci.canonical_person_id) as instructor_count,
         COUNT(DISTINCT cb.work_id) as bibliography_count,
-        COUNT(DISTINCT ws.subject_id) as subject_count
+        COUNT(DISTINCT ws.subject_id) as subject_count,
+        GROUP_CONCAT(DISTINCT pi.preferred_name ORDER BY pi.preferred_name SEPARATOR '; ') as instructors
       FROM courses c
       LEFT JOIN course_instructors ci ON c.id = ci.course_id
+      LEFT JOIN persons pi ON pi.id = ci.canonical_person_id
       LEFT JOIN course_bibliography cb ON c.id = cb.course_id
       LEFT JOIN course_bibliography cb2 ON c.id = cb2.course_id
       LEFT JOIN work_subjects ws ON cb2.work_id = ws.work_id
@@ -141,7 +143,7 @@ class CoursesService {
     const [courses] = await pool.execute(query, [id]);
     if (!courses.length) return null;
 
-    const course = formatCourseListItem(courses[0]);
+    const course = courses[0];
     await cache.set(cacheKey, course, 3600);
     return course;
   }

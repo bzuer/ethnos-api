@@ -138,19 +138,19 @@ router.get('/audit', requireAccessKey, (req, res) => {
     const dashboardRouter = require('../routes/dashboard');
     const healthRouter = require('../routes/health');
 
-    const hasGuardInStack = (router, guardName) => Array.isArray(router.stack) && router.stack.some(layer => {
-      if (layer && layer.name === guardName) return true;
-      if (layer && layer.handle && layer.handle.name === guardName) return true;
-      if (layer && layer.route && Array.isArray(layer.route.stack)) {
-        return layer.route.stack.some(l2 => l2 && (l2.name === guardName || (l2.handle && l2.handle.name === guardName)));
+    const isGuard = (fn) => Boolean(fn) && (fn.isAccessKeyGuard === true || fn.name === 'requireInternalAccessKey');
+    const hasGuardInStack = (targetRouter) => Array.isArray(targetRouter.stack) && targetRouter.stack.some(layer => {
+      if (!layer) return false;
+      if (isGuard(layer) || isGuard(layer.handle)) return true;
+      if (layer.route && Array.isArray(layer.route.stack)) {
+        return layer.route.stack.some(l2 => l2 && (isGuard(l2) || isGuard(l2.handle)));
       }
       return false;
     });
 
-    audit.dashboard_protected = hasGuardInStack(dashboardRouter, 'requireInternalAccessKey');
-    const healthProtected = hasGuardInStack(healthRouter, 'requireInternalAccessKey');
-    audit.health_protected = healthProtected;
-    audit.security_protected = true;
+    audit.dashboard_protected = hasGuardInStack(dashboardRouter);
+    audit.health_protected = hasGuardInStack(healthRouter);
+    audit.security_protected = hasGuardInStack(router);
 
     const missing = Object.keys(audit).filter(k => audit[k] === false);
 
@@ -208,19 +208,21 @@ router.get('/audit', requireAccessKey, (req, res) => {
 router.get('/stats', requireAccessKey, (req, res) => {
   try {
     const t0 = Date.now();
-    const violations = getViolationStats();
+    const rateLimitConfig = getViolationStats();
     const blockedIPs = getBlockedIPs();
-    
+
     return res.success({
-      violations,
+      rate_limit_config: rateLimitConfig,
       blocked_ips: blockedIPs,
       stats: {
         total_blocked: blockedIPs.length,
-        total_violations: Object.keys(violations).length
+        total_violations: 0,
+        block_tracking_persisted: false
       }
     }, {
       meta: {
         generated_at: new Date().toISOString(),
+        note: 'Rate limiting uses in-memory rolling windows; per-IP violation and block tracking is not persisted.',
         performance: { controller_time_ms: Date.now() - t0 }
       }
     });
@@ -287,22 +289,27 @@ router.post('/unblock/:ip', requireAccessKey, validateIpParam, (req, res) => {
     }
     
     const blockedIPs = getBlockedIPs();
-    if (!blockedIPs.includes(ip)) {
-      return res.fail('IP address not found in blocked list', {
-        statusCode: 404,
-        code: 'IP_NOT_BLOCKED'
+    const wasBlocked = blockedIPs.includes(ip);
+    if (wasBlocked) {
+      unblockIP(ip);
+      logger.info('IP unblocked via API', {
+        ip,
+        requestor_ip: req.ip,
+        timestamp: new Date().toISOString()
       });
     }
-    
-    unblockIP(ip);
-    
-    logger.info('IP unblocked via API', { 
-      ip, 
-      requestor_ip: req.ip,
-      timestamp: new Date().toISOString()
+
+    return res.success({
+      ip,
+      unblocked: wasBlocked
+    }, {
+      meta: {
+        generated_at: new Date().toISOString(),
+        note: wasBlocked
+          ? 'IP removed from the block list.'
+          : 'Rate limiting uses in-memory rolling windows; there is no persistent block list, so no IP is currently blocked.'
+      }
     });
-    
-    return res.success({ unblocked_ip: ip }, { meta: { generated_at: new Date().toISOString() } });
     
   } catch (error) {
     logger.error('Error unblocking IP:', error);

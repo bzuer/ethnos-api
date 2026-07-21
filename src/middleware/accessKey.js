@@ -61,7 +61,7 @@ const createAccessKeyGuard = (options = {}) => {
     throw new Error('createAccessKeyGuard requires at least one env var name');
   }
 
-  return (req, res, next) => {
+  const guard = (req, res, next) => {
     const acceptedKeys = collectAcceptedKeys(envVars);
 
     if (acceptedKeys.size === 0) {
@@ -94,6 +94,9 @@ const createAccessKeyGuard = (options = {}) => {
     req.accessKeyAuthenticated = true;
     return next();
   };
+
+  guard.isAccessKeyGuard = true;
+  return guard;
 };
 
 const requireInternalAccessKey = createAccessKeyGuard({

@@ -102,16 +102,31 @@ const responseFormatter = (req, res, next) => {
     }
 
     const statusCode = err.statusCode || err.status || options.statusCode || 500;
-    const code = err.code || options.code || (statusCode === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.INTERNAL);
-    const message = err.message || options.message || 'Unexpected error';
-    const errors = err.errors || options.errors;
+    let code = err.code || options.code || (statusCode === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.INTERNAL);
+    let message = err.message || options.message || 'Unexpected error';
+    let errors = err.errors || options.errors;
+    let meta = mergeMeta(options.meta, err.meta);
+
+    const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    if (statusCode >= 500 && isProd) {
+      logger.error('Masked internal error before client response', {
+        path: req.originalUrl,
+        original_code: err.code || options.code,
+        original_message: err.message,
+        sqlState: err.sqlState
+      });
+      message = 'Internal server error';
+      code = ERROR_CODES.INTERNAL;
+      errors = undefined;
+      meta = options.meta ? mergeMeta(options.meta, undefined) : undefined;
+    }
 
     return res.fail(message, {
       statusCode,
       code,
       errors,
       status: 'error',
-      meta: mergeMeta(options.meta, err.meta)
+      meta
     });
   };
 
