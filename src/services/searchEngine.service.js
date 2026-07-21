@@ -200,26 +200,26 @@ async function searchPersonIds(query, { verified, limit, offset } = {}) {
   };
 }
 
+async function runRelevanceWorkIdQuery(matchExpr, lim, maxMatches) {
+  const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
+    + `ORDER BY weight() DESC, citation_count DESC, id DESC LIMIT 0, ${lim} `
+    + `OPTION max_matches=${maxMatches}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}`;
+  const rows = await manticore.query(sql);
+  return rows.map(r => Number(r.id));
+}
+
 async function fetchWorkIdsForMatch(query, limit) {
   const matchExpr = buildWorksMatch({ q: query });
   if (!matchExpr) return [];
   const lim = toInt(limit) ?? 50;
-  const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
-    + `ORDER BY weight() DESC, citation_count DESC, id DESC LIMIT 0, ${lim} `
-    + `OPTION max_matches=${Math.max(1000, lim)}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}`;
-  const rows = await manticore.query(sql);
-  return rows.map(r => Number(r.id));
+  return runRelevanceWorkIdQuery(matchExpr, lim, Math.max(1000, lim));
 }
 
 async function fetchWorkIdsForFilters(filters, cap = 5000) {
   const matchExpr = buildWorksMatch(filters);
   if (!matchExpr) return { ids: [], capped: false };
   const lim = Math.min(Math.max(cap, 1), MAX_MATCHES_CEILING);
-  const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
-    + `ORDER BY weight() DESC, citation_count DESC, id DESC LIMIT 0, ${lim} `
-    + `OPTION max_matches=${lim}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}`;
-  const rows = await manticore.query(sql);
-  const ids = rows.map(r => Number(r.id));
+  const ids = await runRelevanceWorkIdQuery(matchExpr, lim, lim);
   return { ids, capped: ids.length >= lim };
 }
 

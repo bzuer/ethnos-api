@@ -5,6 +5,7 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
 const { withTimeout } = require('../utils/db');
+const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
 class PersonsService {
@@ -513,25 +514,9 @@ class PersonsService {
       const totalPages = Math.ceil(total / limit);
 
       const workIds = works.map(w => w.id).filter(Number.isFinite);
-      let authorStringByWork = {};
-      if (workIds.length > 0) {
-        const placeholders = workIds.map(() => '?').join(',');
-        const authorRows = await sequelize.query(`
-          SELECT a.work_id, p.preferred_name
-          FROM authorships a
-          INNER JOIN persons p ON p.id = a.person_id
-          WHERE a.work_id IN (${placeholders})
-          ORDER BY a.work_id, a.position
-        `, {
-          replacements: workIds,
-          type: sequelize.QueryTypes.SELECT
-        });
-        for (const row of authorRows) {
-          const bucket = authorStringByWork[row.work_id] || [];
-          bucket.push(row.preferred_name);
-          authorStringByWork[row.work_id] = bucket;
-        }
-      }
+      const authorStringByWork = workIds.length > 0
+        ? await hydrateAuthorNamesForWorks(workIds)
+        : {};
 
       const result = {
         data: works.map(work => {

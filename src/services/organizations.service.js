@@ -8,6 +8,7 @@ const {
   formatAffiliatedWork
 } = require('../dto/organization.dto');
 const { withTimeout } = require('../utils/db');
+const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 
 const ORG_TYPES = new Set(['UNIVERSITY', 'INSTITUTE', 'PUBLISHER', 'FUNDER', 'COMPANY', 'OTHER']);
 const ORG_STATUSES = new Set(['active', 'inactive', 'withdrawn']);
@@ -515,21 +516,8 @@ class OrganizationsService {
   }
 
   async hydrateAuthors(workIds) {
-    const authorsByWork = {};
-    if (!workIds.length) return authorsByWork;
-    const placeholders = workIds.map(() => '?').join(',');
-    const rows = await sequelize.query(`
-      SELECT a.work_id, p.preferred_name
-      FROM authorships a
-      INNER JOIN persons p ON p.id = a.person_id
-      WHERE a.work_id IN (${placeholders})
-      ORDER BY a.work_id, a.position
-    `, { replacements: workIds, type: sequelize.QueryTypes.SELECT });
-    for (const row of rows) {
-      if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
-      authorsByWork[row.work_id].push(row.preferred_name);
-    }
-    return authorsByWork;
+    if (!workIds.length) return {};
+    return hydrateAuthorNamesForWorks(workIds);
   }
 
   async getOrganizationWorks(organizationId, filters = {}) {

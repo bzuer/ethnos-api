@@ -6,8 +6,9 @@ const {
   formatPublicationListItem,
   formatPublicationDetails
 } = require('../dto/publication.dto');
-const { normalizeType, toOptionalBoolean, toOptionalInteger } = require('../dto/helpers');
+const { normalizeType, toOptionalInteger } = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
+const { hydrateAuthorsForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
 const normalizeDoiValue = (value) => {
@@ -167,37 +168,6 @@ const FILES_SELECT = `
   f.download_count AS downloads
 `;
 
-const hydrateAuthorsForWorks = async (workIds) => {
-  const map = new Map();
-  if (!Array.isArray(workIds) || workIds.length === 0) return map;
-  const placeholders = workIds.map(() => '?').join(',');
-  const rows = await sequelize.query(`
-    SELECT
-      a.work_id,
-      a.person_id,
-      a.role,
-      a.position,
-      a.is_corresponding,
-      p.preferred_name
-    FROM authorships a
-    INNER JOIN persons p ON p.id = a.person_id
-    WHERE a.work_id IN (${placeholders})
-    ORDER BY a.work_id, a.position
-  `, { replacements: workIds, type: sequelize.QueryTypes.SELECT });
-  for (const row of rows) {
-    const bucket = map.get(row.work_id) || [];
-    bucket.push({
-      person_id: toOptionalInteger(row.person_id),
-      preferred_name: row.preferred_name,
-      name: row.preferred_name,
-      role: normalizeType(row.role) || 'AUTHOR',
-      position: toOptionalInteger(row.position),
-      is_corresponding: toOptionalBoolean(row.is_corresponding)
-    });
-    map.set(row.work_id, bucket);
-  }
-  return map;
-};
 
 const hydrateSubjectsForWorks = async (workIds) => {
   const map = new Map();

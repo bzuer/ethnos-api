@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { withTimeout } = require('../utils/db');
+const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 const { formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
 const { formatPersonListItem } = require('../dto/person.dto');
 
@@ -259,24 +260,9 @@ class SignaturesService {
       const totalPages = Math.ceil(total / limit);
 
       const workIds = Array.from(new Set(works.map(w => w.id).filter(Number.isFinite)));
-      const authorStringByWork = Object.create(null);
-      if (workIds.length > 0) {
-        const placeholders = workIds.map(() => '?').join(',');
-        const authorRows = await sequelize.query(`
-          SELECT a.work_id, p.preferred_name
-          FROM authorships a
-          INNER JOIN persons p ON p.id = a.person_id
-          WHERE a.work_id IN (${placeholders})
-          ORDER BY a.work_id, a.position
-        `, {
-          replacements: workIds,
-          type: sequelize.QueryTypes.SELECT
-        });
-        for (const row of authorRows) {
-          if (!authorStringByWork[row.work_id]) authorStringByWork[row.work_id] = [];
-          authorStringByWork[row.work_id].push(row.preferred_name);
-        }
-      }
+      const authorStringByWork = workIds.length > 0
+        ? await hydrateAuthorNamesForWorks(workIds)
+        : Object.create(null);
 
       const items = works.map(work => {
         const names = authorStringByWork[work.id] || [];

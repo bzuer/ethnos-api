@@ -3,6 +3,14 @@ const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
 const { formatBibliographyItem } = require('../dto/bibliography.dto');
 
+const LATEST_PUBLICATION_BY_YEAR = `(
+      SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
+      FROM publications p
+      INNER JOIN (
+        SELECT work_id, MAX(year) AS max_year FROM publications GROUP BY work_id
+      ) mp ON mp.work_id = p.work_id AND mp.max_year = p.year
+    )`;
+
 class BibliographyService {
   
   async getBibliography(filters = {}) {
@@ -52,15 +60,7 @@ class BibliographyService {
       FROM course_bibliography cb
       JOIN courses c ON cb.course_id = c.id
       JOIN works w ON cb.work_id = w.id
-      LEFT JOIN (
-        SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
-        FROM publications p
-        INNER JOIN (
-          SELECT work_id, MAX(year) AS max_year
-          FROM publications
-          GROUP BY work_id
-        ) latest ON latest.work_id = p.work_id AND latest.max_year = p.year
-      ) pm ON w.id = pm.work_id
+      LEFT JOIN ${LATEST_PUBLICATION_BY_YEAR} pm ON w.id = pm.work_id
       WHERE 1=1
     ` : `
       SELECT
@@ -94,15 +94,7 @@ class BibliographyService {
           (SELECT COUNT(*) FROM authorships a WHERE a.work_id = cb.work_id) AS author_count,
           GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') AS instructors
         FROM course_bibliography cb
-        LEFT JOIN (
-          SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
-          FROM publications p
-          INNER JOIN (
-            SELECT work_id, MAX(year) AS max_year
-            FROM publications
-            GROUP BY work_id
-          ) latest_pub ON latest_pub.work_id = p.work_id AND latest_pub.max_year = p.year
-        ) latest ON cb.work_id = latest.work_id
+        LEFT JOIN ${LATEST_PUBLICATION_BY_YEAR} latest ON cb.work_id = latest.work_id
         LEFT JOIN course_instructors ci ON cb.course_id = ci.course_id
         LEFT JOIN persons p ON ci.canonical_person_id = p.id
         GROUP BY cb.course_id, cb.work_id, latest.publication_year, latest.open_access
@@ -276,15 +268,7 @@ class BibliographyService {
         FROM works w
         JOIN course_bibliography cb ON w.id = cb.work_id
         JOIN courses c ON cb.course_id = c.id
-        LEFT JOIN (
-          SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
-          FROM publications p
-          INNER JOIN (
-            SELECT work_id, MAX(year) AS max_year
-            FROM publications
-            GROUP BY work_id
-          ) latest ON latest.work_id = p.work_id AND latest.max_year = p.year
-        ) latest_pub ON w.id = latest_pub.work_id
+        LEFT JOIN ${LATEST_PUBLICATION_BY_YEAR} latest_pub ON w.id = latest_pub.work_id
         ${baseWhere}
         GROUP BY w.id, w.title, latest_pub.document_type, latest_pub.publication_year, latest_pub.open_access
         ORDER BY used_in_courses DESC, used_in_programs DESC

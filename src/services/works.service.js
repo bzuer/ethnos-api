@@ -5,11 +5,11 @@ const { createPagination, normalizePagination } = require('../utils/pagination')
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
 const {
   normalizeType,
-  toOptionalBoolean,
   toOptionalInteger
 } = require('../dto/helpers');
 const { formatPublicationEntry } = require('../dto/publication.dto');
 const { withTimeout } = require('../utils/db');
+const { hydrateAuthorsForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
 const WORK_LEVEL_FILE_CAP = 50;
@@ -166,41 +166,6 @@ const pickPrimaryPublicationRow = (rows = []) => {
   return scored[0].row;
 };
 
-const hydrateAuthorsForWorks = async (workIds, perWorkCap = 50) => {
-  const map = new Map();
-  if (!Array.isArray(workIds) || workIds.length === 0) return map;
-  const placeholders = workIds.map(() => '?').join(',');
-  const rows = await sequelize.query(`
-    SELECT
-      a.work_id,
-      a.person_id,
-      a.role,
-      a.position,
-      a.is_corresponding,
-      p.preferred_name
-    FROM authorships a
-    INNER JOIN persons p ON p.id = a.person_id
-    WHERE a.work_id IN (${placeholders})
-    ORDER BY a.work_id, a.position
-  `, {
-    replacements: workIds,
-    type: sequelize.QueryTypes.SELECT
-  });
-  for (const row of rows) {
-    const bucket = map.get(row.work_id) || [];
-    if (bucket.length >= perWorkCap) continue;
-    bucket.push({
-      person_id: toOptionalInteger(row.person_id),
-      name: row.preferred_name,
-      preferred_name: row.preferred_name,
-      role: normalizeType(row.role) || 'AUTHOR',
-      position: toOptionalInteger(row.position),
-      is_corresponding: toOptionalBoolean(row.is_corresponding)
-    });
-    map.set(row.work_id, bucket);
-  }
-  return map;
-};
 
 const hydrateSubjectsForWorks = async (workIds, perWorkCap = 30) => {
   const map = new Map();
