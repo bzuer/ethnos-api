@@ -624,33 +624,17 @@ router.get('/advanced', validateAdvancedSearch, enhancedValidationHandler, advan
 router.get('/health', async (req, res, next) => {
   try {
     const searchEngine = require('../services/searchEngine.service');
-    if (searchEngine.isEnabled()) {
-      const health = await searchEngine.healthcheck();
-      return res.success({
-        search_engine: 'Manticore',
-        backend: health.backend,
-        reachable: health.reachable,
-        ...(health.error ? { error: health.error } : {}),
-        tables: health.tables || [],
-        indexes: {
-          works: 'Manticore table works (title, subtitle, abstract, authors, subjects, venue)',
-          persons: 'Manticore table persons (preferred_name, given_names, family_name)',
-          venues: 'ft_venues_search (name + abbreviated_name) [MariaDB]'
-        },
-        endpoints: {
-          basic_search: '/search/works',
-          advanced_search: '/search/advanced',
-          autocomplete: '/search/autocomplete',
-          popular_terms: '/search/popular'
-        }
-      });
-    }
+    const health = await searchEngine.healthcheck();
     return res.success({
-      search_engine: 'MariaDB',
+      search_engine: 'Manticore',
+      backend: health.backend,
+      reachable: health.reachable,
+      ...(health.error ? { error: health.error } : {}),
+      tables: health.tables || [],
       indexes: {
-        works: 'ft_works_content (full_title_normalized + subjects_search), ft_works_metadata (authors_search + subjects_search), ft_works_authors_content (full_title_normalized + authors_search + subjects_search)',
-        venues: 'ft_venues_search (name + abbreviated_name)',
-        persons: 'ft_persons_names (preferred_name + given_names + family_name)'
+        works: 'Manticore table works (title, subtitle, abstract, authors, subjects, venue)',
+        persons: 'Manticore table persons (preferred_name, given_names, family_name)',
+        venues: 'ft_venues_search (name + abbreviated_name) [MariaDB]'
       },
       endpoints: {
         basic_search: '/search/works',

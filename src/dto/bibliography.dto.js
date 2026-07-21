@@ -59,23 +59,6 @@ function formatBibliographyItem(row = {}) {
   };
 }
 
-function formatBibliographyCourseUsage(row = {}) {
-  return {
-    course_id: toOptionalInteger(row.course_id),
-    reading_type: row.reading_type || null,
-    week_number: toOptionalInteger(row.week_number),
-    notes: row.notes || null,
-    course_code: row.course_code || null,
-    course_name: row.course_name || null,
-    course_year: toOptionalInteger(row.course_year),
-    semester: row.semester || null,
-    program_id: toOptionalInteger(row.program_id),
-    instructor_count: toOptionalInteger(row.instructor_count),
-    instructors: row.instructors || null
-  };
-}
-
 module.exports = {
-  formatBibliographyItem,
-  formatBibliographyCourseUsage
+  formatBibliographyItem
 };

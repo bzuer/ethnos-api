@@ -97,31 +97,10 @@ class AutocompleteService {
     async _fetchWorkIdsByMatch(query, fetchLimit) {
         const cappedLimit = Math.max(1, Math.min(parseInt(fetchLimit, 10) || 50, 500));
 
-        if (searchEngine.isEnabled()) {
-            try {
-                return await searchEngine.fetchWorkIdsForMatch(query, cappedLimit);
-            } catch (error) {
-                logger.warn('Autocomplete Manticore lookup failed; returning empty match set', {
-                    error: error.message
-                });
-                return [];
-            }
-        }
-
         try {
-            const rows = await sequelize.query(
-                `SELECT w.id
-                 FROM works w
-                 WHERE MATCH(w.full_title_normalized, w.subjects_search) AGAINST (:q IN BOOLEAN MODE)
-                 LIMIT :lim`,
-                {
-                    replacements: { q: query, lim: cappedLimit },
-                    type: sequelize.QueryTypes.SELECT
-                }
-            );
-            return rows.map(r => r.id).filter(Number.isFinite);
+            return await searchEngine.fetchWorkIdsForMatch(query, cappedLimit);
         } catch (error) {
-            logger.warn('Autocomplete fulltext lookup failed; returning empty match set', {
+            logger.warn('Autocomplete Manticore lookup failed; returning empty match set', {
                 error: error.message
             });
             return [];

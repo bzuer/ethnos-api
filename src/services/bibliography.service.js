@@ -1,7 +1,7 @@
 const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
-const { formatBibliographyItem, formatBibliographyCourseUsage } = require('../dto/bibliography.dto');
+const { formatBibliographyItem } = require('../dto/bibliography.dto');
 
 class BibliographyService {
   
@@ -223,87 +223,6 @@ class BibliographyService {
       }
     };
 
-    await cache.set(cacheKey, result, 1800);
-    return result;
-  }
-
-  async getWorkBibliography(workId, filters = {}) {
-    const cacheKey = `work:${workId}:bibliography:${JSON.stringify(filters)}`;
-    const cached = await cache.get(cacheKey);
-    if (cached) return cached;
-
-    const { year_from, year_to, reading_type, limit = 20, offset = 0 } = filters;
-
-    let query = `
-      SELECT 
-        cb.course_id,
-        cb.reading_type,
-        cb.week_number,
-        cb.notes,
-        c.code as course_code,
-        c.name as course_name,
-        c.year as course_year,
-        c.semester,
-        c.program_id,
-        COUNT(DISTINCT ci.canonical_person_id) as instructor_count,
-        GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') as instructors
-      FROM course_bibliography cb
-      JOIN courses c ON cb.course_id = c.id
-      LEFT JOIN course_instructors ci ON c.id = ci.course_id
-      LEFT JOIN persons p ON ci.canonical_person_id = p.id
-      WHERE cb.work_id = ?
-    `;
-
-    const params = [workId];
-
-    if (year_from) {
-      query += ' AND c.year >= ?';
-      params.push(year_from);
-    }
-
-    if (year_to) {
-      query += ' AND c.year <= ?';
-      params.push(year_to);
-    }
-
-    if (reading_type) {
-      query += ' AND cb.reading_type = ?';
-      params.push(reading_type);
-    }
-
-    query += `
-      GROUP BY cb.course_id, cb.reading_type, cb.week_number, cb.notes,
-               c.code, c.name, c.year, c.semester, c.program_id
-      ORDER BY c.year DESC, c.semester, cb.week_number
-      LIMIT ? OFFSET ?
-    `;
-    params.push(parseInt(limit), parseInt(offset));
-
-    const [coursesResult, countResult] = await Promise.all([
-      pool.execute(query, params),
-      pool.execute(
-        `
-          SELECT COUNT(DISTINCT cb.course_id) AS total
-          FROM course_bibliography cb
-          JOIN courses c ON cb.course_id = c.id
-          WHERE cb.work_id = ?
-          ${year_from ? ' AND c.year >= ?' : ''}
-          ${year_to ? ' AND c.year <= ?' : ''}
-          ${reading_type ? ' AND cb.reading_type = ?' : ''}
-        `,
-        params.slice(0, params.length - 2)
-      )
-    ]);
-    const courses = coursesResult[0];
-    const countRows = countResult[0];
-    const total = countRows?.[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
-    const pagination = createPagination(
-      Math.floor(parseInt(offset, 10) / Math.max(1, parseInt(limit, 10))) + 1,
-      parseInt(limit, 10),
-      total
-    );
-
-    const result = { data: courses.map(formatBibliographyCourseUsage), pagination };
     await cache.set(cacheKey, result, 1800);
     return result;
   }

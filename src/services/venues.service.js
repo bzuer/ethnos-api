@@ -116,7 +116,6 @@ const mapVenueRow = (row) => {
     type: row.type || null,
     aggregation_type: row.aggregation_type || null,
     open_access: toNullableBoolean(row.open_access),
-    open_access_status: toNullableBoolean(row.open_access),
     country_code: row.country_code || null,
     language: row.lang || null,
     homepage_url: row.homepage_url || null,

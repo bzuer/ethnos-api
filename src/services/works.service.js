@@ -638,7 +638,6 @@ class WorksService {
     const { type, language, year_from, year_to, open_access, peer_reviewed, venue_name, author, subject } = filters || {};
     const citedByMin = toNonNegativeInt(filters?.cited_by_min ?? filters?.citation_count_min);
     const citedByMax = toNonNegativeInt(filters?.cited_by_max ?? filters?.citation_count_max);
-    const customOrder = resolveWorksOrderClause(filters?.sort_by ?? filters?.sortBy, filters?.sort_order ?? filters?.sortOrder);
     const trimmed = (search || '').trim();
     const hasContent = Boolean(trimmed);
     const metadataExpr = buildBooleanExpr(author, subject);
@@ -650,147 +649,24 @@ class WorksService {
       return { data: [], pagination: createPagination(page, limit, 0) };
     }
 
-    if (searchEngine.isEnabled()) {
-      const manticoreStart = process.hrtime.bigint();
-      const mres = await searchEngine.searchWorkIds({
-        q: trimmed,
-        author,
-        subject,
-        venue_name,
-        type,
-        language,
-        year_from,
-        year_to,
-        open_access,
-        peer_reviewed,
-        cited_by_min: citedByMin,
-        cited_by_max: citedByMax,
-        sort_by: filters?.sort_by ?? filters?.sortBy,
-        sort_order: filters?.sort_order ?? filters?.sortOrder
-      }, limit, offset);
-      return this._hydrateWorkSearchResults(mres.ids, page, limit, mres.total, mres.exact, 'Manticore', manticoreStart);
-    }
-
-    const innerWhere = [];
-    const innerParams = [];
-    const publicationConds = [];
-    const publicationParams = [];
-
-    if (hasContent) {
-      innerWhere.push('MATCH(w.full_title_normalized, w.subjects_search) AGAINST (? IN BOOLEAN MODE)');
-      innerParams.push(trimmed);
-    }
-    if (hasMetadata) {
-      innerWhere.push('MATCH(w.authors_search, w.subjects_search) AGAINST (? IN BOOLEAN MODE)');
-      innerParams.push(metadataExpr);
-    }
-    if (hasVenue) {
-      innerWhere.push(`EXISTS (
-        SELECT 1 FROM publications p
-        INNER JOIN venues v ON v.id = p.venue_id
-        WHERE p.work_id = w.id
-          AND MATCH(v.name, v.abbreviated_name) AGAINST (? IN BOOLEAN MODE)
-      )`);
-      innerParams.push(venueExpr);
-    }
-    if (language) {
-      innerWhere.push('w.language = ?');
-      innerParams.push(language);
-    }
-    if (citedByMin !== null) {
-      innerWhere.push('w.citation_count >= ?');
-      innerParams.push(citedByMin);
-    }
-    if (citedByMax !== null) {
-      innerWhere.push('w.citation_count <= ?');
-      innerParams.push(citedByMax);
-    }
-
-    if (type) {
-      publicationConds.push('p.type = ?');
-      publicationParams.push(type);
-    }
-    if (year_from !== undefined && year_from !== null && year_from !== '') {
-      publicationConds.push('p.year >= ?');
-      publicationParams.push(parseInt(year_from, 10));
-    }
-    if (year_to !== undefined && year_to !== null && year_to !== '') {
-      publicationConds.push('p.year <= ?');
-      publicationParams.push(parseInt(year_to, 10));
-    }
-    const oaFlag = toBoolFlag(open_access);
-    if (oaFlag !== null) {
-      publicationConds.push('p.open_access = ?');
-      publicationParams.push(oaFlag);
-    }
-    const peerFlag = toBoolFlag(peer_reviewed);
-    if (peerFlag !== null) {
-      publicationConds.push('p.peer_reviewed = ?');
-      publicationParams.push(peerFlag);
-    }
-    const hasPubFilters = publicationConds.length > 0;
-    const orderNeedsPub = customOrder ? customOrder.needsPub : false;
-    const innerJoin = hasPubFilters
-      ? `INNER JOIN publications p ON p.work_id = w.id AND ${publicationConds.join(' AND ')}`
-      : (orderNeedsPub ? 'LEFT JOIN publications p ON p.work_id = w.id' : '');
-    const innerJoinParams = hasPubFilters ? publicationParams : [];
-    const groupByClause = (hasPubFilters || orderNeedsPub) ? 'GROUP BY w.id' : '';
-
-    const relevanceExpr = hasContent
-      ? 'MATCH(w.full_title_normalized, w.subjects_search) AGAINST (? IN BOOLEAN MODE)'
-      : (hasMetadata
-        ? 'MATCH(w.authors_search, w.subjects_search) AGAINST (? IN BOOLEAN MODE)'
-        : '0');
-    const relevanceParams = hasContent
-      ? [trimmed]
-      : (hasMetadata ? [metadataExpr] : []);
-
-    const innerWhereClause = `WHERE ${innerWhere.join(' AND ')}`;
-    const innerOrderClause = customOrder
-      ? ((hasPubFilters || orderNeedsPub) ? customOrder.withPub : customOrder.noPub)
-      : (hasContent || hasMetadata
-        ? 'relevance DESC, w.citation_count DESC, w.id DESC'
-        : 'w.citation_count DESC, w.id DESC');
-
-    const innerSql = `
-      SELECT
-        w.id AS work_id,
-        (${relevanceExpr}) AS relevance
-      FROM works w
-      ${innerJoin}
-      ${innerWhereClause}
-      ${groupByClause}
-      ORDER BY ${innerOrderClause}
-      LIMIT ? OFFSET ?
-    `;
-
-    const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '6000', 10);
-    const primaryStart = process.hrtime.bigint();
-    const innerRows = await sequelize.query(withTimeout(innerSql, dbTimeoutMs), {
-      replacements: [...relevanceParams, ...innerJoinParams, ...innerParams, limit, offset],
-      type: sequelize.QueryTypes.SELECT
-    });
-    const innerQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
-
-    let totalItems;
-    let totalIsExact = true;
-    try {
-      const countSql = hasPubFilters
-        ? `SELECT COUNT(DISTINCT w.id) AS total FROM works w ${innerJoin} ${innerWhereClause}`
-        : `SELECT COUNT(*) AS total FROM works w ${innerWhereClause}`;
-      const [countRow] = await sequelize.query(withTimeout(countSql, 2000), {
-        replacements: [...innerJoinParams, ...innerParams],
-        type: sequelize.QueryTypes.SELECT
-      });
-      totalItems = parseInt(countRow?.total, 10) || 0;
-    } catch (countError) {
-      logger.warn('Works search count exceeded budget; lower-bound estimate used', { error: countError.message });
-      totalItems = offset + innerRows.length + (innerRows.length === limit ? limit : 0);
-      totalIsExact = false;
-    }
-
-    const workIds = innerRows.map(r => r.work_id).filter(Boolean);
-    return this._hydrateWorkSearchResults(workIds, page, limit, totalItems, totalIsExact, 'MariaDB', primaryStart);
+    const manticoreStart = process.hrtime.bigint();
+    const mres = await searchEngine.searchWorkIds({
+      q: trimmed,
+      author,
+      subject,
+      venue_name,
+      type,
+      language,
+      year_from,
+      year_to,
+      open_access,
+      peer_reviewed,
+      cited_by_min: citedByMin,
+      cited_by_max: citedByMax,
+      sort_by: filters?.sort_by ?? filters?.sortBy,
+      sort_order: filters?.sort_order ?? filters?.sortOrder
+    }, limit, offset);
+    return this._hydrateWorkSearchResults(mres.ids, page, limit, mres.total, mres.exact, 'Manticore', manticoreStart);
   }
 
   async _hydrateWorkSearchResults(workIds, page, limit, totalItems, totalIsExact, engine, primaryStart) {

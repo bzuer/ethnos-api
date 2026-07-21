@@ -4,55 +4,7 @@ const { logger } = require('../middleware/errorHandler');
 const { ERROR_CODES } = require('../utils/responseBuilder');
 
 class SignaturesController {
-  
-  async getAllSignatures(req, res, next) {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.fail('Validation failed', {
-          statusCode: 400,
-          code: ERROR_CODES.VALIDATION,
-          errors: errors.array()
-        });
-      }
 
-      const {
-        limit = 20,
-        offset = 0,
-        search,
-        sortBy = 'signature',
-        sortOrder = 'ASC'
-      } = req.query;
-
-      const options = {
-        limit: Math.min(parseInt(limit) || 20, 100),
-        offset: parseInt(offset) || 0,
-        search,
-        sortBy,
-        sortOrder,
-        includeCounts: String(req.query.light || 'false').toLowerCase() !== 'true'
-      };
-
-      const result = await signaturesService.getAllSignatures(options);
-      
-      logger.info('Signatures list retrieved', {
-        endpoint: '/signatures',
-        count: result.signatures.length,
-        total: result.pagination.total,
-        page: options.limit ? Math.floor(options.offset / options.limit) + 1 : 1,
-        responseTime: `${Date.now() - req.startTime}ms`
-      });
-
-      return res.success(result.signatures, {
-        pagination: result.pagination
-      });
-    } catch (error) {
-      logger.error('Error in getAllSignatures:', error);
-      return res.error(error, { code: ERROR_CODES.INTERNAL });
-    }
-  }
-
-  
   async getSignatureById(req, res, next) {
     try {
       const errors = validationResult(req);

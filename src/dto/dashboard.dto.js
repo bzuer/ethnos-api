@@ -102,50 +102,6 @@ const formatSystemAlerts = (alerts) => {
 };
 
 
-const formatMetricsSummary = (summary) => {
-  if (!summary) return null;
-
-  return {
-    database_metrics: {
-      total_works: parseInt(summary.total_works) || 0,
-      total_persons: parseInt(summary.total_persons) || 0,
-      total_organizations: parseInt(summary.total_organizations) || 0,
-      total_publications: parseInt(summary.total_publications) || 0,
-      growth_rate: summary.growth_rate || null
-    },
-    performance_metrics: {
-      avg_query_time: parseFloat(summary.avg_query_time) || 0,
-      cache_hit_rate: parseFloat(summary.cache_hit_rate) || 0,
-      error_rate: parseFloat(summary.error_rate) || 0,
-      uptime_percentage: parseFloat(summary.uptime_percentage) || 0
-    },
-    usage_metrics: {
-      daily_active_queries: parseInt(summary.daily_active_queries) || 0,
-      peak_concurrent_users: parseInt(summary.peak_concurrent_users) || 0,
-      most_active_endpoint: summary.most_active_endpoint || null
-    }
-  };
-};
-
-
-const formatActivityFeed = (activities) => {
-  if (!Array.isArray(activities)) return [];
-
-  return activities.map(activity => ({
-    timestamp: new Date(activity.timestamp).toISOString(),
-    type: activity.type || 'unknown',
-    description: activity.description || activity.message || 'No description',
-    severity: activity.severity || 'info',
-    metadata: {
-      endpoint: activity.endpoint || null,
-      response_time: activity.response_time || null,
-      user_agent: activity.user_agent || null,
-      ip_address: activity.ip_address || null
-    },
-    formatted_time: formatRelativeTime(activity.timestamp)
-  })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-};
-
 
 
 const determineHealthStatus = (healthData) => {
@@ -227,8 +183,6 @@ module.exports = {
   formatPerformanceChart,
   formatSearchTrends,
   formatSystemAlerts,
-  formatMetricsSummary,
-  formatActivityFeed,
   determineHealthStatus,
   determineActivityLevel,
   calculatePerformanceScore,

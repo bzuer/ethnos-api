@@ -6,39 +6,6 @@ const { validationResult } = require('express-validator');
 
 class SubjectsController {
 
-  
-  async getSubjects(req, res) {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.fail('Validation failed', {
-          statusCode: 400,
-          code: ERROR_CODES.VALIDATION,
-          errors: errors.array()
-        });
-      }
-
-      const pagination = normalizePagination(req.query);
-      const filters = {
-        vocabulary: req.query.vocabulary,
-        parent_id: req.query.parent_id,
-        search: req.query.search,
-        has_children: req.query.has_children,
-        limit: pagination.limit,
-        offset: pagination.offset,
-        light: req.query.light
-      };
-
-      const result = await subjectsService.getSubjects(filters);
-      return res.success(result.subjects || [], {
-        pagination: result.pagination
-      });
-    } catch (error) {
-      handleError(res, error);
-    }
-  }
-
-  
   async getSubjectById(req, res) {
     try {
       const errors = validationResult(req);

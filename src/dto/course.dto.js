@@ -32,7 +32,6 @@ const formatCourseDetails = (course, options = {}) => {
   return {
     ...base,
     source_file: course.source_file || null,
-    statistics: course.statistics || null,
     ...(options.bibliography && { bibliography: options.bibliography }),
     ...(options.instructors && { instructors: options.instructors }),
     ...(options.subjects && { subjects: options.subjects }),

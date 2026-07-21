@@ -36,8 +36,7 @@ class SearchController {
         cited_by_min: req.query.cited_by_min ?? req.query.citation_count_min,
         cited_by_max: req.query.cited_by_max ?? req.query.citation_count_max,
         sort_by: req.query.sort_by ?? req.query.sortBy,
-        sort_order: req.query.sort_order ?? req.query.sortOrder,
-        include_facets: ['1','true',true].includes((req.query.include_facets || '').toString().toLowerCase())
+        sort_order: req.query.sort_order ?? req.query.sortOrder
       };
 
       const startTime = Date.now();

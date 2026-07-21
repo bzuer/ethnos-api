@@ -146,71 +146,10 @@ const formatCollaboration = (collaboration, rank = null) => {
   };
 };
 
-
-const formatDashboardSummary = (totals, recentTrends = []) => {
-  return {
-    totals: {
-      total_works: parseInt(totals.total_works) || 0,
-      total_persons: parseInt(totals.total_persons) || 0,
-      total_organizations: parseInt(totals.total_organizations) || 0,
-      total_publications: parseInt(totals.total_publications) || 0,
-      total_venues: parseInt(totals.total_venues) || 0
-    },
-    recent_trends: recentTrends.map(trend => ({
-      year: parseInt(trend.year),
-      total_publications: parseInt(trend.total_publications) || 0,
-      open_access_count: parseInt(trend.open_access_count) || 0,
-      unique_organizations: parseInt(trend.unique_organizations) || 0,
-      open_access_percentage: trend.total_publications > 0 ? 
-        Math.round((trend.open_access_count / trend.total_publications) * 100 * 10) / 10 : 0
-    })),
-    growth_indicators: recentTrends.length >= 2 ? {
-      publications_trend: calculateTrendDirection(recentTrends.map(t => t.total_publications)),
-      organizations_trend: calculateTrendDirection(recentTrends.map(t => t.unique_organizations)),
-      open_access_trend: calculateTrendDirection(recentTrends.map(t => t.open_access_count))
-    } : null,
-    last_updated: new Date().toISOString()
-  };
-};
-
-
-const calculateTrendDirection = (values) => {
-  if (values.length < 2) return 'insufficient_data';
-  
-  const recent = values.slice(-2);
-  const change = ((recent[0] - recent[1]) / recent[1]) * 100;
-  
-  if (change > 5) return 'increasing';
-  if (change < -5) return 'decreasing';
-  return 'stable';
-};
-
-
-const formatTimeSeriesData = (data, valueField, timeField = 'timestamp') => {
-  return data.map(item => ({
-    timestamp: new Date(item[timeField]).toISOString(),
-    value: parseFloat(item[valueField]) || 0,
-    label: item.label || null
-  })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-};
-
-
-const formatDistributionData = (data, labelField, valueField) => {
-  return data.map(item => ({
-    label: item[labelField] || 'Unknown',
-    value: parseInt(item[valueField]) || 0,
-    percentage: item.percentage ? parseFloat(item.percentage) : null
-  })).sort((a, b) => b.value - a.value);
-};
-
 module.exports = {
   formatAnnualStats,
   formatVenueRanking,
   formatInstitutionProductivity,
   formatPersonProduction,
-  formatCollaboration,
-  formatDashboardSummary,
-  formatTimeSeriesData,
-  formatDistributionData,
-  calculateTrendDirection
+  formatCollaboration
 };
