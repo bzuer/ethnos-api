@@ -289,7 +289,7 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { organization_id } = filters;
-    const cacheKey = `metrics:persons:v3:${JSON.stringify({ page, limit, offset, organization_id })}`;
+    const cacheKey = `metrics:persons:v4:${JSON.stringify({ page, limit, offset, organization_id })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -312,7 +312,7 @@ class MetricsService {
       const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
       const [persons, countRows] = await Promise.all([
-        sequelize.query(`
+        sequelize.query(withTimeout(`
           SELECT
             p.id AS person_id,
             p.preferred_name AS person_name,
@@ -330,17 +330,17 @@ class MetricsService {
             p.latest_publication_year
           FROM persons p
           ${whereClause}
-          ORDER BY p.total_works DESC, p.total_citations DESC, p.id ASC
+          ORDER BY p.total_works DESC
           LIMIT :limit OFFSET :offset
-        `, {
+        `), {
           replacements,
           type: sequelize.QueryTypes.SELECT
         }),
-        sequelize.query(`
+        sequelize.query(withTimeout(`
           SELECT COUNT(*) AS total
           FROM persons p
           ${whereClause}
-        `, {
+        `), {
           replacements,
           type: sequelize.QueryTypes.SELECT
         })
