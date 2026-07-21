@@ -1,6 +1,7 @@
 const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
+const { latestPublicationJoin } = require('../utils/db');
 const {
   formatCourseListItem,
   formatCourseDetails,
@@ -349,9 +350,7 @@ class CoursesService {
         pub.open_access
       FROM course_bibliography cb
       JOIN works w ON cb.work_id = w.id
-      LEFT JOIN publications pub ON pub.id = (
-        SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-      )
+      ${latestPublicationJoin('pub', 'LEFT')}
       WHERE cb.course_id = ?
     `;
 

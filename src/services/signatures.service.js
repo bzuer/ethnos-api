@@ -2,7 +2,7 @@ const { sequelize } = require('../models');
 const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
-const { withTimeout } = require('../utils/db');
+const { withTimeout, latestPublicationJoin } = require('../utils/db');
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 const { formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
 const { formatPersonListItem } = require('../dto/person.dto');
@@ -218,9 +218,7 @@ class SignaturesService {
           FROM persons p
           INNER JOIN authorships a ON a.person_id = p.id
           INNER JOIN works w ON w.id = a.work_id
-          LEFT JOIN publications pub ON pub.id = (
-            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-          )
+          ${latestPublicationJoin('pub', 'LEFT')}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE p.signature_id = ?
           GROUP BY a.work_id, w.title, w.language, w.subtitle, w.created_at,

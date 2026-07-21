@@ -2,7 +2,7 @@ const { sequelize } = require('../models');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination } = require('../utils/pagination');
-const { withTimeout } = require('../utils/db');
+const { withTimeout, latestPublicationJoin } = require('../utils/db');
 const { formatCitationWork } = require('../dto/citations.dto');
 
 const fetchWorkSummaryByIds = async (workIds) => {
@@ -19,9 +19,7 @@ const fetchWorkSummaryByIds = async (workIds) => {
        v.abbreviated_name AS venue_abbrev,
        (SELECT COUNT(*) FROM authorships a WHERE a.work_id = w.id) AS authors_count
      FROM works w
-     LEFT JOIN publications p ON p.id = (
-       SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-     )
+     ${latestPublicationJoin('p', 'LEFT')}
      LEFT JOIN venues v ON v.id = p.venue_id
      WHERE w.id IN (${placeholders})`),
     { replacements: workIds, type: sequelize.QueryTypes.SELECT }

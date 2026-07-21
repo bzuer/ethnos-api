@@ -7,7 +7,7 @@ const {
   formatOrganizationDetails,
   formatAffiliatedWork
 } = require('../dto/organization.dto');
-const { withTimeout } = require('../utils/db');
+const { withTimeout, latestPublicationJoin } = require('../utils/db');
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 
 const ORG_TYPES = new Set(['UNIVERSITY', 'INSTITUTE', 'PUBLISHER', 'FUNDER', 'COMPANY', 'OTHER']);
@@ -340,7 +340,7 @@ class OrganizationsService {
             (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM works w
           JOIN authorships a ON a.work_id = w.id
-          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          ${latestPublicationJoin('pub', 'LEFT')}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE a.affiliation_id = :id
           GROUP BY w.id
@@ -558,7 +558,7 @@ class OrganizationsService {
             (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM works w
           INNER JOIN authorships a ON a.work_id = w.id
-          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          ${latestPublicationJoin('pub', 'LEFT')}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE ${whereClause}
           GROUP BY w.id
@@ -569,7 +569,7 @@ class OrganizationsService {
           SELECT COUNT(DISTINCT w.id) AS total
           FROM works w
           INNER JOIN authorships a ON a.work_id = w.id
-          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          ${latestPublicationJoin('pub', 'LEFT')}
           WHERE ${whereClause}
         `, countReplacements)
       ]);
@@ -647,7 +647,7 @@ class OrganizationsService {
             (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM funding f
           INNER JOIN works w ON w.id = f.work_id
-          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          ${latestPublicationJoin('pub', 'LEFT')}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE ${whereClause}
           GROUP BY w.id
@@ -658,7 +658,7 @@ class OrganizationsService {
           SELECT COUNT(DISTINCT w.id) AS total
           FROM funding f
           INNER JOIN works w ON w.id = f.work_id
-          LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)
+          ${latestPublicationJoin('pub', 'LEFT')}
           WHERE ${whereClause}
         `, countReplacements)
       ]);

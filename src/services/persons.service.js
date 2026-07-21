@@ -4,7 +4,7 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
-const { withTimeout } = require('../utils/db');
+const { withTimeout, latestPublicationJoin } = require('../utils/db');
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
@@ -73,9 +73,7 @@ class PersonsService {
           v.type as venue_type
         FROM authorships a
         INNER JOIN works w ON a.work_id = w.id
-        LEFT JOIN publications pub ON pub.id = (
-          SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-        )
+        ${latestPublicationJoin('pub', 'LEFT')}
         LEFT JOIN venues v ON v.id = pub.venue_id
         WHERE a.person_id = :id
         ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
@@ -469,9 +467,7 @@ class PersonsService {
             (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
           FROM authorships a
           INNER JOIN works w ON a.work_id = w.id
-          LEFT JOIN publications pub ON pub.id = (
-            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-          )
+          ${latestPublicationJoin('pub', 'LEFT')}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE ${whereClause}
           ORDER BY ${orderClause}
@@ -485,9 +481,7 @@ class PersonsService {
           SELECT COUNT(*) as total
           FROM authorships a
           INNER JOIN works w ON a.work_id = w.id
-          LEFT JOIN publications pub ON pub.id = (
-            SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-          )
+          ${latestPublicationJoin('pub', 'LEFT')}
           WHERE ${whereClause}
         `, {
           replacements: Object.fromEntries(

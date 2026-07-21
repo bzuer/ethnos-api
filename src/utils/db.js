@@ -30,4 +30,10 @@ function isStatementTimeout(error) {
   return code === 'ER_STATEMENT_TIMEOUT' || errno === 1969 || /max_statement_time|execution was interrupted/i.test(msg);
 }
 
-module.exports = { withTimeout, DEFAULT_MS, isStatementTimeout };
+const LATEST_PUBLICATION_ID_SUBQUERY = 'SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id';
+
+function latestPublicationJoin(alias = 'pub', joinType = 'LEFT') {
+  return `${joinType} JOIN publications ${alias} ON ${alias}.id = (${LATEST_PUBLICATION_ID_SUBQUERY})`;
+}
+
+module.exports = { withTimeout, DEFAULT_MS, isStatementTimeout, LATEST_PUBLICATION_ID_SUBQUERY, latestPublicationJoin };

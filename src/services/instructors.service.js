@@ -1,6 +1,7 @@
 const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
+const { latestPublicationJoin } = require('../utils/db');
 const {
   formatInstructorListItem,
   formatInstructorDetails,
@@ -373,9 +374,7 @@ class InstructorsService {
       FROM works w
       JOIN course_bibliography cb ON w.id = cb.work_id
       JOIN course_instructors ci ON cb.course_id = ci.course_id
-      LEFT JOIN publications pub ON pub.id = (
-        SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-      )
+      ${latestPublicationJoin('pub', 'LEFT')}
       WHERE ci.canonical_person_id = ?
     `;
 
@@ -434,7 +433,7 @@ class InstructorsService {
       FROM works w
       JOIN course_bibliography cb ON w.id = cb.work_id
       JOIN course_instructors ci ON cb.course_id = ci.course_id
-      ${year_from || year_to ? 'LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id)' : ''}
+      ${year_from || year_to ? latestPublicationJoin('pub', 'LEFT') : ''}
       WHERE ci.canonical_person_id = ?
       ${reading_type ? 'AND cb.reading_type = ?' : ''}
       ${year_from ? 'AND pub.year >= ?' : ''}

@@ -8,7 +8,7 @@ const {
   toOptionalInteger
 } = require('../dto/helpers');
 const { formatPublicationEntry } = require('../dto/publication.dto');
-const { withTimeout } = require('../utils/db');
+const { withTimeout, latestPublicationJoin } = require('../utils/db');
 const { hydrateAuthorsForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
@@ -526,9 +526,7 @@ class WorksService {
         w.id AS id,
         ${PUBLICATION_LIST_COLUMNS}
       FROM works w
-      INNER JOIN publications p ON p.id = (
-        SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-      )
+      ${latestPublicationJoin('p', 'INNER')}
       LEFT JOIN venues v ON v.id = p.venue_id
       LEFT JOIN organizations publisher ON publisher.id = p.publisher_id
       WHERE w.id IN (${detailPlaceholders})
@@ -650,9 +648,7 @@ class WorksService {
         w.id AS id,
         ${PUBLICATION_LIST_COLUMNS}
       FROM works w
-      INNER JOIN publications p ON p.id = (
-        SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-      )
+      ${latestPublicationJoin('p', 'INNER')}
       LEFT JOIN venues v ON v.id = p.venue_id
       LEFT JOIN organizations publisher ON publisher.id = p.publisher_id
       WHERE w.id IN (${detailPlaceholders})
@@ -1215,9 +1211,7 @@ class WorksService {
           v.name AS venue_name,
           v.abbreviated_name AS venue_abbreviated_name
         FROM works w
-        LEFT JOIN publications p ON p.id = (
-          SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = w.id
-        )
+        ${latestPublicationJoin('p', 'LEFT')}
         LEFT JOIN venues v ON v.id = p.venue_id
         WHERE w.id IN (${placeholders})
       `, { replacements: allWorkIds, type: sequelize.QueryTypes.SELECT });
