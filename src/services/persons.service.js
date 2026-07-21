@@ -9,7 +9,7 @@ const searchEngine = require('./searchEngine.service');
 
 class PersonsService {
   async getPersonById(id) {
-    const cacheKey = `person:${id}`;
+    const cacheKey = `person:v2:${id}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -113,7 +113,7 @@ class PersonsService {
           ORDER BY works_count DESC, s.term ASC
           LIMIT 10
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT })
-          .then(([results]) => results)
+          .then((results) => results)
           .catch(() => []),
 
         sequelize.query(withTimeout(`
@@ -126,7 +126,7 @@ class PersonsService {
           ORDER BY shared_works_count DESC, p2.preferred_name ASC
           LIMIT 10
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT })
-          .then(([results]) => results)
+          .then((results) => results)
           .catch(() => [])
       ]);
 
@@ -660,7 +660,7 @@ class PersonsService {
     const { page, limit, offset } = pagination;
     const { verified } = options;
     const trimmed = (searchTerm || '').trim();
-    const cacheKey = `persons:search:v2:${trimmed}:${limit}:${offset}:${verified ?? 'all'}`;
+    const cacheKey = `persons:search:v3:${trimmed}:${limit}:${offset}:${verified ?? 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -672,7 +672,7 @@ class PersonsService {
       let people = [];
       if (mres.ids.length) {
         const rows = await sequelize.query(
-          'SELECT p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.is_verified FROM persons p WHERE p.id IN (:ids)',
+          'SELECT p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.is_verified, p.total_works, p.latest_publication_year FROM persons p WHERE p.id IN (:ids)',
           { replacements: { ids: mres.ids }, type: sequelize.QueryTypes.SELECT }
         );
         const byId = new Map(rows.map(r => [r.id, r]));
@@ -681,7 +681,10 @@ class PersonsService {
       const formattedResults = people.map(person => formatPersonListItem({
         ...person,
         name_signature: null,
-        metrics: { works_count: 0, latest_publication_year: null }
+        metrics: {
+          works_count: parseInt(person.total_works, 10) || 0,
+          latest_publication_year: person.latest_publication_year || null
+        }
       }));
       const result = {
         data: formattedResults,
@@ -714,7 +717,7 @@ class PersonsService {
     const [persons, countResult] = await Promise.all([
       sequelize.query(`
         SELECT p.id, p.preferred_name, p.given_names, p.family_name,
-               p.orcid, p.is_verified
+               p.orcid, p.is_verified, p.total_works, p.latest_publication_year
         FROM persons p
         ${whereClause}
         ORDER BY ${useFulltext ? 'CASE WHEN p.preferred_name = :ftSearch THEN 0 ELSE 1 END, ' : ''}p.preferred_name ASC
@@ -741,8 +744,8 @@ class PersonsService {
       ...person,
       name_signature: null,
       metrics: {
-        works_count: 0,
-        latest_publication_year: null
+        works_count: parseInt(person.total_works, 10) || 0,
+        latest_publication_year: person.latest_publication_year || null
       }
     }));
 

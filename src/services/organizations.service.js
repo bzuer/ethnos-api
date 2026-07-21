@@ -255,7 +255,7 @@ class OrganizationsService {
     const includeWorks = toBooleanFlag(options.include_works, true);
     const includeRelationships = toBooleanFlag(options.include_relationships, true);
 
-    const cacheKey = `organization:v5:${id}:${[
+    const cacheKey = `organization:v6:${id}:${[
       includeProduction ? 1 : 0,
       includeAuthors ? 1 : 0,
       includeWorks ? 1 : 0,
@@ -363,6 +363,29 @@ class OrganizationsService {
       const recentWorks = value(4, []);
       const fundingRow = value(5, [])[0] || {};
       const relationships = value(6, {});
+
+      if (recentWorks.length) {
+        const rwIds = recentWorks.map(w => w.id).filter(Number.isFinite);
+        if (rwIds.length) {
+          try {
+            const ph = rwIds.map(() => '?').join(',');
+            const authorRows = await sequelize.query(
+              withTimeout(`SELECT a.work_id, p.preferred_name
+                           FROM authorships a JOIN persons p ON p.id = a.person_id
+                           WHERE a.work_id IN (${ph})
+                           ORDER BY a.work_id, a.position`),
+              { replacements: rwIds, type: sequelize.QueryTypes.SELECT }
+            );
+            const namesByWork = Object.create(null);
+            for (const r of authorRows) {
+              (namesByWork[r.work_id] = namesByWork[r.work_id] || []).push(r.preferred_name);
+            }
+            for (const w of recentWorks) {
+              w.author_names = namesByWork[w.id] || [];
+            }
+          } catch (_) { /* leave authors unhydrated on error */ }
+        }
+      }
 
       const shaped = formatOrganizationDetails({
         ...organization,

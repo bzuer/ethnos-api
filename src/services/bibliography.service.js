@@ -123,7 +123,7 @@ class BibliographyService {
     }
 
     if (instructor_id) {
-      baseQuery += ' AND ci.canonical_person_id = ?';
+      baseQuery += ' AND EXISTS (SELECT 1 FROM course_instructors ci2 WHERE ci2.course_id = cb.course_id AND ci2.canonical_person_id = ?)';
       params.push(instructor_id);
     }
 

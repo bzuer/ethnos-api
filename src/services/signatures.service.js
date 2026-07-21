@@ -159,7 +159,7 @@ class SignaturesService {
 
   async getSignaturePersons(signatureId, options = {}) {
     const { limit = 20, offset = 0 } = options;
-    const cacheKey = `signature:${signatureId}:persons:${JSON.stringify(options)}`;
+    const cacheKey = `signature:${signatureId}:persons:v2:${JSON.stringify(options)}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -169,13 +169,17 @@ class SignaturesService {
       }
 
       const query = `
-        SELECT 
+        SELECT
           p.id,
           p.preferred_name,
           p.given_names,
           p.family_name,
           p.orcid,
-          p.is_verified
+          p.scopus_id,
+          p.lattes_id,
+          p.is_verified,
+          p.total_works AS works_count,
+          p.latest_publication_year
         FROM persons p
         WHERE p.signature_id = ?
         ORDER BY p.preferred_name ASC
