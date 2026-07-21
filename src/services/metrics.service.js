@@ -2,7 +2,7 @@ const { sequelize } = require('../config/database');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
-const { withTimeout } = require('../utils/db');
+const { withTimeout, isStatementTimeout } = require('../utils/db');
 const {
   formatAnnualStats,
   formatVenueRanking,
@@ -172,7 +172,7 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { country_code } = filters;
-    const cacheKey = `metrics:institutions:v2:${JSON.stringify({ page, limit, offset, country_code })}`;
+    const cacheKey = `metrics:institutions:v3:${JSON.stringify({ page, limit, offset, country_code })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -245,7 +245,21 @@ class MetricsService {
         };
       });
 
-      const total = institutions.length + parseInt(offset);
+      let total = institutions.length + parseInt(offset);
+      try {
+        const [countRow] = await sequelize.query(withTimeout(`
+          SELECT COUNT(*) AS total
+          FROM organizations o
+          WHERE o.publication_count > 0
+            ${countryFilter}
+        `), {
+          replacements: country_code ? { country_code } : {},
+          type: sequelize.QueryTypes.SELECT
+        });
+        if (countRow && countRow.total !== undefined) total = parseInt(countRow.total, 10);
+      } catch (error) {
+        logger.warn('Institution productivity count fallback used', { error: error.message });
+      }
       const formattedInstitutions = institutions.map((inst, index) => formatInstitutionProductivity(inst, index + 1));
 
       const result = {
@@ -361,7 +375,7 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { min_collaborations = 2 } = filters;
-    const cacheKey = `metrics:collaborations:v3:${JSON.stringify({ page, limit, offset, min_collaborations })}`;
+    const cacheKey = `metrics:collaborations:v4:${JSON.stringify({ page, limit, offset, min_collaborations })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -455,7 +469,28 @@ class MetricsService {
         latest_collaboration_year: p.latest_collaboration_year
       }));
 
-      const total = collaborations.length + parseInt(offset);
+      let total = collaborations.length + parseInt(offset);
+      try {
+        const [countRow] = await sequelize.query(withTimeout(`
+          SELECT COUNT(*) AS total FROM (
+            SELECT 1
+            FROM authorships a1
+            INNER JOIN authorships a2
+              ON a1.work_id = a2.work_id
+              AND a1.person_id < a2.person_id
+            WHERE a1.person_id IN (:topPersonIds)
+              AND a2.person_id IN (:topPersonIds)
+            GROUP BY LEAST(a1.person_id, a2.person_id), GREATEST(a1.person_id, a2.person_id)
+            HAVING COUNT(DISTINCT a1.work_id) >= :min_collaborations
+          ) pairs
+        `), {
+          replacements: { topPersonIds, min_collaborations: parseInt(min_collaborations) },
+          type: sequelize.QueryTypes.SELECT
+        });
+        if (countRow && countRow.total !== undefined) total = parseInt(countRow.total, 10);
+      } catch (error) {
+        logger.warn('Collaborations metrics count fallback used', { error: error.message });
+      }
       const formattedCollaborations = collaborations.map((collab, index) => formatCollaboration(collab, index + 1));
 
       const result = {
@@ -478,6 +513,21 @@ class MetricsService {
       logger.info(`Collaborations cached: ${collaborations.length} pairs`);
       return result;
     } catch (error) {
+      if (isStatementTimeout(error)) {
+        logger.warn('Collaboration metrics degraded (statement timeout)', { error: error.message });
+        return {
+          data: [],
+          pagination: createPagination(page, limit, 0),
+          summary: {
+            total_collaboration_pairs: 0,
+            strongest_collaboration_count: 0,
+            avg_collaboration_years: 0,
+            collaboration_strength_distribution: { very_strong: 0, strong: 0, moderate: 0, weak: 0 }
+          },
+          filters: { min_collaborations: parseInt(min_collaborations) },
+          meta: { degraded: true }
+        };
+      }
       logger.error('Error fetching collaborations:', error);
       throw error;
     }

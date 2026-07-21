@@ -21,4 +21,13 @@ function withTimeout(sql, ms = DEFAULT_MS) {
   return `SET STATEMENT max_statement_time=${secs} FOR ${sql}`;
 }
 
-module.exports = { withTimeout, DEFAULT_MS };
+function isStatementTimeout(error) {
+  if (!error) return false;
+  const src = error.original || error.parent || error;
+  const code = src.code || error.code;
+  const errno = src.errno || error.errno;
+  const msg = String(error.message || '');
+  return code === 'ER_STATEMENT_TIMEOUT' || errno === 1969 || /max_statement_time|execution was interrupted/i.test(msg);
+}
+
+module.exports = { withTimeout, DEFAULT_MS, isStatementTimeout };
