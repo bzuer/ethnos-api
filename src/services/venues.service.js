@@ -37,8 +37,8 @@ const BASE_SORT_FIELDS = {
   cited_by_count: 'COALESCE(v.cited_by_count, 0)',
   impact_factor: 'v.impact_factor',
   h_index: 'v.h_index',
-  score: 'v.total_score',
-  ranking: 'v.total_score',
+  score: 'COALESCE(v.total_score, 0)',
+  ranking: 'COALESCE(v.total_score, 0)',
   coverage_start_year: 'v.coverage_start_year',
   coverage_end_year: 'v.coverage_end_year',
   oldest: 'v.coverage_start_year',
@@ -450,47 +450,12 @@ class VenuesService {
   }
 
   async _searchVenuesMariaDB(query, { page, limit, offset, type }) {
-    const where = ['(v.name LIKE :term OR v.abbreviated_name LIKE :term OR v.issn LIKE :term OR v.eissn LIKE :term OR pub.name LIKE :term)'];
-    const replacements = { term: `%${query}%`, lim: limit, off: offset };
-
-    if (type) {
-      where.push('v.type = :type');
-      replacements.type = type;
-    }
-
-    const whereClause = `WHERE ${where.join(' AND ')}`;
-    const listSql = `
-      SELECT ${BASE_SELECT}
-      ${BASE_FROM}
-      ${whereClause}
-      ORDER BY COALESCE(v.total_score, 0) DESC, v.name ASC
-      LIMIT :lim OFFSET :off
-    `;
-    const countSql = `SELECT COUNT(*) AS total ${BASE_FROM} ${whereClause}`;
-
-    const [rows, countRows] = await Promise.all([
-      sequelize.query(withTimeout(listSql), { replacements, type: sequelize.QueryTypes.SELECT }),
-      sequelize.query(withTimeout(countSql), { replacements, type: sequelize.QueryTypes.SELECT })
-    ]);
-
-    const venueIds = rows.map(r => r.id).filter(Boolean);
-    const subjectsMap = await this._loadTopSubjects(venueIds, 5);
-
-    const venues = rows
-      .map(mapVenueRow)
-      .filter(Boolean)
-      .map((venue) => {
-        venue.subjects = subjectsMap.get(venue.id) || [];
-        return formatVenueListItem(venue);
-      });
-
-    const total = toInt(countRows?.[0]?.total, 0);
+    const result = await this._getVenuesMariaDB({ page, limit, offset, search: query, type });
     const meta = { source: 'venues', query };
     if (type) meta.filters = { type };
-
     return {
-      data: venues,
-      pagination: createPagination(page, limit, total),
+      data: result.data,
+      pagination: result.pagination,
       meta
     };
   }
