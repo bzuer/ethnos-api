@@ -159,7 +159,7 @@ class SubjectsService {
   }
 
   async getSubjectById(id) {
-    const cacheKey = `subject:${id}`;
+    const cacheKey = `subject:v2:${id}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -170,17 +170,14 @@ class SubjectsService {
         s.vocabulary,
         s.parent_id,
         s.created_at,
-        COUNT(DISTINCT ws.work_id) as works_count,
+        s.total_works as works_count,
         0 as courses_count,
         (SELECT COUNT(*) FROM subjects c WHERE c.parent_id = s.id) as children_count,
         parent.term as parent_term,
-        parent.vocabulary as parent_vocabulary,
-        AVG(ws.relevance_score) as avg_relevance_score
+        parent.vocabulary as parent_vocabulary
       FROM subjects s
-      LEFT JOIN work_subjects ws ON s.id = ws.subject_id
       LEFT JOIN subjects parent ON s.parent_id = parent.id
       WHERE s.id = ?
-      GROUP BY s.id, s.term, s.vocabulary, s.parent_id, s.created_at, parent.term, parent.vocabulary
     `;
 
     const [subjects] = await pool.query(withTimeout(query), [id]);
@@ -192,7 +189,7 @@ class SubjectsService {
   }
 
   async getSubjectChildren(id, filters = {}) {
-    const cacheKey = `subject:${id}:children:v2:${JSON.stringify(filters)}`;
+    const cacheKey = `subject:${id}:children:v3:${JSON.stringify(filters)}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -201,42 +198,32 @@ class SubjectsService {
     const off = parseInt(offset, 10);
 
     const [childRows] = await pool.execute(
-      `SELECT s.id, s.term, s.vocabulary, s.parent_id, s.created_at
+      `SELECT s.id, s.term, s.vocabulary, s.parent_id, s.created_at, s.total_works AS works_count
        FROM subjects s
        WHERE s.parent_id = ?
-       ORDER BY s.term ASC`,
+       ORDER BY s.total_works DESC, s.term ASC`,
       [id]
     );
     const total = childRows.length;
 
-    const worksMap = Object.create(null);
     const childrenMap = Object.create(null);
     if (childRows.length) {
       const ids = childRows.map(r => r.id);
       const ph = ids.map(() => '?').join(',');
-      const [wcRows, ccRows] = await Promise.all([
-        pool.query(
-          withTimeout(`SELECT subject_id, COUNT(DISTINCT work_id) AS works_count
-                       FROM work_subjects WHERE subject_id IN (${ph}) GROUP BY subject_id`),
-          ids
-        ),
-        pool.query(
-          `SELECT parent_id, COUNT(*) AS children_count
-           FROM subjects WHERE parent_id IN (${ph}) GROUP BY parent_id`,
-          ids
-        )
-      ]);
-      for (const r of wcRows[0]) worksMap[r.subject_id] = Number.parseInt(r.works_count, 10) || 0;
-      for (const r of ccRows[0]) childrenMap[r.parent_id] = Number.parseInt(r.children_count, 10) || 0;
+      const [ccRows] = await pool.query(
+        `SELECT parent_id, COUNT(*) AS children_count
+         FROM subjects WHERE parent_id IN (${ph}) GROUP BY parent_id`,
+        ids
+      );
+      for (const r of ccRows) childrenMap[r.parent_id] = Number.parseInt(r.children_count, 10) || 0;
     }
 
     const enriched = childRows.map(r => ({
       ...r,
-      works_count: worksMap[r.id] || 0,
+      works_count: Number.parseInt(r.works_count, 10) || 0,
       courses_count: 0,
       children_count: childrenMap[r.id] || 0
     }));
-    enriched.sort((a, b) => (b.works_count - a.works_count) || String(a.term).localeCompare(String(b.term)));
     const pageRows = enriched.slice(off, off + lim);
 
     const pagination = createPagination(Math.floor(off / Math.max(1, lim)) + 1, lim, total);
@@ -246,7 +233,7 @@ class SubjectsService {
   }
 
   async getSubjectHierarchy(id) {
-    const cacheKey = `subject:${id}:hierarchy`;
+    const cacheKey = `subject:${id}:hierarchy:v2`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -260,11 +247,9 @@ class SubjectsService {
           s.term,
           s.vocabulary,
           s.parent_id,
-          COUNT(DISTINCT ws.work_id) as works_count
+          s.total_works as works_count
         FROM subjects s
-        LEFT JOIN work_subjects ws ON s.id = ws.subject_id
         WHERE s.id = ?
-        GROUP BY s.id, s.term, s.vocabulary, s.parent_id
       `;
 
       const [subjects] = await pool.query(withTimeout(query), [currentId]);
@@ -479,7 +464,7 @@ class SubjectsService {
   }
 
   async getSubjectsStatistics() {
-    const cacheKey = 'subjects:statistics:v2';
+    const cacheKey = 'subjects:statistics:v3';
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -489,7 +474,9 @@ class SubjectsService {
         COUNT(CASE WHEN parent_id IS NULL THEN 1 END) as root_subjects,
         COUNT(CASE WHEN parent_id IS NOT NULL THEN 1 END) as child_subjects,
         COUNT(DISTINCT vocabulary) as vocabularies_count,
-        COUNT(CASE WHEN subject_type IS NOT NULL AND subject_type <> '' THEN 1 END) as typed_subjects
+        COUNT(CASE WHEN subject_type IS NOT NULL AND subject_type <> '' THEN 1 END) as typed_subjects,
+        COUNT(CASE WHEN total_works > 0 THEN 1 END) as subjects_with_works,
+        COALESCE(SUM(total_works), 0) as total_work_subject_relations
       FROM subjects
     `));
 
@@ -497,21 +484,46 @@ class SubjectsService {
       SELECT
         vocabulary,
         COUNT(*) as subject_count,
-        COUNT(CASE WHEN parent_id IS NULL THEN 1 END) as root_count
+        COUNT(CASE WHEN parent_id IS NULL THEN 1 END) as root_count,
+        COALESCE(SUM(total_works), 0) as works_count
       FROM subjects
       GROUP BY vocabulary
       ORDER BY subject_count DESC
     `));
 
+    const [topSubjects] = await pool.query(withTimeout(`
+      SELECT id, term, vocabulary, subject_type, total_works AS works_count
+      FROM subjects
+      WHERE total_works > 0
+      ORDER BY total_works DESC, term ASC
+      LIMIT 20
+    `));
+
+    const base = stats[0];
     const result = {
-      ...stats[0],
-      subjects_with_works: null,
-      total_work_subject_relations: null,
-      vocabulary_distribution: vocabularyDist,
-      top_subjects: [],
+      total_subjects: Number(base.total_subjects) || 0,
+      root_subjects: Number(base.root_subjects) || 0,
+      child_subjects: Number(base.child_subjects) || 0,
+      vocabularies_count: Number(base.vocabularies_count) || 0,
+      typed_subjects: Number(base.typed_subjects) || 0,
+      subjects_with_works: Number(base.subjects_with_works) || 0,
+      total_work_subject_relations: Number(base.total_work_subject_relations) || 0,
+      vocabulary_distribution: vocabularyDist.map(v => ({
+        vocabulary: v.vocabulary,
+        subject_count: Number(v.subject_count) || 0,
+        root_count: Number(v.root_count) || 0,
+        works_count: Number(v.works_count) || 0
+      })),
+      top_subjects: topSubjects.map(s => ({
+        id: Number(s.id),
+        term: s.term || null,
+        vocabulary: s.vocabulary || null,
+        subject_type: s.subject_type || null,
+        works_count: Number(s.works_count) || 0
+      })),
       meta: {
-        work_linkage_available: false,
-        note: 'Work-linkage statistics (subjects_with_works, total_work_subject_relations, per-vocabulary and top-subject works_count) require an operator-maintained subjects.total_works aggregate; the request-time 15.8M-row work_subjects join exceeds the statement budget.'
+        work_linkage_available: true,
+        source: 'subjects.total_works (operator-maintained denormalized aggregate)'
       }
     };
 
