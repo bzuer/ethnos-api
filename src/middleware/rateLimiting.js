@@ -31,8 +31,12 @@ const shouldSkipRateLimit = (req) => (
   || isLocalRequest(req)
 );
 
+const FORWARDING_HEADERS = ['x-forwarded-for', 'cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'forwarded'];
+
 const isLocalRequest = (req) => {
-  if (req.headers['x-forwarded-for']) return false;
+  for (const header of FORWARDING_HEADERS) {
+    if (req.headers[header]) return false;
+  }
   const ip = (req.socket && req.socket.remoteAddress)
     || (req.connection && req.connection.remoteAddress)
     || '';
