@@ -72,6 +72,12 @@ class SubjectsController {
       }
 
       const hierarchy = await subjectsService.getSubjectHierarchy(req.params.id);
+      if (!hierarchy) {
+        return res.fail('Subject not found', {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND
+        });
+      }
       return res.success(hierarchy);
     } catch (error) {
       handleError(res, error);

@@ -108,6 +108,8 @@ class SubjectsService {
       currentId = subject.parent_id;
     }
 
+    if (hierarchy.length === 0) return null;
+
     await cache.set(cacheKey, hierarchy, 3600);
     return hierarchy;
   }

@@ -754,6 +754,12 @@ class VenuesService {
       return cached;
     }
 
+    const [venueExists] = await sequelize.query(
+      'SELECT id FROM venues WHERE id = :venueId LIMIT 1',
+      { replacements: { venueId: parseInt(venueId, 10) }, type: sequelize.QueryTypes.SELECT }
+    );
+    if (!venueExists) return null;
+
     const where = ['p.venue_id = :venueId'];
     const replacements = { venueId: parseInt(venueId, 10), lim: parseInt(limit, 10), off: parseInt(offset, 10) };
     if (year) {

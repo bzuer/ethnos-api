@@ -103,7 +103,14 @@ class CoursesController {
       };
 
       const result = await coursesService.getCourseInstructors(req.params.id, filters);
-      
+
+      if (!result) {
+        return res.fail(`Course not found with ID ${req.params.id}`, {
+          statusCode: 404,
+          code: ERROR_CODES.COURSE_NOT_FOUND
+        });
+      }
+
       return res.success(result.data, {
         pagination: result.pagination,
         meta: {

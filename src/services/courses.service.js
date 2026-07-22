@@ -270,6 +270,9 @@ class CoursesService {
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
+    const [courseRows] = await pool.execute('SELECT id FROM courses WHERE id = ? LIMIT 1', [courseId]);
+    if (!courseRows.length) return null;
+
     const { role, limit = 20, offset = 0 } = filters;
 
     let query = `

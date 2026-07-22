@@ -486,6 +486,12 @@ class InstructorsService {
     const [personInfo] = await pool.execute(personInfoQuery, [personId]);
     if (!personInfo.length) return null;
 
+    const [instructorMembership] = await pool.execute(
+      'SELECT 1 FROM course_instructors WHERE canonical_person_id = ? LIMIT 1',
+      [personId]
+    );
+    if (!instructorMembership.length) return null;
+
     const teachingStatsQuery = `
       SELECT 
         COUNT(DISTINCT ci.course_id) as courses_taught,

@@ -81,6 +81,11 @@ class CitationsService {
       }
 
       const workIdInt = parseInt(workId);
+      const [workExists] = await sequelize.query(
+        'SELECT id FROM works WHERE id = ? LIMIT 1',
+        { replacements: [workIdInt], type: sequelize.QueryTypes.SELECT }
+      );
+      if (!workExists) return null;
       const [targetDoiRows] = await Promise.all([
         sequelize.query(
           `SELECT doi
@@ -177,6 +182,12 @@ class CitationsService {
         logger.info(`References for work ${workId} retrieved from cache`);
         return cached;
       }
+
+      const [workExists] = await sequelize.query(
+        'SELECT id FROM works WHERE id = ? LIMIT 1',
+        { replacements: [parseInt(workId)], type: sequelize.QueryTypes.SELECT }
+      );
+      if (!workExists) return null;
 
       const referencesRows = await sequelize.query(withTimeout(`
         SELECT
@@ -417,6 +428,11 @@ class CitationsService {
       }
 
       const centralId = parseInt(workId);
+      const [workExists] = await sequelize.query(
+        'SELECT id FROM works WHERE id = ? LIMIT 1',
+        { replacements: [centralId], type: sequelize.QueryTypes.SELECT }
+      );
+      if (!workExists) return null;
       const maxDepth = Math.max(1, Math.min(parseInt(depth) || 1, 3));
       const EDGE_CAP = 100;
       const NODE_CAP = 120;

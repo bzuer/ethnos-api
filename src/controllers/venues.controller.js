@@ -211,6 +211,14 @@ class VenuesController {
         sort_order: req.query.sort_order ?? req.query.sortOrder
       });
 
+      if (!result) {
+        return res.fail(`Venue with ID ${id} not found`, {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND,
+          meta: { request: { method: req.method, path: req.originalUrl } }
+        });
+      }
+
       const meta = {};
       if (year !== null) {
         meta.filters = { year };
