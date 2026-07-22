@@ -11,43 +11,43 @@ const validateWorkId = [
 
 const validateWorksQuery = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer'),
   
   query('search')
-    .optional(),
+    .optional({ values: 'falsy' }),
   
   query('type')
-    .optional(),
+    .optional({ values: 'falsy' }),
 
   query('language')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 5 })
     .withMessage('Language must be a valid language code'),
 
   query('open_access')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['1', '0', 'true', 'false'])
     .withMessage('open_access must be boolean-like (1/0/true/false)'),
   
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1000 })
     .withMessage('Year from must be a valid year'),
   
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1000 })
     .withMessage('Year to must be a valid year'),
 

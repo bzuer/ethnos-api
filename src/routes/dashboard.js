@@ -15,7 +15,7 @@ router.use(requireInternalAccessKey);
 
 const validatePerformanceParams = [
   query('hours')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 168 })
     .withMessage('Hours must be between 1 and 168')
     .toInt()
@@ -23,7 +23,7 @@ const validatePerformanceParams = [
 
 const validateTrendParams = [
   query('days')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 365 })
     .withMessage('Days must be between 1 and 365')
     .toInt()

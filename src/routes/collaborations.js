@@ -11,66 +11,66 @@ const validatePersonId = [
 
 const validateCollaborationFilters = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer'),
     
   query('min_collaborations')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 50 })
     .withMessage('Minimum collaborations must be between 1 and 50'),
     
   query('sort_by')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['collaboration_count', 'latest_collaboration_year', 'avg_citations_together'])
     .withMessage('Sort by must be one of: collaboration_count, latest_collaboration_year, avg_citations_together')
 ];
 
 const validateTopCollaborations = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
 
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer'),
     
   query('min_collaborations')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 50 })
     .withMessage('Minimum collaborations must be between 1 and 50'),
     
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year from must be a valid year'),
     
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year to must be a valid year')
 ];
 
 const validateNetworkDepth = [
   query('depth')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 3 })
     .withMessage('Network depth must be between 1 and 3')
 ];

@@ -17,26 +17,26 @@ const validateInstructorId = [
 const validateInstructorList = [
   ...commonValidations.pagination,
   query('role')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 100 })
     .withMessage('Role must be between 1 and 100 characters'),
   query('program_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Program ID must be a positive integer')
     .toInt(),
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year from must be valid')
     .toInt(),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year to must be valid')
     .toInt(),
   query('search')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 200 })
     .withMessage('Search must be between 2 and 200 characters')
 ];
@@ -45,26 +45,26 @@ const validateInstructorCourses = [
   ...validateInstructorId,
   ...commonValidations.pagination,
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year from must be valid')
     .toInt(),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year to must be valid')
     .toInt(),
   query('program_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Program ID must be a positive integer')
     .toInt(),
   query('semester')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 20 })
     .withMessage('Semester must be between 1 and 20 characters'),
   query('role')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 100 })
     .withMessage('Role must be between 1 and 100 characters')
 ];
@@ -73,7 +73,7 @@ const validateInstructorSubjects = [
   ...validateInstructorId,
   ...commonValidations.pagination,
   query('vocabulary')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 100 })
     .withMessage('Vocabulary must be between 2 and 100 characters')
 ];
@@ -82,16 +82,16 @@ const validateInstructorBibliography = [
   ...validateInstructorId,
   ...commonValidations.pagination,
   query('reading_type')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 50 })
     .withMessage('Reading type must be between 1 and 50 characters'),
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year from must be valid')
     .toInt(),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year to must be valid')
     .toInt()

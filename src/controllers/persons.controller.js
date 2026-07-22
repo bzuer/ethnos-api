@@ -55,7 +55,7 @@ class PersonsController {
         affiliation: req.query.affiliation,
         country: req.query.country,
         signature: req.query.signature,
-        verified: req.query.verified
+        verified: req.query.verified || undefined
       };
 
       const result = await personsService.getPersons(filters);

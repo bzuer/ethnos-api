@@ -127,15 +127,15 @@ router.get(
       .isLength({ min: 1, max: 100 })
       .withMessage('Search query is required and must be between 1 and 100 characters'),
     query('exact')
-      .optional()
+      .optional({ values: 'falsy' })
       .isBoolean()
       .withMessage('Exact parameter must be a boolean'),
     query('limit')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100'),
     query('offset')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 0 })
       .withMessage('Offset must be a non-negative integer')
   ],
@@ -384,11 +384,11 @@ const validateWorksQuery = [
     .isInt({ min: 1 })
     .withMessage('Signature ID must be a positive integer'),
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100')
 ];
@@ -402,11 +402,11 @@ router.get(
       .isInt({ min: 1 })
       .withMessage('Signature ID must be a positive integer'),
     query('limit')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100'),
     query('offset')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 0 })
       .withMessage('Offset must be a non-negative integer')
   ],

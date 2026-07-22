@@ -8,15 +8,15 @@ router.use(rateLimit.generalLimiter);
 
 const validatePagination = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer')
 ];
@@ -30,23 +30,23 @@ const validateSubjectId = [
 const validateSubjectWorks = [
   ...validatePagination,
   query('min_relevance')
-    .optional()
+    .optional({ values: 'falsy' })
     .isFloat({ min: 0 })
     .withMessage('min_relevance must be a positive number'),
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_from must be a valid year'),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_to must be a valid year'),
   query('document_type')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 50 })
     .withMessage('document_type must be between 1 and 50 characters'),
   query('language')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 10 })
     .withMessage('language must be between 2 and 10 characters')
 ];
@@ -54,19 +54,19 @@ const validateSubjectWorks = [
 const validateSubjectCourses = [
   ...validatePagination,
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_from must be a valid year'),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_to must be a valid year'),
   query('program_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('program_id must be a positive integer'),
   query('reading_type')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 50 })
     .withMessage('reading_type must be between 1 and 50 characters')
 ];

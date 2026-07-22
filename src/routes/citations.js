@@ -11,31 +11,31 @@ const validateWorkId = [
 
 const validatePagination = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer')
 ];
 
 const validateCitationType = [
   query('type')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['all', 'POSITIVE', 'NEUTRAL', 'NEGATIVE', 'SELF'])
     .withMessage('Type must be one of: all, POSITIVE, NEUTRAL, NEGATIVE, SELF')
 ];
 
 const validateNetworkDepth = [
   query('depth')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 3 })
     .withMessage('Depth must be between 1 and 3')
 ];

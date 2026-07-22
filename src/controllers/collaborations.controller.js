@@ -23,8 +23,8 @@ class CollaborationsController {
       const filters = {
         page: pagination.page,
         limit: pagination.limit,
-        min_collaborations: req.query.min_collaborations,
-        sort_by: req.query.sort_by
+        min_collaborations: req.query.min_collaborations || undefined,
+        sort_by: req.query.sort_by || undefined
       };
 
       const startTime = Date.now();
@@ -126,9 +126,9 @@ class CollaborationsController {
       const filters = {
         limit: pagination.limit,
         offset: pagination.offset,
-        min_collaborations: req.query.min_collaborations,
-        year_from: req.query.year_from,
-        year_to: req.query.year_to
+        min_collaborations: req.query.min_collaborations || undefined,
+        year_from: req.query.year_from || undefined,
+        year_to: req.query.year_to || undefined
       };
 
       const startTime = Date.now();

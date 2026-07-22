@@ -12,46 +12,46 @@ const validatePersonId = [
 
 const validatePersonsQuery = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer'),
   
   query('search')
-    .optional()
+    .optional({ values: 'falsy' })
     .trim()
     .isLength({ min: 2, max: 255 })
     .withMessage('Search term must be between 2 and 255 characters'),
   
   query('affiliation')
-    .optional()
+    .optional({ values: 'falsy' })
     .trim()
     .isLength({ min: 2, max: 255 })
     .withMessage('Affiliation must be between 2 and 255 characters'),
   
   query('country')
-    .optional()
+    .optional({ values: 'falsy' })
     .trim()
     .isLength({ min: 2, max: 100 })
     .withMessage('Country must be between 2 and 100 characters'),
 
   query('signature')
-    .optional()
+    .optional({ values: 'falsy' })
     .trim()
     .isLength({ min: 2, max: 100 })
     .withMessage('Signature must be between 2 and 100 characters'),
 
   query('verified')
-    .optional()
+    .optional({ values: 'falsy' })
     .isIn(['true', 'false'])
     .withMessage('Verified must be true or false')
 ];
@@ -318,17 +318,17 @@ router.get('/:id', validatePersonId, personsController.getPerson);
  */
 const validateSignaturesQuery = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer')
 ];
@@ -521,22 +521,22 @@ const validateSignaturesQuery = [
  */
 const validateWorksQuery = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
 
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer'),
   
   query('role')
-    .optional()
+    .optional({ values: 'falsy' })
     .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
     .isIn(['AUTHOR', 'EDITOR'])
     .withMessage('Role must be AUTHOR or EDITOR'),

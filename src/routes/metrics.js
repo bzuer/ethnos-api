@@ -5,15 +5,15 @@ const metricsController = require('../controllers/metrics.controller');
 
 const validateLimit = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer')
 ];
@@ -22,12 +22,12 @@ const validateAnnualStats = [
   ...validateLimit,
   
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year from must be a valid year'),
   
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
     .withMessage('Year to must be a valid year')
 ];
@@ -36,7 +36,7 @@ const validateInstitutionProductivity = [
   ...validateLimit,
   
   query('country_code')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 2 })
     .withMessage('Country code must be 2 characters')
 ];
@@ -45,7 +45,7 @@ const validatePersonProduction = [
   ...validateLimit,
   
   query('organization_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Organization ID must be a positive integer')
 ];
@@ -54,7 +54,7 @@ const validateCollaborations = [
   ...validateLimit,
   
   query('min_collaborations')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 50 })
     .withMessage('Minimum collaborations must be between 1 and 50')
 ];

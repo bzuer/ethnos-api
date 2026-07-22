@@ -133,27 +133,27 @@ router.get(
   [
     ...commonValidations.pagination,
     query('type')
-      .optional()
+      .optional({ values: 'falsy' })
       .isIn(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES'])
       .withMessage('Type must be one of: JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES'),
     query('search')
-      .optional()
+      .optional({ values: 'falsy' })
       .isLength({ min: 1, max: 200 })
       .withMessage('Search term must be between 1 and 200 characters'),
     query('sortBy')
-      .optional()
+      .optional({ values: 'falsy' })
       .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count', 'coverage_start_year', 'coverage_end_year', 'oldest', 'newest'])
       .withMessage('Sort field must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest'),
     query('sort_by')
-      .optional()
+      .optional({ values: 'falsy' })
       .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count', 'coverage_start_year', 'coverage_end_year', 'oldest', 'newest'])
       .withMessage('sort_by must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest'),
     query('sortOrder')
-      .optional()
+      .optional({ values: 'falsy' })
       .isIn(['ASC', 'DESC'])
       .withMessage('Sort order must be ASC or DESC'),
     query('sort_order')
-      .optional()
+      .optional({ values: 'falsy' })
       .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
       .isIn(['ASC', 'DESC'])
       .withMessage('sort_order must be ASC or DESC'),
@@ -186,7 +186,7 @@ router.get(
       .isInt({ min: 0 })
       .withMessage('active_in_year must be a non-negative integer'),
     query('min_id')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 1 })
       .withMessage('min_id must be a positive integer')
       .toInt()
@@ -318,15 +318,15 @@ router.get(
       .isLength({ min: 1, max: 200 })
       .withMessage('Search query is required and must be between 1 and 200 characters'),
     query('type')
-      .optional()
+      .optional({ values: 'falsy' })
       .isIn(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES'])
       .withMessage('Type must be one of: JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES'),
     query('limit')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100'),
     query('offset')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 0 })
       .withMessage('Offset must be a non-negative integer')
   ],
@@ -395,22 +395,22 @@ router.get(
       .isInt({ min: 1 })
       .withMessage('Venue ID must be a positive integer'),
     query('include_subjects')
-      .optional()
+      .optional({ values: 'falsy' })
       .isBoolean()
       .withMessage('include_subjects must be a boolean')
       .toBoolean(),
     query('include_yearly')
-      .optional()
+      .optional({ values: 'falsy' })
       .isBoolean()
       .withMessage('include_yearly must be a boolean')
       .toBoolean(),
     query('include_top_authors')
-      .optional()
+      .optional({ values: 'falsy' })
       .isBoolean()
       .withMessage('include_top_authors must be a boolean')
       .toBoolean(),
     query('include_recent_works')
-      .optional()
+      .optional({ values: 'falsy' })
       .isBoolean()
       .withMessage('include_recent_works must be a boolean')
       .toBoolean()
@@ -525,15 +525,15 @@ router.get(
       .isInt({ min: 1 })
       .withMessage('Venue ID must be a positive integer'),
     query('limit')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 1, max: 100 })
       .withMessage('Limit must be between 1 and 100'),
     query('offset')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 0 })
       .withMessage('Offset must be a non-negative integer'),
     query('year')
-      .optional()
+      .optional({ values: 'falsy' })
       .isInt({ min: 1900 })
       .withMessage('Year must be equal to or greater than 1900'),
     query('year_from')

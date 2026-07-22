@@ -181,7 +181,8 @@ class SignaturesService {
   }
 
   async getSignatureWorks(signatureId, options = {}) {
-    const { page = 1, limit = 20 } = options;
+    const page = Math.max(1, parseInt(options.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(options.limit, 10) || 20));
     const offset = (page - 1) * limit;
     
     const cacheKey = `signature:${signatureId}:works:v2:${JSON.stringify(options)}`;

@@ -48,21 +48,21 @@ router.use(rateLimit.generalLimiter);
 
 const validateCoursesList = [
   query('search')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 100 })
     .withMessage('Search must be between 1 and 100 characters'),
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer')
     .toInt(),
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100')
     .toInt(),
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be non-negative')
     .toInt()

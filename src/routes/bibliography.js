@@ -8,15 +8,15 @@ router.use(rateLimit.generalLimiter);
 
 const validatePagination = [
   query('page')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('Page must be a positive integer'),
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('Limit must be between 1 and 100'),
   query('offset')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer')
 ];
@@ -24,66 +24,66 @@ const validatePagination = [
 const validateBibliographyList = [
   ...validatePagination,
   query('course_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('course_id must be a positive integer'),
   query('work_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('work_id must be a positive integer'),
   query('instructor_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('instructor_id must be a positive integer'),
   query('reading_type')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 50 })
     .withMessage('reading_type must be between 1 and 50 characters'),
   query('week_number')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('week_number must be a positive integer'),
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_from must be a valid year'),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_to must be a valid year'),
   query('program_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('program_id must be a positive integer'),
   query('search')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 255 })
     .withMessage('search must be between 1 and 255 characters'),
   query('light')
-    .optional()
+    .optional({ values: 'falsy' })
     .isBoolean()
     .withMessage('light must be boolean')
 ];
 
 const validateBibliographyAnalysis = [
   query('year_from')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_from must be a valid year'),
   query('year_to')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1900, max: 2030 })
     .withMessage('year_to must be a valid year'),
   query('program_id')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1 })
     .withMessage('program_id must be a positive integer'),
   query('reading_type')
-    .optional()
+    .optional({ values: 'falsy' })
     .isLength({ min: 1, max: 50 })
     .withMessage('reading_type must be between 1 and 50 characters'),
   query('limit')
-    .optional()
+    .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 100 })
     .withMessage('limit must be between 1 and 100')
 ];
