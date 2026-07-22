@@ -7,7 +7,7 @@ const {
   formatPublicationDetails
 } = require('../dto/publication.dto');
 const { normalizeType, toOptionalInteger } = require('../dto/helpers');
-const { withTimeout, latestPublicationJoin } = require('../utils/db');
+const { withTimeout, latestPublicationJoin, isStatementTimeout } = require('../utils/db');
 const { hydrateAuthorsForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
@@ -531,18 +531,42 @@ class PublicationsService {
       }
     }
 
-    const rows = await sequelize.query(`
+    const idSelectionNeedsWorks = /\bw\./.test(whereClause) || /\bw\./.test(orderClause);
+    let idRows = [];
+    let pageDegraded = false;
+    try {
+      idRows = await sequelize.query(withTimeout(`
+        SELECT p.id
+        FROM publications p
+        ${idSelectionNeedsWorks ? 'INNER JOIN works w ON w.id = p.work_id' : ''}
+        ${whereClause}
+        ORDER BY ${orderClause}
+        LIMIT ? OFFSET ?
+      `), {
+        replacements: [...params, limit, offset],
+        type: sequelize.QueryTypes.SELECT
+      });
+    } catch (pageError) {
+      if (!isStatementTimeout(pageError)) throw pageError;
+      logger.warn('Publications list page query exceeded budget; serving empty page', {
+        error: pageError.message, sort: orderClause
+      });
+      pageDegraded = true;
+      totalIsExact = false;
+    }
+
+    const pageIds = idRows.map(r => parseInt(r.id, 10)).filter(Number.isFinite);
+    const rows = pageIds.length === 0 ? [] : await sequelize.query(`
       SELECT
         ${PUBLICATION_BASE_COLUMNS}
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
       LEFT JOIN venues v ON v.id = p.venue_id
       LEFT JOIN organizations publisher ON publisher.id = p.publisher_id
-      ${whereClause}
+      WHERE p.id IN (${pageIds.map(() => '?').join(',')})
       ORDER BY ${orderClause}
-      LIMIT ? OFFSET ?
     `, {
-      replacements: [...params, limit, offset],
+      replacements: pageIds,
       type: sequelize.QueryTypes.SELECT
     });
 
@@ -571,6 +595,7 @@ class PublicationsService {
       meta: {
         engine: (searchTerm || authorFilter || subjectFilter) ? 'Manticore' : 'MariaDB',
         pagination_total_exact: totalIsExact,
+        ...(pageDegraded ? { page_degraded: true, note: 'This sort exceeded the statement budget; try a narrower filter or a different sort.' } : {}),
         ...(ftCapped ? { fulltext_truncated: true, fulltext_work_cap: parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10) } : {}),
         elapsed_ms: Date.now() - t0
       }
