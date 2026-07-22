@@ -5,6 +5,7 @@ const formatInstructorListItem = (instructor) => {
   if (!instructor) return null;
 
   return {
+    id: instructor.person_id || instructor.id,
     person_id: instructor.person_id || instructor.id,
     preferred_name: instructor.preferred_name || null,
     given_names: instructor.given_names || null,

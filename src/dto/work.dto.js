@@ -69,7 +69,8 @@ function formatWorkListItem(row = {}) {
     references_count: referencesCount !== null ? referencesCount : 0,
     added_to_database: row.added_to_database || row.created_at || null,
     data_source: row.data_source || null,
-    search_engine: row.search_engine || null
+    search_engine: row.search_engine || null,
+    _links: { self: toOptionalInteger(row.id) === null ? null : `/works/${toOptionalInteger(row.id)}` }
   };
 }
 
@@ -293,6 +294,7 @@ function formatWorkDetails(work = {}) {
 
   return {
     id: toOptionalInteger(work.id),
+    _links: { self: toOptionalInteger(work.id) === null ? null : `/works/${toOptionalInteger(work.id)}` },
     title: work.title || null,
     subtitle: work.subtitle || null,
     abstract: work.abstract || null,

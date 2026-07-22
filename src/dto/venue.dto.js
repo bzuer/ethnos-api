@@ -109,6 +109,7 @@ const buildSubjects = (subjects = [], options = {}) => {
 
 const baseVenue = (venue = {}) => ({
   id: toNullableInt(venue.id),
+  _links: { self: toNullableInt(venue.id) === null ? null : `/venues/${toNullableInt(venue.id)}` },
   name: venue.name || null,
   abbreviated_name: venue.abbreviated_name || null,
   type: venue.type || null,

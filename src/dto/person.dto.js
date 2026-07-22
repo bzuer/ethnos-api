@@ -106,6 +106,7 @@ function formatMetrics(input = {}) {
 function formatPersonListItem(row = {}) {
   return {
     id: toOptionalInteger(row.id),
+    _links: { self: toOptionalInteger(row.id) === null ? null : `/persons/${toOptionalInteger(row.id)}` },
     preferred_name: row.preferred_name || null,
     given_names: row.given_names || null,
     family_name: row.family_name || null,
@@ -246,6 +247,7 @@ function formatPersonDetails(person = {}) {
 
   return {
     id: toOptionalInteger(person.id),
+    _links: { self: toOptionalInteger(person.id) === null ? null : `/persons/${toOptionalInteger(person.id)}` },
     preferred_name: person.preferred_name || null,
     given_names: person.given_names || null,
     family_name: person.family_name || null,
