@@ -32,7 +32,10 @@ const shouldSkipRateLimit = (req) => (
 );
 
 const isLocalRequest = (req) => {
-  const ip = req.ip || '';
+  if (req.headers['x-forwarded-for']) return false;
+  const ip = (req.socket && req.socket.remoteAddress)
+    || (req.connection && req.connection.remoteAddress)
+    || '';
   if (!ip) return false;
   if (ip === '::1' || ip === '127.0.0.1') return true;
   if (ip.startsWith('::ffff:')) {
@@ -104,9 +107,17 @@ const honeypotMiddleware = (req, res, next) => {
       path: req.path,
       timestamp: new Date().toISOString()
     });
-    return res.fail('Not found', {
-      statusCode: 404,
-      code: ERROR_CODES.NOT_FOUND
+    if (typeof res.fail === 'function') {
+      return res.fail('Not found', {
+        statusCode: 404,
+        code: ERROR_CODES.NOT_FOUND
+      });
+    }
+    return res.status(404).json({
+      status: 'error',
+      message: 'Not found',
+      code: ERROR_CODES.NOT_FOUND,
+      timestamp: new Date().toISOString()
     });
   }
   next();

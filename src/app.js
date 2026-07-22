@@ -131,6 +131,23 @@ app.use('/', speedLimiter);
 
 app.use(compression());
 
+const SENSITIVE_QUERY_KEYS = new Set(['access_key', 'accesskey', 'api_key']);
+const redactUrl = (url) => {
+  if (!url) return url;
+  const qi = url.indexOf('?');
+  if (qi === -1) return url;
+  const params = new URLSearchParams(url.slice(qi + 1));
+  let changed = false;
+  for (const key of Array.from(params.keys())) {
+    if (SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+      params.set(key, 'REDACTED');
+      changed = true;
+    }
+  }
+  return changed ? `${url.slice(0, qi)}?${params.toString()}` : url;
+};
+morgan.token('url', (req) => redactUrl(req.originalUrl || req.url));
+
 app.use(morgan('combined', {
   stream: {
     write: (message) => logger.info(message.trim())

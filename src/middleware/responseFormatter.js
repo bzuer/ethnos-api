@@ -21,6 +21,7 @@ const responseFormatter = (req, res, next) => {
   const originalJson = res.json.bind(res);
 
   res.success = (data = null, options = {}) => {
+    if (res.headersSent) return undefined;
     const {
       statusCode = 200,
       pagination,
@@ -48,6 +49,7 @@ const responseFormatter = (req, res, next) => {
   };
 
   res.fail = (message, options = {}) => {
+    if (res.headersSent) return undefined;
     const {
       statusCode = 400,
       code,
@@ -93,6 +95,7 @@ const responseFormatter = (req, res, next) => {
   };
 
   res.error = (err, options = {}) => {
+    if (res.headersSent) return undefined;
     if (!err) {
       return res.fail('Unexpected error', {
         statusCode: 500,
@@ -131,6 +134,7 @@ const responseFormatter = (req, res, next) => {
   };
 
   res.json = (body) => {
+    if (res.headersSent) return undefined;
     const statusCode = res.statusCode || 200;
 
     if (body && body.__skipEnvelope) {
