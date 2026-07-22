@@ -45,13 +45,15 @@ function formatSubjectListItem(row = {}) {
     works_count: toOptionalInteger(row.works_count) || 0,
     courses_count: toOptionalInteger(row.courses_count) || 0,
     children_count: toOptionalInteger(row.children_count) || 0,
-    parent_term: row.parent_term || null
+    parent_term: row.parent_term || null,
+    _links: { self: toOptionalInteger(row.id) === null ? null : `/subjects/${toOptionalInteger(row.id)}` }
   };
 }
 
 function formatSubjectDetails(row = {}) {
   return {
     id: toOptionalInteger(row.id),
+    _links: { self: toOptionalInteger(row.id) === null ? null : `/subjects/${toOptionalInteger(row.id)}` },
     term: row.term || null,
     vocabulary: row.vocabulary || null,
     parent_id: row.parent_id === null ? null : toOptionalInteger(row.parent_id),

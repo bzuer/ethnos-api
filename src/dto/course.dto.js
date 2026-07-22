@@ -6,6 +6,7 @@ const formatCourseListItem = (course) => {
 
   return {
     id: course.id,
+    _links: { self: course.id ? `/courses/${course.id}` : null },
     code: course.code || null,
     name: course.name || null,
     credits: course.credits || null,

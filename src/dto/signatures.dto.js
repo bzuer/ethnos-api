@@ -40,7 +40,8 @@ function formatSignatureListItem(row = {}) {
     id: toOptionalInteger(row.id),
     signature: row.signature || null,
     created_at: row.created_at || null,
-    persons_count: toOptionalInteger(row.persons_count)
+    persons_count: toOptionalInteger(row.persons_count),
+    _links: { self: toOptionalInteger(row.id) === null ? null : `/signatures/${toOptionalInteger(row.id)}` }
   };
 }
 

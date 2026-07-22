@@ -554,9 +554,9 @@ const advancedSearch = async (req, res, next) => {
         query,
         search_type: 'fulltext_faceted',
         filters_applied: Object.keys(filters).length,
+        engine: result.meta?.performance?.engine || (query ? 'Manticore' : 'MariaDB'),
         pagination_total_exact: result.meta?.pagination_total_exact ?? true,
         performance: {
-          engine: 'MariaDB',
           controller_time_ms: controllerTime
         }
       }
@@ -740,9 +740,7 @@ router.get('/autocomplete', async (req, res, next) => {
         query: trimmedQuery,
         type,
         limit: parsedLimit,
-        performance: {
-          engine: 'MariaDB'
-        }
+        engine: 'Manticore'
       }
     });
   } catch (error) {
