@@ -80,10 +80,10 @@ const resolvePublicationsOrderClause = (sortBy, sortOrder) => {
     case 'cited_by_count':
     case 'citation_count':
     case 'citations':
-      return `w.citation_count ${dir}, p.year DESC, p.id DESC`;
+      return `p.citation_count ${dir}, p.id ${dir}`;
     case 'references_count':
     case 'reference_count':
-      return `w.reference_count ${dir}, p.year DESC, p.id DESC`;
+      return `p.reference_count ${dir}, p.id ${dir}`;
     case 'publication_year':
     case 'year':
       return `p.year ${dir}, p.id DESC`;
@@ -473,11 +473,11 @@ class PublicationsService {
     }
 
     if (citedByMin !== null) {
-      where.push('w.citation_count >= ?');
+      where.push('p.citation_count >= ?');
       params.push(citedByMin);
     }
     if (citedByMax !== null) {
-      where.push('w.citation_count <= ?');
+      where.push('p.citation_count <= ?');
       params.push(citedByMax);
     }
 

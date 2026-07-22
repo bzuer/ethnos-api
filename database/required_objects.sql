@@ -18,32 +18,11 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- PENDING (2026-07-22, P3): optional denormalization to un-degrade heavy sorts /
--- expensive metric fields. All OPTIONAL — the API degrades gracefully without
--- them (documented below). Apply only if the fast/complete surface is wanted.
+-- PENDING (2026-07-22, P3): optional denormalization for expensive metric fields.
+-- OPTIONAL — the API serves 0 for these without them. Apply only if wanted.
 -- -----------------------------------------------------------------------------
 
--- (1) /publications?sort_by=cited_by_count|references_count — ordering publications
---     by their work's citation/reference count forces a join to works and a
---     filesort over 6.7M rows, so the API currently budgets the id-selection and
---     degrades to an empty page with meta.page_degraded=true. Mirroring the work
---     metric onto publications + indexing it lets the API order index-friendly
---     (ORDER BY p.work_citation_count DESC, p.id DESC) with no works join.
---     Operator must keep these in sync with works.citation_count / reference_count
---     (e.g. in the same procedure that refreshes the works metrics).
---
--- ALTER TABLE publications
---   ADD COLUMN IF NOT EXISTS work_citation_count INT NOT NULL DEFAULT 0,
---   ADD COLUMN IF NOT EXISTS work_reference_count INT NOT NULL DEFAULT 0;
--- ALTER TABLE publications
---   ADD INDEX IF NOT EXISTS idx_publications_work_citation (work_citation_count),
---   ADD INDEX IF NOT EXISTS idx_publications_work_reference (work_reference_count);
---   (populate: UPDATE publications p JOIN works w ON w.id = p.work_id
---             SET p.work_citation_count = w.citation_count,
---                 p.work_reference_count = w.reference_count; chunked by p.id.)
---   The API change to consume these is deferred until the columns exist.
-
--- (2) /metrics/annual.unique_organizations is served as 0 (a per-year
+-- (metrics) /metrics/annual.unique_organizations is served as 0 (a per-year
 --     COUNT(DISTINCT affiliation) over publications⋈authorships is far past the
 --     statement budget). /metrics/venues.unique_authors and open_access_works are
 --     likewise 0 (per-venue distinct-author / OA-publication counts are unbounded).
@@ -63,3 +42,9 @@
 --     /subjects/{id}/hierarchy without the 15.8M-row work_subjects join.
 --   * idx_works_reference_count (works.reference_count), backing the indexed
 --     ORDER BY on /works?sort_by=references_count. Applied 2026-07-21.
+--   * publications.citation_count + publications.reference_count (INT, mirror of
+--     the parent work's works.citation_count / reference_count) + idx_citation /
+--     idx_reference, populated by sp_populate_references_counts. Applied 2026-07-22
+--     (1.85M rows). Backs the index-friendly ORDER BY p.citation_count /
+--     p.reference_count and the p.citation_count cited_by_min/max filter on
+--     /publications, so those sorts/filters no longer join works or degrade.
