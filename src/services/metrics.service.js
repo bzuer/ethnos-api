@@ -25,7 +25,7 @@ class MetricsService {
         return cached;
       }
 
-      const whereConditions = ['p.year IS NOT NULL', 'p.year > 0'];
+      const whereConditions = ['p.year IS NOT NULL', 'p.year >= 1000', 'p.year <= YEAR(CURDATE()) + 1'];
       const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
       if (year_from) {
@@ -50,7 +50,7 @@ class MetricsService {
             SUM(CASE WHEN p.type = 'ARTICLE' THEN 1 ELSE 0 END) AS articles,
             SUM(CASE WHEN p.type = 'BOOK' THEN 1 ELSE 0 END) AS books,
             ROUND(AVG(w.citation_count), 2) AS avg_citations,
-            0 AS total_downloads,
+            SUM(COALESCE(w.download_count, 0)) AS total_downloads,
             0 AS unique_organizations
           FROM publications p
           INNER JOIN works w ON w.id = p.work_id

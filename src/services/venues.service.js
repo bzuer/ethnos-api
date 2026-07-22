@@ -897,7 +897,7 @@ class VenuesService {
   }
 
   async getVenueStatistics() {
-    const cacheKey = 'venues:statistics:v3';
+    const cacheKey = 'venues:statistics:v4';
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venue statistics retrieved from cache');
@@ -911,6 +911,8 @@ class VenuesService {
         SUM(CASE WHEN type = 'CONFERENCE' THEN 1 ELSE 0 END) AS conferences,
         SUM(CASE WHEN type = 'REPOSITORY' THEN 1 ELSE 0 END) AS repositories,
         SUM(CASE WHEN type = 'BOOK_SERIES' THEN 1 ELSE 0 END) AS book_series,
+        SUM(CASE WHEN type = 'SOURCE_BOOK' THEN 1 ELSE 0 END) AS source_books,
+        SUM(CASE WHEN type = 'OTHER' THEN 1 ELSE 0 END) AS other,
         SUM(CASE WHEN impact_factor IS NOT NULL THEN 1 ELSE 0 END) AS with_impact_factor,
         AVG(impact_factor) AS avg_impact_factor,
         MAX(impact_factor) AS max_impact_factor,
@@ -930,6 +932,8 @@ class VenuesService {
       conferences: toInt(row?.conferences, 0),
       repositories: toInt(row?.repositories, 0),
       book_series: toInt(row?.book_series, 0),
+      source_books: toInt(row?.source_books, 0),
+      other: toInt(row?.other, 0),
       with_impact_factor: toInt(row?.with_impact_factor, 0),
       avg_impact_factor: toNullableFloat(row?.avg_impact_factor),
       max_impact_factor: toNullableFloat(row?.max_impact_factor),
