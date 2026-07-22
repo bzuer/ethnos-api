@@ -154,7 +154,8 @@ class MetricsController {
         limit: pagination.limit,
         page: pagination.page,
         offset: pagination.offset,
-        organization_id: req.query.organization_id
+        organization_id: req.query.organization_id,
+        min_works: req.query.min_works || undefined
       };
 
       const result = await metricsService.getPersonProduction(filters);

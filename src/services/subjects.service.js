@@ -16,6 +16,9 @@ class SubjectsService {
         s.id,
         s.term,
         s.vocabulary,
+        s.subject_type,
+        s.term_pt,
+        s.term_es,
         s.parent_id,
         s.created_at,
         s.total_works as works_count,
@@ -46,7 +49,7 @@ class SubjectsService {
     const off = parseInt(offset, 10);
 
     const [childRows] = await pool.execute(
-      `SELECT s.id, s.term, s.vocabulary, s.parent_id, s.created_at, s.total_works AS works_count
+      `SELECT s.id, s.term, s.vocabulary, s.subject_type, s.parent_id, s.created_at, s.total_works AS works_count
        FROM subjects s
        WHERE s.parent_id = ?
        ORDER BY s.total_works DESC, s.term ASC`,

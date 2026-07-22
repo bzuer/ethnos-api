@@ -37,7 +37,7 @@ const venuesController = require('../controllers/venues.controller');
  *         name: type
  *         schema:
  *           type: string
- *           enum: [JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES]
+ *           enum: [JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES, SOURCE_BOOK, OTHER]
  *         description: Filter by venue type
  *         example: JOURNAL
  *       - in: query
@@ -134,8 +134,8 @@ router.get(
     ...commonValidations.pagination,
     query('type')
       .optional({ values: 'falsy' })
-      .isIn(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES'])
-      .withMessage('Type must be one of: JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES'),
+      .isIn(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES', 'SOURCE_BOOK', 'OTHER'])
+      .withMessage('Type must be one of: JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES, SOURCE_BOOK, OTHER'),
     query('search')
       .optional({ values: 'falsy' })
       .isLength({ min: 1, max: 200 })
@@ -268,7 +268,7 @@ router.get(
  *         name: type
  *         schema:
  *           type: string
- *           enum: [JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES]
+ *           enum: [JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES, SOURCE_BOOK, OTHER]
  *         description: Filter by venue type
  *       - in: query
  *         name: limit
@@ -318,8 +318,8 @@ router.get(
       .withMessage('Search query is required and must be between 1 and 200 characters'),
     query('type')
       .optional({ values: 'falsy' })
-      .isIn(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES'])
-      .withMessage('Type must be one of: JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES'),
+      .isIn(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES', 'SOURCE_BOOK', 'OTHER'])
+      .withMessage('Type must be one of: JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES, SOURCE_BOOK, OTHER'),
     query('limit')
       .optional({ values: 'falsy' })
       .isInt({ min: 1, max: 100 })

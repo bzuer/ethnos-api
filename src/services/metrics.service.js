@@ -289,7 +289,10 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { organization_id } = filters;
-    const cacheKey = `metrics:persons:v4:${JSON.stringify({ page, limit, offset, organization_id })}`;
+    const minWorks = filters.min_works !== undefined && filters.min_works !== null && filters.min_works !== ''
+      ? parseInt(filters.min_works, 10)
+      : null;
+    const cacheKey = `metrics:persons:v5:${JSON.stringify({ page, limit, offset, organization_id, minWorks })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -300,6 +303,11 @@ class MetricsService {
 
       const whereConditions = ['p.total_works > 0'];
       const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
+
+      if (Number.isFinite(minWorks) && minWorks > 0) {
+        whereConditions.push('p.total_works >= :min_works');
+        replacements.min_works = minWorks;
+      }
 
       if (organization_id) {
         whereConditions.push(`EXISTS (
