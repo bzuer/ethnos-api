@@ -209,7 +209,7 @@ function formatVenueDetails(venue = {}, options = {}) {
       abstract: w.abstract ?? null,
       type: w.type,
       language: w.language ?? null,
-      year: toNullableInt(w.year),
+      publication_year: toNullableInt(w.year),
       volume: w.volume ?? null,
       issue: w.issue ?? null,
       pages: w.pages ?? null,

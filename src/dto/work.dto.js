@@ -62,7 +62,9 @@ function formatWorkListItem(row = {}) {
     venue,
     authors_preview: authorsPreview,
     author_count: authorCountSource,
-    first_author: row.first_author || (authorsPreview.length > 0 ? authorsPreview[0] : null),
+    first_author: (row.first_author || authorsPreview[0])
+      ? { person_id: toOptionalInteger(row.first_author_id), name: row.first_author || authorsPreview[0] }
+      : null,
     first_author_id: toOptionalInteger(row.first_author_id),
     first_author_identifiers: row.first_author_identifiers || null,
     cited_by_count: citedByCount !== null ? citedByCount : 0,

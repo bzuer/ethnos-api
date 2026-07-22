@@ -528,7 +528,7 @@ describe('DTOs structure', () => {
       name_variations: 'J. Doe;Jane D.'
     };
     const details = formatPersonDetails(person);
-    expect(details).toMatchObject({
+    expect(details.identifiers).toMatchObject({
       orcid: '0000-0001-2345-6789',
       scopus_id: 'SC123',
       lattes_id: 'L123',
@@ -536,11 +536,15 @@ describe('DTOs structure', () => {
       openalex_id: 'A-1',
       url: 'https://example.org/jane'
     });
+    expect(details.orcid).toBe(undefined);
+    expect(details._links.self).toBe('/persons/10');
     expect(Array.isArray(details.name_variations)).toBe(true);
     expect(details.name_variations.length).toBeGreaterThan(0);
 
     const listItem = formatPersonListItem(person);
-    expect(listItem).toHaveProperty('scopus_id', 'SC123');
+    expect(listItem.identifiers).toHaveProperty('scopus_id', 'SC123');
+    expect(listItem.orcid).toBe(undefined);
+    expect(listItem._links.self).toBe('/persons/10');
   });
 
   test('Organization DTO groups identifiers, parses JSON names, derives metrics', () => {
