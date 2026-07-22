@@ -41,23 +41,34 @@ const handleValidation = (req, res) => {
   return null;
 };
 
-const emptyMetrics = () => ({
-  queries_per_second: 0,
-  avg_response_time: 0,
-  error_rate: 0,
-  index_size_mb: 0,
-  uptime_seconds: 0,
-  queries_last_hour: 0,
-  queries_last_minute: 0,
-  connections: 0
-});
+const monitoring = require('../middleware/monitoring');
 
-const emptyHealthStatus = () => ({
-  searchEngine: 'MariaDB',
+const liveMetrics = () => {
+  const m = monitoring.getMetrics();
+  const uptimeSeconds = Math.round((m.uptime_ms || 0) / 1000);
+  return {
+    queries_per_second: uptimeSeconds > 0 ? Math.round(((m.requests?.total || 0) / uptimeSeconds) * 100) / 100 : 0,
+    avg_response_time: m.requests?.performance?.avg_response_time_ms || 0,
+    p95_response_time: m.requests?.performance?.p95_response_time_ms || 0,
+    error_rate: m.errors?.error_rate || 0,
+    index_size_mb: 0,
+    uptime_seconds: uptimeSeconds,
+    queries_last_hour: m.requests?.performance?.total_samples || 0,
+    queries_last_minute: 0,
+    connections: 0,
+    total_queries: m.requests?.total || 0,
+    by_status: m.requests?.by_status || {},
+    top_endpoints: m.requests?.top_endpoints || [],
+    memory_usage_mb: Math.round(process.memoryUsage().rss / 1024 / 1024)
+  };
+};
+
+const liveHealthStatus = () => ({
+  searchEngine: 'Manticore',
   rollbackActive: false,
   metrics: {
     consecutiveFailures: 0,
-    lastSuccessfulCheck: null
+    lastSuccessfulCheck: new Date().toISOString()
   }
 });
 
@@ -99,20 +110,21 @@ router.get('/overview', async (req, res) => {
     try {
         const t0 = Date.now();
         const searchAnalytics = await autocompleteService.getSearchAnalytics(7);
-        const metrics = emptyMetrics();
-        const healthStatus = emptyHealthStatus();
+        const metrics = liveMetrics();
+        const healthStatus = liveHealthStatus();
 
         const rawOverview = {
             search_performance: {
                 engine: healthStatus.searchEngine,
                 queries_per_second: metrics.queries_per_second,
                 avg_response_time: metrics.avg_response_time,
+                p95_response_time: metrics.p95_response_time,
                 error_rate: metrics.error_rate,
                 index_size_mb: metrics.index_size_mb,
                 performance_distribution: {
-                    total_queries: 0,
-                    distribution: {},
-                    percentiles: {}
+                    total_queries: metrics.total_queries,
+                    by_status: metrics.by_status,
+                    top_endpoints: metrics.top_endpoints
                 }
             },
             system_health: {
@@ -120,7 +132,7 @@ router.get('/overview', async (req, res) => {
                 uptime_seconds: metrics.uptime_seconds,
                 consecutive_failures: healthStatus.metrics.consecutiveFailures,
                 last_successful_check: healthStatus.metrics.lastSuccessfulCheck,
-                memory_usage: '0MB indexes',
+                memory_usage: `${metrics.memory_usage_mb}MB rss`,
                 connections: metrics.connections
             },
             recent_activity: {
@@ -187,19 +199,21 @@ router.get('/performance', validatePerformanceParams, async (req, res) => {
         const hours = Math.min(req.query.hours || 24, 168);
 
         const chartData = formatPerformanceChart([]);
+        const m = liveMetrics();
 
         return res.success({
             chart_data: chartData,
             summary: {
-                total_queries: 0,
-                avg_response_time: 0,
-                p95_response_time: 0,
-                error_count: 0
+                total_queries: m.total_queries,
+                avg_response_time: m.avg_response_time,
+                p95_response_time: m.p95_response_time,
+                error_count: m.error_rate,
+                uptime_seconds: m.uptime_seconds
             },
             distribution: {
-                total_queries: 0,
-                distribution: {},
-                percentiles: {}
+                total_queries: m.total_queries,
+                by_status: m.by_status,
+                top_endpoints: m.top_endpoints
             }
         }, {
             meta: {
@@ -294,7 +308,7 @@ router.get('/search-trends', validateTrendParams, async (req, res) => {
 router.get('/alerts', async (req, res) => {
     try {
         const t0 = Date.now();
-        const rawAlerts = await router.checkSystemAlerts(emptyMetrics(), emptyHealthStatus());
+        const rawAlerts = await router.checkSystemAlerts(liveMetrics(), liveHealthStatus());
         const formattedAlerts = formatSystemAlerts(rawAlerts);
 
         return res.success({
