@@ -1,6 +1,20 @@
 const coursesService = require('../services/courses.service');
 const { ERROR_CODES } = require('../utils/responseBuilder');
 const { normalizePagination } = require('../utils/pagination');
+const { validationResult } = require('express-validator');
+
+const failIfInvalid = (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.fail('Validation failed', {
+      statusCode: 400,
+      code: ERROR_CODES.VALIDATION,
+      errors: errors.array()
+    });
+    return true;
+  }
+  return false;
+};
 
 class CoursesController {
 
@@ -43,6 +57,7 @@ class CoursesController {
   
   async getCourseById(req, res) {
     try {
+      if (failIfInvalid(req, res)) return;
       const courseId = req.params.id;
       const includeBibliography = req.query.include_bibliography !== 'false';
       const includeInstructors = req.query.include_instructors !== 'false';
@@ -95,6 +110,7 @@ class CoursesController {
   
   async getCourseInstructors(req, res) {
     try {
+      if (failIfInvalid(req, res)) return;
       const pagination = normalizePagination(req.query);
       const filters = {
         role: req.query.role,
@@ -130,6 +146,7 @@ class CoursesController {
   
   async getCourseBibliography(req, res) {
     try {
+      if (failIfInvalid(req, res)) return;
       const pagination = normalizePagination(req.query);
       const filters = {
         reading_type: req.query.reading_type,
@@ -160,6 +177,7 @@ class CoursesController {
   
   async getCourseSubjects(req, res) {
     try {
+      if (failIfInvalid(req, res)) return;
       const pagination = normalizePagination(req.query);
       const filters = {
         vocabulary: req.query.vocabulary,

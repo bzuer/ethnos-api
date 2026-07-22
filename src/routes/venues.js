@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { body, query, param } = require('express-validator');
-const { enhancedValidationHandler, commonValidations } = require('../middleware/validation');
+const { commonValidations } = require('../middleware/validation');
 const venuesController = require('../controllers/venues.controller');
 
 /**
@@ -191,7 +191,6 @@ router.get(
       .withMessage('min_id must be a positive integer')
       .toInt()
   ],
-  enhancedValidationHandler,
   venuesController.getAllVenues
 );
 
@@ -330,7 +329,6 @@ router.get(
       .isInt({ min: 0 })
       .withMessage('Offset must be a non-negative integer')
   ],
-  enhancedValidationHandler,
   venuesController.searchVenues
 );
 
@@ -415,7 +413,6 @@ router.get(
       .withMessage('include_recent_works must be a boolean')
       .toBoolean()
   ],
-  enhancedValidationHandler,
   venuesController.getVenueById
 );
 
@@ -562,7 +559,6 @@ router.get(
       .isIn(['ASC', 'DESC'])
       .withMessage('sort_order must be ASC or DESC')
   ],
-  enhancedValidationHandler,
   venuesController.getVenueWorks
 );
 

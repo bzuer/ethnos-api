@@ -3,7 +3,6 @@ const router = express.Router();
 const coursesController = require('../controllers/courses.controller');
 const rateLimit = require('../middleware/rateLimiting');
 const { query, param } = require('express-validator');
-const { enhancedValidationHandler } = require('../middleware/validation');
 
 router.use(rateLimit.generalLimiter);
 
@@ -72,8 +71,7 @@ const validateCourseId = [
   param('id')
     .isInt({ min: 1 })
     .withMessage('Course ID must be a positive integer')
-    .toInt(),
-  enhancedValidationHandler
+    .toInt()
 ];
 
 router.get('/', validateCoursesList, coursesController.getCourses);

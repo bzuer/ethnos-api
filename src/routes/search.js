@@ -1,8 +1,8 @@
 const express = require('express');
-const { query } = require('express-validator');
+const { query, validationResult } = require('express-validator');
 const router = express.Router();
 const searchController = require('../controllers/search.controller');
-const { commonValidations, enhancedValidationHandler } = require('../middleware/validation');
+const { commonValidations } = require('../middleware/validation');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { ERROR_CODES } = require('../utils/responseBuilder');
@@ -202,7 +202,7 @@ const validateWorksSearch = [
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/works', validateWorksSearch, enhancedValidationHandler, searchController.searchWorks);
+router.get('/works', validateWorksSearch, searchController.searchWorks);
 
 /**
  * @swagger
@@ -269,7 +269,7 @@ router.get('/works', validateWorksSearch, enhancedValidationHandler, searchContr
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/global', commonValidations.searchQuery, enhancedValidationHandler, searchController.globalSearch);
+router.get('/global', commonValidations.searchQuery, searchController.globalSearch);
 
 
 /**
@@ -316,7 +316,7 @@ router.get('/global', commonValidations.searchQuery, enhancedValidationHandler, 
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/persons', commonValidations.searchQuery, commonValidations.pagination, enhancedValidationHandler, searchController.searchPersons);
+router.get('/persons', commonValidations.searchQuery, commonValidations.pagination, searchController.searchPersons);
 
 
 /**
@@ -476,6 +476,14 @@ const worksService = require('../services/works.service');
 
 const advancedSearch = async (req, res, next) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.fail('Validation failed', {
+        statusCode: 400,
+        code: ERROR_CODES.VALIDATION,
+        errors: errors.array()
+      });
+    }
     const query = (req.query.q || '').trim();
     const pagination = normalizePagination(req.query);
     const { limit, offset, page } = pagination;
@@ -605,7 +613,7 @@ const validateAdvancedSearch = [
     .withMessage('sort_order must be ASC or DESC')
 ];
 
-router.get('/advanced', validateAdvancedSearch, enhancedValidationHandler, advancedSearch);
+router.get('/advanced', validateAdvancedSearch, advancedSearch);
 
 /**
  * @swagger
