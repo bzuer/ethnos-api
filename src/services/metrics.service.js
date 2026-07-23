@@ -16,7 +16,7 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { year_from, year_to } = filters;
-    const cacheKey = `metrics:annual:v4:${JSON.stringify({ page, limit, offset, year_from, year_to })}`;
+    const cacheKey = `metrics:annual:v5:${JSON.stringify({ page, limit, offset, year_from, year_to })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -25,91 +25,22 @@ class MetricsService {
         return cached;
       }
 
-      const whereConditions = ['p.year IS NOT NULL', 'p.year >= 1000', 'p.year <= YEAR(CURDATE()) + 1'];
-      const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
-
-      if (year_from) {
-        whereConditions.push('p.year >= :year_from');
-        replacements.year_from = parseInt(year_from);
-      }
-      if (year_to) {
-        whereConditions.push('p.year <= :year_to');
-        replacements.year_to = parseInt(year_to);
-      }
-
-      const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
-
-      const [yearRows, countRows] = await Promise.all([
-        sequelize.query(withTimeout(`
-          SELECT DISTINCT p.year AS year
-          FROM publications p
-          ${whereClause}
-          ORDER BY p.year DESC
-          LIMIT :limit OFFSET :offset
-        `), {
-          replacements,
-          type: sequelize.QueryTypes.SELECT
-        }),
-        sequelize.query(withTimeout(`
-          SELECT COUNT(DISTINCT p.year) AS total
-          FROM publications p
-          ${whereClause}
-        `), {
-          replacements,
-          type: sequelize.QueryTypes.SELECT
-        })
-      ]);
-      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
-      const pageYears = (yearRows || [])
-        .map((row) => parseInt(row.year, 10))
-        .filter((year) => Number.isFinite(year));
-
-      let stats = [];
-      if (pageYears.length > 0) {
-        stats = await sequelize.query(withTimeout(`
-          SELECT
-            p.year AS year,
-            COUNT(*) AS total_publications,
-            COUNT(DISTINCT p.work_id) AS unique_works,
-            SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) AS open_access_count,
-            ROUND(SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS open_access_percentage,
-            SUM(CASE WHEN p.type = 'ARTICLE' THEN 1 ELSE 0 END) AS articles,
-            SUM(CASE WHEN p.type = 'BOOK' THEN 1 ELSE 0 END) AS books,
-            ROUND(AVG(p.citation_count), 2) AS avg_citations,
-            0 AS total_downloads,
-            0 AS unique_organizations
-          FROM publications p
-          WHERE p.year IN (:pageYears)
-          GROUP BY p.year
-          ORDER BY p.year DESC
-        `), {
-          replacements: { pageYears },
-          type: sequelize.QueryTypes.SELECT
-        });
-      }
-
-      const formattedStats = stats.map(formatAnnualStats);
-
-      const result = {
-        data: formattedStats,
-        pagination: createPagination(page, limit, total),
-        summary: {
-          total_years: total,
-          date_range: stats.length > 0
-            ? `${stats[stats.length - 1].year}-${stats[0].year}`
-            : null,
-          total_works_all_years: formattedStats.reduce((sum, s) => sum + s.metrics.total_publications, 0),
-          avg_works_per_year: stats.length > 0
-            ? Math.round(formattedStats.reduce((sum, s) => sum + s.metrics.total_publications, 0) / stats.length)
-            : 0,
-          growth_trend: stats.length >= 2
-            ? calculateGrowthTrend(formattedStats.map(s => s.metrics.total_publications))
-            : null
+      const params = { limit: parseInt(limit), offset: parseInt(offset), year_from, year_to };
+      let source;
+      try {
+        source = await this._getAnnualStatsFromSummary(params);
+      } catch (summaryError) {
+        if (isMissingTable(summaryError)) {
+          logger.warn('metrics_annual_summary unavailable; falling back to live aggregation');
+          source = await this._getAnnualStatsLive(params);
+        } else {
+          throw summaryError;
         }
-      };
+      }
 
+      const result = buildAnnualResult(source.stats, source.total, page, limit);
       await cacheService.set(cacheKey, result, 86400);
-      logger.info(`Annual stats cached: ${stats.length} years`);
+      logger.info(`Annual stats cached: ${source.stats.length} years (${source.engine})`);
       return result;
     } catch (error) {
       if (isStatementTimeout(error)) {
@@ -130,6 +61,102 @@ class MetricsService {
       logger.error('Error fetching annual stats:', error);
       throw error;
     }
+  }
+
+  async _getAnnualStatsFromSummary({ limit, offset, year_from, year_to }) {
+    const whereConditions = ['s.year >= 1000', 's.year <= YEAR(CURDATE()) + 1'];
+    const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
+    if (year_from) {
+      whereConditions.push('s.year >= :year_from');
+      replacements.year_from = parseInt(year_from);
+    }
+    if (year_to) {
+      whereConditions.push('s.year <= :year_to');
+      replacements.year_to = parseInt(year_to);
+    }
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+
+    const [stats, countRows] = await Promise.all([
+      sequelize.query(withTimeout(`
+        SELECT
+          s.year AS year,
+          s.total_publications AS total_publications,
+          s.unique_works AS unique_works,
+          s.open_access_count AS open_access_count,
+          ROUND(s.open_access_count * 100.0 / NULLIF(s.total_publications, 0), 2) AS open_access_percentage,
+          s.articles AS articles,
+          s.books AS books,
+          s.avg_citations AS avg_citations,
+          s.unique_organizations AS unique_organizations
+        FROM metrics_annual_summary s
+        ${whereClause}
+        ORDER BY s.year DESC
+        LIMIT :limit OFFSET :offset
+      `), { replacements, type: sequelize.QueryTypes.SELECT }),
+      sequelize.query(withTimeout(`
+        SELECT COUNT(*) AS total
+        FROM metrics_annual_summary s
+        ${whereClause}
+      `), { replacements, type: sequelize.QueryTypes.SELECT })
+    ]);
+
+    const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
+    return { stats: stats || [], total, engine: 'metrics_annual_summary' };
+  }
+
+  async _getAnnualStatsLive({ limit, offset, year_from, year_to }) {
+    const whereConditions = ['p.year IS NOT NULL', 'p.year >= 1000', 'p.year <= YEAR(CURDATE()) + 1'];
+    const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
+    if (year_from) {
+      whereConditions.push('p.year >= :year_from');
+      replacements.year_from = parseInt(year_from);
+    }
+    if (year_to) {
+      whereConditions.push('p.year <= :year_to');
+      replacements.year_to = parseInt(year_to);
+    }
+    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+
+    const [yearRows, countRows] = await Promise.all([
+      sequelize.query(withTimeout(`
+        SELECT DISTINCT p.year AS year
+        FROM publications p
+        ${whereClause}
+        ORDER BY p.year DESC
+        LIMIT :limit OFFSET :offset
+      `), { replacements, type: sequelize.QueryTypes.SELECT }),
+      sequelize.query(withTimeout(`
+        SELECT COUNT(DISTINCT p.year) AS total
+        FROM publications p
+        ${whereClause}
+      `), { replacements, type: sequelize.QueryTypes.SELECT })
+    ]);
+    const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
+    const pageYears = (yearRows || [])
+      .map((row) => parseInt(row.year, 10))
+      .filter((year) => Number.isFinite(year));
+
+    let stats = [];
+    if (pageYears.length > 0) {
+      stats = await sequelize.query(withTimeout(`
+        SELECT
+          p.year AS year,
+          COUNT(*) AS total_publications,
+          COUNT(DISTINCT p.work_id) AS unique_works,
+          SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) AS open_access_count,
+          ROUND(SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS open_access_percentage,
+          SUM(CASE WHEN p.type = 'ARTICLE' THEN 1 ELSE 0 END) AS articles,
+          SUM(CASE WHEN p.type = 'BOOK' THEN 1 ELSE 0 END) AS books,
+          ROUND(AVG(p.citation_count), 2) AS avg_citations,
+          0 AS unique_organizations
+        FROM publications p
+        WHERE p.year IN (:pageYears)
+        GROUP BY p.year
+        ORDER BY p.year DESC
+      `), { replacements: { pageYears }, type: sequelize.QueryTypes.SELECT });
+    }
+
+    return { stats: stats || [], total, engine: 'live_aggregation' };
   }
 
   async getTopVenues(filters = {}) {
@@ -571,6 +598,35 @@ class MetricsService {
     }
   }
 }
+
+const isMissingTable = (error) => {
+  if (!error) return false;
+  const src = error.original || error.parent || error;
+  const code = src.code || error.code;
+  const errno = src.errno || error.errno;
+  return code === 'ER_NO_SUCH_TABLE' || errno === 1146 || /doesn't exist/i.test(String(error.message || ''));
+};
+
+const buildAnnualResult = (stats, total, page, limit) => {
+  const formattedStats = stats.map(formatAnnualStats);
+  return {
+    data: formattedStats,
+    pagination: createPagination(page, limit, total),
+    summary: {
+      total_years: total,
+      date_range: stats.length > 0
+        ? `${stats[stats.length - 1].year}-${stats[0].year}`
+        : null,
+      total_works_all_years: formattedStats.reduce((sum, s) => sum + s.metrics.total_publications, 0),
+      avg_works_per_year: stats.length > 0
+        ? Math.round(formattedStats.reduce((sum, s) => sum + s.metrics.total_publications, 0) / stats.length)
+        : 0,
+      growth_trend: stats.length >= 2
+        ? calculateGrowthTrend(formattedStats.map(s => s.metrics.total_publications))
+        : null
+    }
+  };
+};
 
 const calculateGrowthTrend = (values) => {
   if (values.length < 2) return 'insufficient_data';

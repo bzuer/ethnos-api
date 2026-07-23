@@ -7018,16 +7018,12 @@ module.exports = {
           },
           "unique_organizations": {
             "type": "integer",
-            "description": "Always 0 (placeholder pending operator aggregate)."
+            "description": "Distinct affiliated organizations active in the year (real, from the operator-maintained metrics_annual_summary table). 0 only for very sparse historical years."
           },
           "avg_citations": {
             "type": "number",
             "format": "float",
-            "description": "ROUND(AVG(works.citation_count), 2) over the year."
-          },
-          "total_downloads": {
-            "type": "integer",
-            "description": "Always 0 (placeholder)."
+            "description": "Mean citations per publication in the year (precomputed in metrics_annual_summary)."
           }
         }
       },

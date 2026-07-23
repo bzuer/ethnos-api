@@ -66,12 +66,14 @@ const validateCollaborations = [
  *     summary: Annual publication statistics
  *     tags: [Metrics]
  *     description: >-
- *       Yearly roll-up grouped by publications.year (bounded 1000..YEAR(CURDATE())+1;
- *       garbage future years excluded, so 2027 is the newest observed). Ordered by year DESC.
- *       Each row nests a metrics block and a growth block (growth.* are always null;
- *       metrics.unique_organizations and metrics.total_downloads are always 0). meta.summary
- *       carries total_years, date_range, total_works_all_years, avg_works_per_year and a
- *       growth_trend enum (increasing|stable|decreasing|insufficient_data or null).
+ *       Yearly roll-up served from the operator-maintained precomputed metrics_annual_summary
+ *       table (single indexed read per page, sub-second; transparent fallback to a live
+ *       publications aggregation if the table is absent). Years are bounded 1000..YEAR(CURDATE())+1
+ *       and ordered year DESC. Each row nests a metrics block (unique_organizations and
+ *       avg_citations are real precomputed values) and a growth block (growth.* are always null).
+ *       There is no total_downloads field — download counts are not computed in the DB.
+ *       meta.summary carries total_years, date_range, total_works_all_years, avg_works_per_year
+ *       and a growth_trend enum (increasing|stable|decreasing|insufficient_data or null).
  *     parameters:
  *       - name: year_from
  *         in: query

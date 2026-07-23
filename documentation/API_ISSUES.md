@@ -19,6 +19,7 @@ Arquivos alterados nesta fase: `src/services/{metrics,autocomplete,subjects,publ
 - **Causa raiz:** `getAnnualStats` rodava `GROUP BY p.year` sobre `publications INNER JOIN works` (7,2M linhas) **sem `withTimeout`**; o join a `works` (para `avg_citations`/`total_downloads`) era o gargalo. Medições: histórico completo e só-publications >8s.
 - **Solução** (`src/services/metrics.service.js` `getAnnualStats`): eliminado o join a `works`; `avg_citations = ROUND(AVG(p.citation_count),2)` (coluna denormalizada, idêntica, sem join); `total_downloads = 0` (`works.download_count` é universalmente 0/nulo); agrega **apenas os anos da página** (`SELECT DISTINCT year … LIMIT/OFFSET` → `WHERE p.year IN (…)`); `total = COUNT(DISTINCT year)`; tudo em `withTimeout` + `catch isStatementTimeout` → degradação graciosa (`summary.degraded`). Cache key `v3→v4`.
 - **Validação (1210):** `GET /metrics/annual?limit=10` → **HTTP 200 em 2.86s**, 10 anos. Ano 2020: `total_publications 321204, avg_citations 1.19, open_access_percentage 71.22, total_downloads 0, unique_organizations 0`. avg_citations bate com a versão antiga com join.
+- **Nota:** esta agregação ao vivo foi depois **substituída** pela leitura direta da tabela pré-computada `metrics_annual_summary` (sub-segundo, `unique_organizations` real) e `total_downloads` foi removido — ver P17. A agregação ao vivo permanece como fallback.
 
 ### P2 · 🟢 `GET /search/popular` → era 503 REQUEST_TIMEOUT
 - **Causa raiz:** `getPopularTerms` fazia cross-join `works × publications × números(1..10)` com `SUBSTRING_INDEX` sobre cada palavra de título, **sem `withTimeout`**; Redis só cacheava não-vazio, nunca aquecia.
@@ -94,8 +95,11 @@ Arquivos alterados nesta fase: `src/services/{metrics,autocomplete,subjects,publ
 ### P16 · 📋 Anos futuros/epoch lixo em `publications.year`
 - Dados de origem ruins (ex. `2028`, `1970` epoch). A API expõe/clampa ao intervalo válido, mas outliers dentro do range são legítimos pelo critério. Saneamento é operador-side (limpeza de `publications.year`). Registrado, não "corrigível" pela API sem heurística arriscada.
 
-### P17 · 📋 Pré-cálculo de agregados anuais (sub-segundo)
-- P1 já responde ~3s com degradação graciosa. Para resposta sub-segundo, proposta de tabela `metrics_annual_summary` pré-computada registrada em `database/required_objects.sql`. A API passa a lê-la quando existir.
+### P17 · 🟢 Pré-cálculo de agregados anuais (sub-segundo) — RESOLVIDO 2026-07-23
+- **Contexto:** P1 respondia ~3s com degradação graciosa e servia `unique_organizations = 0` (COUNT(DISTINCT affiliation) por ano é caro demais) e `total_downloads = 0`.
+- **Solução (operador + API):** o operador criou e populou a tabela `metrics_annual_summary` (PK `year`; `total_publications`, `unique_works`, `open_access_count`, `articles`, `books`, `avg_citations`, `unique_organizations`, `refreshed_at`) — 273 anos, com `unique_organizations` e `avg_citations` reais. A API (`getAnnualStats`) passou a **ler direto dessa tabela** (leitura indexada única por `year`, sub-segundo), derivando `open_access_percentage` e mantendo o clamp `1000..YEAR(CURDATE())+1` na leitura, com **fallback transparente** para a agregação ao vivo sobre `publications` se a tabela sumir (`isMissingTable`). Cache key `v4→v5`.
+- **`total_downloads` removido:** `works.download_count` é universalmente nulo/zero e não é computado no banco; em vez de servir um `0` enganoso, o campo foi **removido** da resposta (query + DTO). Não é mais objeto da API.
+- **Validação (1210):** `GET /metrics/annual?limit=10` → **HTTP 200 em ~4ms**. Ano 2026: `total_publications 205986, unique_organizations 53449, avg_citations 0.02, open_access_percentage 80.1`; nenhum `total_downloads` no payload. 36/36 testes unitários verdes. Snapshot: `backups/data.schema.2026-07-23.sql` (29 tabelas base).
 
 ---
 

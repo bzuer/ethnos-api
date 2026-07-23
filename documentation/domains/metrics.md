@@ -50,24 +50,6 @@ GET /metrics/annual?limit=20&offset=20
   "status": "success",
   "data": [
     {
-      "year": 2027,
-      "metrics": {
-        "total_publications": 73,
-        "unique_works": 73,
-        "open_access_count": 64,
-        "open_access_percentage": 87.67,
-        "articles": 72,
-        "books": 1,
-        "unique_organizations": 0,
-        "avg_citations": 0,
-        "total_downloads": 0
-      },
-      "growth": {
-        "publications_vs_previous": null,
-        "authors_vs_previous": null
-      }
-    },
-    {
       "year": 2026,
       "metrics": {
         "total_publications": 205986,
@@ -76,26 +58,42 @@ GET /metrics/annual?limit=20&offset=20
         "open_access_percentage": 80.1,
         "articles": 205354,
         "books": 63,
-        "unique_organizations": 0,
-        "avg_citations": 0.02,
-        "total_downloads": 0
+        "unique_organizations": 53449,
+        "avg_citations": 0.02
+      },
+      "growth": {
+        "publications_vs_previous": null,
+        "authors_vs_previous": null
+      }
+    },
+    {
+      "year": 2022,
+      "metrics": {
+        "total_publications": 353169,
+        "unique_works": 352771,
+        "open_access_count": 267688,
+        "open_access_percentage": 75.8,
+        "articles": 343480,
+        "books": 6514,
+        "unique_organizations": 63515,
+        "avg_citations": 0.6
       },
       "growth": { "publications_vs_previous": null, "authors_vs_previous": null }
     }
-    // ... (10 total: 2027, 2026, 2025 … 2018)
+    // ... (10 total: 2026, 2025, 2024 … 2017)
   ],
-  "pagination": { "page": 1, "limit": 10, "total": 271, "totalPages": 28, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 10, "total": 270, "totalPages": 27, "hasNext": true, "hasPrev": false },
   "meta": {
     "summary": {
-      "total_years": 271,
-      "date_range": "2018-2027",
-      "total_works_all_years": 2690556,
-      "avg_works_per_year": 269056,
-      "growth_trend": "decreasing"
+      "total_years": 270,
+      "date_range": "2017-2026",
+      "total_works_all_years": 2879970,
+      "avg_works_per_year": 287997,
+      "growth_trend": "increasing"
     },
     "filters": { "year_from": null, "year_to": null, "limit": 10, "page": 1, "offset": 0 },
-    "generated_at": "2026-07-23T18:56:49.616Z",
-    "performance": { "controller_time_ms": 2994 },
+    "generated_at": "2026-07-23T22:08:18.140Z",
+    "performance": { "controller_time_ms": 4 },
     "request": { "method": "GET", "path": "/metrics/annual?limit=10" },
     "pagination_extras": { "offset": 0 }
   }
@@ -106,18 +104,19 @@ GET /metrics/annual?limit=20&offset=20
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `year` | integer | grouping key = `publications.year`, bounded 1000..currentYear+1. `2027` is the newest real bucket. |
-| `metrics.total_publications` | integer | `COUNT(*)` publications in the year. |
-| `metrics.unique_works` | integer | `COUNT(DISTINCT work_id)` — slightly below `total_publications` (multi-manifestation works). |
+| `year` | integer | grouping key, bounded 1000..currentYear+1. The newest bucket reflects the summary table's coverage (e.g. `2026`). |
+| `metrics.total_publications` | integer | publications in the year (precomputed `metrics_annual_summary.total_publications`). |
+| `metrics.unique_works` | integer | distinct works in the year — slightly below `total_publications` (multi-manifestation works). |
 | `metrics.open_access_count` | integer | publications with `open_access = 1`. |
-| `metrics.open_access_percentage` | number (float, 2dp) | `ROUND(open_access_count * 100 / total_publications, 2)`. |
+| `metrics.open_access_percentage` | number (float, 2dp) | derived `ROUND(open_access_count * 100 / total_publications, 2)`. |
 | `metrics.articles` | integer | count of `type = 'ARTICLE'`. |
 | `metrics.books` | integer | count of `type = 'BOOK'`. Other types are not broken out. |
-| `metrics.unique_organizations` | integer | **always `0`** — placeholder pending an operator annual aggregate. Do not render. |
-| `metrics.avg_citations` | number (float, 2dp) | real `ROUND(AVG(w.citation_count), 2)`. Low for recent years (citations accrue over time). |
-| `metrics.total_downloads` | integer | `SUM(w.download_count)`. Currently `0` across the corpus (download data sparse). |
+| `metrics.unique_organizations` | integer | **real** — distinct affiliated organizations active in the year (from the operator-maintained `metrics_annual_summary.unique_organizations`). `0` only for very sparse historical years. |
+| `metrics.avg_citations` | number (float, 2dp) | mean citations per publication in the year (precomputed). Low for recent years (citations accrue over time). |
 | `growth.publications_vs_previous` | null | **always `null`** — never computed. |
 | `growth.authors_vs_previous` | null | **always `null`** — never computed. |
+
+> `total_downloads` is **not** a field of this endpoint. Download counts are not computed in the database (`works.download_count` is universally unpopulated), so the field was removed from the response rather than served as a misleading `0`.
 
 ### Fields — `meta.summary` (page-scoped)
 
@@ -132,8 +131,8 @@ GET /metrics/annual?limit=20&offset=20
 ### Notes / caveats
 
 - `meta.filters.year_from` / `year_to` echo as **strings** when provided (e.g. `"2020"`).
-- Cost scales with the number of high-volume recent years aggregated: `limit=1` is instant; a 10-year page is ~3 s. Deep pages of sparse historical years are cheap.
-- `unique_organizations`, `total_downloads`, and both `growth.*` fields are structurally present but non-functional — see [../API_ISSUES.md](../API_ISSUES.md) (operator annual-aggregate follow-up).
+- **Backed by the precomputed `metrics_annual_summary` table** (operator-maintained, keyed by `year`, refreshed on the stats cadence). Every page is a single indexed read, so responses are sub-second (`controller_time_ms` ~4 ms) regardless of page depth. If the summary table is ever absent, the API transparently falls back to a live aggregation over `publications` (paginate distinct years, then aggregate the page) with the same shape — see [../API_ISSUES.md](../API_ISSUES.md).
+- Both `growth.*` fields are structurally present but always `null` (not computed). `total_downloads` was removed entirely (no download data in the DB).
 
 ---
 

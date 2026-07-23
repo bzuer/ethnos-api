@@ -14,8 +14,7 @@ const formatAnnualStats = (stats) => {
       articles: parseInt(stats.articles) || 0,
       books: parseInt(stats.books) || 0,
       unique_organizations: parseInt(stats.unique_organizations) || 0,
-      avg_citations: parseFloat(stats.avg_citations) || 0,
-      total_downloads: parseInt(stats.total_downloads) || 0
+      avg_citations: parseFloat(stats.avg_citations) || 0
     },
     growth: {
       publications_vs_previous: stats.publications_vs_previous || null,
