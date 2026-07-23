@@ -336,13 +336,13 @@ router.get('/alerts', async (req, res) => {
 router.checkSystemAlerts = async function(metrics, healthStatus) {
     const alerts = [];
 
-    if (metrics.error_rate > 0.05) {
+    if (metrics.error_rate > 5) {
         alerts.push({
             type: 'error',
             severity: 'high',
-            message: `High error rate: ${(metrics.error_rate * 100).toFixed(1)}%`,
+            message: `High error rate: ${metrics.error_rate.toFixed(1)}%`,
             threshold: '5%',
-            current_value: `${(metrics.error_rate * 100).toFixed(1)}%`
+            current_value: `${metrics.error_rate.toFixed(1)}%`
         });
     }
 

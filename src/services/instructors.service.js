@@ -154,7 +154,8 @@ class InstructorsService {
         COUNT(DISTINCT cb.work_id) as bibliography_contributed,
         MIN(c.year) as earliest_year,
         MAX(c.year) as latest_year,
-        GROUP_CONCAT(DISTINCT ci.role ORDER BY ci.role) as roles
+        GROUP_CONCAT(DISTINCT ci.role ORDER BY ci.role) as roles,
+        GROUP_CONCAT(DISTINCT c.program_id ORDER BY c.program_id) as program_ids
       FROM persons p
       JOIN course_instructors ci ON p.id = ci.canonical_person_id
       JOIN courses c ON ci.course_id = c.id
@@ -169,6 +170,9 @@ class InstructorsService {
     const instructor = instructors[0];
     if (instructor.roles) {
       instructor.roles = instructor.roles.split(',').map(r => r.trim());
+    }
+    if (instructor.program_ids) {
+      instructor.program_ids = instructor.program_ids.split(',').map(id => parseInt(id.trim()));
     }
 
     const formattedInstructor = formatInstructorDetails(instructor);

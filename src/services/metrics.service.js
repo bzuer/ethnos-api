@@ -16,7 +16,7 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { year_from, year_to } = filters;
-    const cacheKey = `metrics:annual:v3:${JSON.stringify({ page, limit, offset, year_from, year_to })}`;
+    const cacheKey = `metrics:annual:v4:${JSON.stringify({ page, limit, offset, year_from, year_to })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -39,8 +39,34 @@ class MetricsService {
 
       const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
-      const [stats, countRows] = await Promise.all([
-        sequelize.query(`
+      const [yearRows, countRows] = await Promise.all([
+        sequelize.query(withTimeout(`
+          SELECT DISTINCT p.year AS year
+          FROM publications p
+          ${whereClause}
+          ORDER BY p.year DESC
+          LIMIT :limit OFFSET :offset
+        `), {
+          replacements,
+          type: sequelize.QueryTypes.SELECT
+        }),
+        sequelize.query(withTimeout(`
+          SELECT COUNT(DISTINCT p.year) AS total
+          FROM publications p
+          ${whereClause}
+        `), {
+          replacements,
+          type: sequelize.QueryTypes.SELECT
+        })
+      ]);
+      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
+      const pageYears = (yearRows || [])
+        .map((row) => parseInt(row.year, 10))
+        .filter((year) => Number.isFinite(year));
+
+      let stats = [];
+      if (pageYears.length > 0) {
+        stats = await sequelize.query(withTimeout(`
           SELECT
             p.year AS year,
             COUNT(*) AS total_publications,
@@ -49,29 +75,18 @@ class MetricsService {
             ROUND(SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS open_access_percentage,
             SUM(CASE WHEN p.type = 'ARTICLE' THEN 1 ELSE 0 END) AS articles,
             SUM(CASE WHEN p.type = 'BOOK' THEN 1 ELSE 0 END) AS books,
-            ROUND(AVG(w.citation_count), 2) AS avg_citations,
-            SUM(COALESCE(w.download_count, 0)) AS total_downloads,
+            ROUND(AVG(p.citation_count), 2) AS avg_citations,
+            0 AS total_downloads,
             0 AS unique_organizations
           FROM publications p
-          INNER JOIN works w ON w.id = p.work_id
-          ${whereClause}
+          WHERE p.year IN (:pageYears)
           GROUP BY p.year
           ORDER BY p.year DESC
-          LIMIT :limit OFFSET :offset
-        `, {
-          replacements,
+        `), {
+          replacements: { pageYears },
           type: sequelize.QueryTypes.SELECT
-        }),
-        sequelize.query(`
-          SELECT COUNT(DISTINCT p.year) AS total
-          FROM publications p
-          ${whereClause}
-        `, {
-          replacements,
-          type: sequelize.QueryTypes.SELECT
-        })
-      ]);
-      const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
+        });
+      }
 
       const formattedStats = stats.map(formatAnnualStats);
 
@@ -97,6 +112,21 @@ class MetricsService {
       logger.info(`Annual stats cached: ${stats.length} years`);
       return result;
     } catch (error) {
+      if (isStatementTimeout(error)) {
+        logger.warn('Annual stats statement budget exceeded; serving degraded page');
+        return {
+          data: [],
+          pagination: createPagination(page, limit, 0),
+          summary: {
+            total_years: 0,
+            date_range: null,
+            total_works_all_years: 0,
+            avg_works_per_year: 0,
+            growth_trend: null,
+            degraded: true
+          }
+        };
+      }
       logger.error('Error fetching annual stats:', error);
       throw error;
     }

@@ -67,7 +67,6 @@ class WorksController {
         venue_id: req.query.venue_id,
         author: req.query.author,
         subject: req.query.subject,
-        has_files: req.query.has_files,
         cited_by_min: req.query.cited_by_min ?? req.query.citation_count_min,
         cited_by_max: req.query.cited_by_max ?? req.query.citation_count_max,
         sort_by: req.query.sort_by ?? req.query.sortBy,

@@ -16,7 +16,7 @@ const formatCourseListItem = (course) => {
     metrics: {
       instructor_count: parseInt(course.instructor_count) || 0,
       bibliography_count: parseInt(course.bibliography_count) || 0,
-      subject_count: parseInt(course.subject_count) || 0
+      ...(course.subject_count !== undefined && { subject_count: parseInt(course.subject_count) || 0 })
     },
     instructors_preview: course.instructors ? 
       course.instructors.split('; ').slice(0, 3) : [],

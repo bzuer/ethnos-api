@@ -31,6 +31,28 @@
 --     unique_authors_count / open_access_works_count columns) refreshed on the
 --     stats cadence. Left as 0 until provided; not blocking.
 
+-- (metrics, 2026-07-23, P17) /metrics/annual was 503-timing-out; the API now
+--     computes per-page-year aggregates in ~3s (paginate DISTINCT years, then
+--     aggregate WHERE year IN (page); avg_citations from publications.citation_count,
+--     no works join; bounded by withTimeout with graceful degradation). For a
+--     sub-second response and a real unique_organizations, an operator-maintained
+--     precomputed summary would let the API read it directly. OPTIONAL:
+--       CREATE TABLE IF NOT EXISTS metrics_annual_summary (
+--         year                 SMALLINT      NOT NULL PRIMARY KEY,
+--         total_publications   BIGINT        NOT NULL DEFAULT 0,
+--         unique_works         BIGINT        NOT NULL DEFAULT 0,
+--         open_access_count    BIGINT        NOT NULL DEFAULT 0,
+--         articles             BIGINT        NOT NULL DEFAULT 0,
+--         books                BIGINT        NOT NULL DEFAULT 0,
+--         avg_citations        DECIMAL(10,2) NOT NULL DEFAULT 0,
+--         unique_organizations BIGINT        NOT NULL DEFAULT 0,
+--         refreshed_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
+--       ) ENGINE=InnoDB;
+--     Refreshed on the stats cadence over publications (year IN 1000..YEAR(CURDATE())+1).
+--     The API would prefer this table when present and fall back to the live
+--     aggregation otherwise. Note: works.download_count is universally unpopulated,
+--     so /metrics/annual.total_downloads is served as 0 until that column is filled.
+
 -- Previously applied (recorded in backups/data.schema.<date>.sql):
 --   * works.latest_publication_year + idx_works_latest_pub_year, maintained by
 --     sp_refresh_works_publication_years.

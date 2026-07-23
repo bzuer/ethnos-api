@@ -47,13 +47,19 @@ class PersonsController {
         });
       }
 
+      const normalizeTerm = value => {
+        if (typeof value !== 'string') return value || undefined;
+        const trimmed = value.trim();
+        return trimmed.length ? trimmed : undefined;
+      };
+
+      const search = normalizeTerm(req.query.search) ?? normalizeTerm(req.query.q);
+
       const filters = {
         page: req.query.page,
         limit: req.query.limit,
         offset: req.query.offset,
-        search: req.query.search,
-        affiliation: req.query.affiliation,
-        country: req.query.country,
+        search,
         signature: req.query.signature,
         verified: req.query.verified || undefined
       };

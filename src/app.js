@@ -216,14 +216,14 @@ app.get('/', (req, res) => {
     },
     system_status: {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
-      search_engine: 'MariaDB FULLTEXT against works (ft_works_content, ft_works_metadata) / venues (ft_venues_search) / persons (ft_persons_names)',
+      search_engine: 'Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search',
       cache: 'Redis with 30min TTL',
       rate_limiting: 'Public requests limited to 120/min per IP; a valid X-Access-Key removes the limit',
       authentication: 'No key required for data and metrics endpoints; X-Access-Key still gates /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics)'
     },
     main_categories: {
       search_discovery: {
-        description: 'Search across works, persons, and publications backed by MariaDB FULLTEXT (institutions search disabled for performance)',
+        description: 'Search across works, persons, and publications backed by Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues, subjects, organizations (institutions search disabled for performance)',
         endpoints: ['/search/works', '/search/persons', '/search/advanced', '/search/autocomplete', '/search/global']
       },
       academic_works: {
@@ -265,7 +265,7 @@ app.get('/', (req, res) => {
       collected_at: homepageStats?.collected_at || null
     },
     technical_features: {
-      search_performance: 'MariaDB FULLTEXT indexes on works (ft_works_content + ft_works_metadata) and persons (ft_persons_names) drive search; institutions search disabled for optimal performance',
+      search_performance: 'Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search; institutions search disabled for optimal performance',
       authentication: 'Open access: data and metrics endpoints need no key. An optional X-Access-Key (header: x-access-key | x-internal-key | x-api-key) lifts the rate limit and unlocks /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics).',
       rate_limits: 'Unauthenticated requests: 120/min per IP. No limit when a valid X-Access-Key is supplied.',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
@@ -274,10 +274,10 @@ app.get('/', (req, res) => {
     },
     quick_examples: {
       search_works: 'GET /search/works?q=machine+learning&limit=10',
-      get_work_details: 'GET /works/123456',
+      get_work_details: 'GET /works/22519667',
       search_authors: 'GET /persons?search=silva&limit=5',
-      venue_metrics: 'GET /venues/1/statistics',
-      system_health: 'GET /health'
+      venue_metrics: 'GET /venues/statistics',
+      system_health: 'GET /health/liveness'
     },
     support: {
       license: 'MIT License',
@@ -470,7 +470,7 @@ const startServer = async () => {
       logger.info(`Server running on port ${PORT}`);
       logger.info(`API Bibliografica ${process.env.NODE_ENV || 'development'} mode`);
       logger.info(`Health check: http://localhost:${PORT}/health`);
-      logger.info('Search engine: MariaDB FULLTEXT against works (ft_works_content, ft_works_metadata) / venues (ft_venues_search) / persons (ft_persons_names)');
+      logger.info('Search engine: Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search');
     });
 
     server.on('error', (error) => {

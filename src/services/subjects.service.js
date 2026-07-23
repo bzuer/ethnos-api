@@ -1,7 +1,7 @@
 const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
-const { withTimeout } = require('../utils/db');
+const { withTimeout, isStatementTimeout } = require('../utils/db');
 const { formatSubjectListItem, formatSubjectDetails, formatSubjectWork, formatSubjectCourse } = require('../dto/subjects.dto');
 
 class SubjectsService {
@@ -132,96 +132,93 @@ class SubjectsService {
       offset = 0 
     } = filters;
 
-    let query = `
-      SELECT
-        w.id,
-        w.title,
-        MAX(pub.year) as publication_year,
-        w.language,
-        SUBSTRING_INDEX(GROUP_CONCAT(pub.type ORDER BY pub.id DESC), ',', 1) as document_type,
-        MAX(pub.open_access) as open_access,
-        CAST(ws.relevance_score AS DOUBLE) as relevance_score,
-        ws.assigned_by,
-        0 as used_in_courses
-      FROM works w
-      JOIN work_subjects ws ON w.id = ws.work_id
-      LEFT JOIN publications pub ON w.id = pub.work_id
-      WHERE ws.subject_id = ?
-    `;
+    const pageLimit = Math.max(1, parseInt(limit, 10) || 20);
+    const pageOffset = Math.max(0, parseInt(offset, 10) || 0);
 
-    const params = [id];
+    try {
+      const idParams = [id];
+      let idQuery = `
+        SELECT ws.work_id AS work_id
+        FROM work_subjects ws
+        WHERE ws.subject_id = ?
+      `;
+      if (min_relevance) {
+        idQuery += ' AND ws.relevance_score >= ?';
+        idParams.push(parseFloat(min_relevance));
+      }
+      idQuery += `
+        ORDER BY ws.work_id DESC
+        LIMIT ? OFFSET ?
+      `;
+      idParams.push(pageLimit, pageOffset);
 
-    if (min_relevance) {
-      query += ' AND ws.relevance_score >= ?';
-      params.push(parseFloat(min_relevance));
-    }
+      const [idRows] = await pool.query(withTimeout(idQuery), idParams);
+      const workIds = (idRows || []).map((row) => row.work_id);
 
-    if (year_from) {
-      query += ' AND pub.year >= ?';
-      params.push(year_from);
-    }
-
-    if (year_to) {
-      query += ' AND pub.year <= ?';
-      params.push(year_to);
-    }
-
-    if (document_type) {
-      query += ' AND pub.type = ?';
-      params.push(document_type);
-    }
-
-    if (language) {
-      query += ' AND w.language = ?';
-      params.push(language);
-    }
-
-    query += `
-      GROUP BY w.id, w.title, w.language, ws.relevance_score, ws.assigned_by
-      ORDER BY ws.relevance_score DESC, publication_year DESC
-      LIMIT ? OFFSET ?
-    `;
-    params.push(parseInt(limit), parseInt(offset));
-
-    const [worksResult, countResult] = await Promise.all([
-      pool.query(withTimeout(query), params),
-      pool.query(
-        withTimeout(`
-          SELECT COUNT(DISTINCT w.id) AS total
+      let works = [];
+      if (workIds.length > 0) {
+        const placeholders = workIds.map(() => '?').join(', ');
+        let hydrateQuery = `
+          SELECT
+            w.id,
+            w.title,
+            MAX(pub.year) as publication_year,
+            w.language,
+            SUBSTRING_INDEX(GROUP_CONCAT(pub.type ORDER BY pub.id DESC), ',', 1) as document_type,
+            MAX(pub.open_access) as open_access,
+            CAST(ws.relevance_score AS DOUBLE) as relevance_score,
+            ws.assigned_by,
+            0 as used_in_courses
           FROM works w
-          JOIN work_subjects ws ON w.id = ws.work_id
+          JOIN work_subjects ws ON w.id = ws.work_id AND ws.subject_id = ?
           LEFT JOIN publications pub ON w.id = pub.work_id
-          WHERE ws.subject_id = ?
-          ${min_relevance ? ' AND ws.relevance_score >= ?' : ''}
-          ${year_from ? ' AND pub.year >= ?' : ''}
-          ${year_to ? ' AND pub.year <= ?' : ''}
-          ${document_type ? ' AND pub.type = ?' : ''}
-          ${language ? ' AND w.language = ?' : ''}
-        `),
-        params.slice(0, params.length - 2)
-      )
-    ]);
-    const works = worksResult[0];
-    const countRows = countResult[0];
-    const total = countRows?.[0]?.total ? Number.parseInt(countRows[0].total, 10) : 0;
+          WHERE w.id IN (${placeholders})
+        `;
+        const hydrateParams = [id, ...workIds];
+        if (year_from) { hydrateQuery += ' AND pub.year >= ?'; hydrateParams.push(year_from); }
+        if (year_to) { hydrateQuery += ' AND pub.year <= ?'; hydrateParams.push(year_to); }
+        if (document_type) { hydrateQuery += ' AND pub.type = ?'; hydrateParams.push(document_type); }
+        if (language) { hydrateQuery += ' AND w.language = ?'; hydrateParams.push(language); }
+        hydrateQuery += `
+          GROUP BY w.id, w.title, w.language, ws.relevance_score, ws.assigned_by
+          ORDER BY w.id DESC
+        `;
+        const [hydrateRows] = await pool.query(withTimeout(hydrateQuery), hydrateParams);
+        works = hydrateRows || [];
+      }
 
-    for (const w of works) {
-      if (w.relevance_score !== undefined) {
-        w.relevance_score = parseFloat(w.relevance_score);
+      for (const w of works) {
+        if (w.relevance_score !== undefined) {
+          w.relevance_score = parseFloat(w.relevance_score);
+        }
+        if (w.open_access !== undefined) {
+          w.open_access = w.open_access === 1 || w.open_access === true;
+        }
       }
-      if (w.open_access !== undefined) {
-        w.open_access = w.open_access === 1 || w.open_access === true;
+
+      const [totalRows] = await pool.query(
+        withTimeout('SELECT total_works AS total FROM subjects WHERE id = ?'),
+        [id]
+      );
+      const total = totalRows?.[0]?.total ? Number.parseInt(totalRows[0].total, 10) : 0;
+
+      const pagination = createPagination(
+        Math.floor(pageOffset / pageLimit) + 1,
+        pageLimit,
+        total
+      );
+      const result = { data: works.map(formatSubjectWork), pagination };
+      await cache.set(cacheKey, result, 1800);
+      return result;
+    } catch (error) {
+      if (isStatementTimeout(error)) {
+        return {
+          data: [],
+          pagination: createPagination(Math.floor(pageOffset / pageLimit) + 1, pageLimit, 0)
+        };
       }
+      throw error;
     }
-
-    const pagination = createPagination(
-      Math.floor(parseInt(offset, 10) / Math.max(1, parseInt(limit, 10))) + 1,
-      parseInt(limit, 10),
-      total
-    );
-    const result = { data: works.map(formatSubjectWork), pagination };
-    await cache.set(cacheKey, result, 1800);
-    return result;
   }
 
   async getSubjectCourses(id, filters = {}) {

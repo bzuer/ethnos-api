@@ -31,18 +31,6 @@ const validatePersonsQuery = [
     .trim()
     .isLength({ min: 2, max: 255 })
     .withMessage('Search term must be between 2 and 255 characters'),
-  
-  query('affiliation')
-    .optional({ values: 'falsy' })
-    .trim()
-    .isLength({ min: 2, max: 255 })
-    .withMessage('Affiliation must be between 2 and 255 characters'),
-  
-  query('country')
-    .optional({ values: 'falsy' })
-    .trim()
-    .isLength({ min: 2, max: 100 })
-    .withMessage('Country must be between 2 and 100 characters'),
 
   query('signature')
     .optional({ values: 'falsy' })
@@ -61,7 +49,7 @@ const validatePersonsQuery = [
  * /persons:
  *   get:
  *     summary: Get list of researchers and authors
- *     description: Retrieve a paginated list of academic researchers and authors. Supports filtering by name, affiliation, country, and verification status.
+ *     description: Retrieve a paginated list of academic researchers and authors. Supports filtering by name, signature, and verification status.
  *     tags: [Persons]
  *     parameters:
  *       - in: query
@@ -94,22 +82,6 @@ const validatePersonsQuery = [
  *           maxLength: 255
  *         description: Search term to filter persons by name
  *         example: John Smith
- *       - in: query
- *         name: affiliation
- *         schema:
- *           type: string
- *           minLength: 2
- *           maxLength: 255
- *         description: Filter by institutional affiliation
- *         example: Stanford University
- *       - in: query
- *         name: country
- *         schema:
- *           type: string
- *           minLength: 2
- *           maxLength: 100
- *         description: Filter by country
- *         example: United States
  *       - in: query
  *         name: signature
  *         schema:

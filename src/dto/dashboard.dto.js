@@ -50,7 +50,7 @@ const formatPerformanceChart = (chartData) => {
     },
     health_indicators: {
       performance_score: calculatePerformanceScore(point),
-      status: point.avg_response_time > 50 ? 'slow' : point.error_rate > 0.05 ? 'degraded' : 'healthy'
+      status: point.avg_response_time > 50 ? 'slow' : point.error_rate > 5 ? 'degraded' : 'healthy'
     }
   })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 };
@@ -134,7 +134,7 @@ const calculatePerformanceScore = (point) => {
   
   const errorRate = parseFloat(point.error_rate) || 0;
   if (errorRate > 0.1) score -= 50;
-  else if (errorRate > 0.05) score -= 25;
+  else if (errorRate > 5) score -= 25;
   else if (errorRate > 0.01) score -= 10;
   
   return Math.max(0, Math.min(100, Math.round(score)));

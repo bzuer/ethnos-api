@@ -319,8 +319,8 @@ class CitationsService {
               SUM(CASE WHEN wr.citation_type = 'NEUTRAL' THEN 1 ELSE 0 END) as neutral_citations,
               SUM(CASE WHEN wr.citation_type = 'NEGATIVE' THEN 1 ELSE 0 END) as negative_citations,
               SUM(CASE WHEN wr.citation_type = 'SELF' THEN 1 ELSE 0 END) as self_citations,
-              MIN((SELECT MIN(p.year) FROM publications p WHERE p.work_id = wr.citing_work_id)) as first_citation_year,
-              MAX((SELECT MIN(p.year) FROM publications p WHERE p.work_id = wr.citing_work_id)) as latest_citation_year
+              MIN((SELECT MIN(p.year) FROM publications p WHERE p.work_id = wr.citing_work_id AND p.year BETWEEN 1000 AND YEAR(CURDATE())+1)) as first_citation_year,
+              MAX((SELECT MIN(p.year) FROM publications p WHERE p.work_id = wr.citing_work_id AND p.year BETWEEN 1000 AND YEAR(CURDATE())+1)) as latest_citation_year
             FROM work_references wr
             WHERE wr.cited_work_id = :workId
               AND wr.status = 'RESOLVED'

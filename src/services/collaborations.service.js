@@ -31,20 +31,32 @@ class CollaborationsService {
         return cached;
       }
 
+      const sortColumnMap = {
+        collaboration_count: 'collaboration_count DESC',
+        latest_collaboration_year: 'latest_collaboration_year DESC',
+        avg_citations_together: 'avg_citations_together DESC'
+      };
+      const orderByClause = sortColumnMap[sort_by] || sortColumnMap.collaboration_count;
+
       const collaborators = await sequelize.query(withTimeout(`
         SELECT
           p2.id AS collaborator_id,
           p2.preferred_name AS collaborator_name,
-          COUNT(DISTINCT a1.work_id) AS collaboration_count
+          COUNT(DISTINCT a1.work_id) AS collaboration_count,
+          ROUND(AVG(COALESCE(w.citation_count, 0)), 2) AS avg_citations_together,
+          MIN(pub.year) AS first_collaboration_year,
+          MAX(pub.year) AS latest_collaboration_year
         FROM authorships a1
         INNER JOIN authorships a2 ON a1.work_id = a2.work_id
         INNER JOIN persons p2 ON a2.person_id = p2.id
+        LEFT JOIN works w ON w.id = a1.work_id
+        LEFT JOIN publications pub ON pub.work_id = a1.work_id
         WHERE a1.person_id = :id
           AND a2.person_id != :id
           AND a2.person_id IS NOT NULL
         GROUP BY p2.id, p2.preferred_name
         HAVING COUNT(DISTINCT a1.work_id) >= :min
-        ORDER BY collaboration_count DESC
+        ORDER BY ${orderByClause}
         LIMIT :limit OFFSET :offset
       `), {
         replacements: {
@@ -375,7 +387,7 @@ class CollaborationsService {
         for (const row of names) nameMap[row.id] = row.preferred_name;
       }
 
-      const formattedPairs = topPairsList.map(pair => formatTopCollaboration({
+      const formattedPairs = topPairsList.map((pair, i) => formatTopCollaboration({
         person1_id: pair.person1_id,
         person1_name: nameMap[pair.person1_id] || null,
         person2_id: pair.person2_id,
@@ -385,7 +397,7 @@ class CollaborationsService {
         first_collaboration_year: pair.first_collaboration_year ? parseInt(pair.first_collaboration_year, 10) : null,
         latest_collaboration_year: pair.latest_collaboration_year ? parseInt(pair.latest_collaboration_year, 10) : null,
         collaboration_strength: this.calculateCollaborationStrength(pair.collaboration_count)
-      }));
+      }, offset + i + 1));
 
       const result = {
         top_collaborations: formattedPairs,

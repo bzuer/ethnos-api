@@ -199,7 +199,7 @@ class MetricsController {
         limit: pagination.limit,
         page: pagination.page,
         offset: pagination.offset,
-        min_collaborations: req.query.min_collaborations || 2
+        min_collaborations: parseInt(req.query.min_collaborations, 10) || 2
       };
 
       const result = await metricsService.getCollaborations(filters);

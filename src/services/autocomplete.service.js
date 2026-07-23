@@ -248,41 +248,41 @@ class AutocompleteService {
 
         try {
             const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 20, 50));
-            const fetchLimit = sanitizedLimit * 3;
+            const counts = new Map();
 
-            const rows = await sequelize.query(`
-                SELECT LOWER(SUBSTRING_INDEX(SUBSTRING_INDEX(w.title, ' ', numbers.n), ' ', -1)) AS term,
-                       COUNT(*) AS frequency
-                FROM works w
-                INNER JOIN publications p ON p.work_id = w.id
-                JOIN (
-                    SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL
-                    SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL
-                    SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10
-                ) numbers
-                ON CHAR_LENGTH(w.title) - CHAR_LENGTH(REPLACE(w.title, ' ', '')) >= numbers.n - 1
-                WHERE p.year >= 2020
-                  AND CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(w.title, ' ', numbers.n), ' ', -1)) > 3
-                GROUP BY term
-                HAVING frequency > 10
-                ORDER BY frequency DESC
-                LIMIT :fetchLimit
-            `, {
-                replacements: { fetchLimit },
-                type: sequelize.QueryTypes.SELECT
-            });
+            if (redis.connected) {
+                const today = new Date();
+                for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
+                    const day = new Date(today.getTime() - dayOffset * 86400000);
+                    const key = `search_analytics:${day.toISOString().slice(0, 10)}`;
+                    let entries = [];
+                    try {
+                        entries = await redis.lrange(key, 0, 1999);
+                    } catch (readError) {
+                        entries = [];
+                    }
+                    for (const raw of entries || []) {
+                        let term = null;
+                        try {
+                            term = JSON.parse(raw)?.query;
+                        } catch (parseError) {
+                            term = null;
+                        }
+                        if (!term) continue;
+                        term = String(term).trim().toLowerCase();
+                        if (term.length < 2 || this.stopWords.has(term)) continue;
+                        counts.set(term, (counts.get(term) || 0) + 1);
+                    }
+                }
+            }
 
-            const terms = (rows || [])
-                .filter(row => !this.stopWords.has(row.term))
-                .slice(0, sanitizedLimit)
-                .map(row => ({
-                    term: row.term,
-                    frequency: parseInt(row.frequency, 10),
-                    type: 'popular'
-                }));
+            const terms = Array.from(counts.entries())
+                .map(([term, frequency]) => ({ term, frequency, type: 'popular' }))
+                .sort((a, b) => b.frequency - a.frequency)
+                .slice(0, sanitizedLimit);
 
-            if (redis.connected && terms.length > 0) {
-                redis.setex(cacheKey, 21600, JSON.stringify(terms));
+            if (redis.connected) {
+                redis.setex(cacheKey, 600, JSON.stringify(terms));
             }
 
             return terms;
