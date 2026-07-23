@@ -46,7 +46,7 @@ const venuesController = require('../controllers/venues.controller');
  *           type: string
  *           minLength: 1
  *           maxLength: 200
- *         description: Search term to filter venues by name
+ *         description: Free-text term matched with a MariaDB LIKE over `name`, `abbreviated_name`, `issn`, `eissn`, and the publisher name. (The dedicated `/venues/search` endpoint uses `q` instead.)
  *         example: Nature
  *       - in: query
  *         name: sortBy
@@ -58,15 +58,27 @@ const venuesController = require('../controllers/venues.controller');
  *           Field to sort by. Defaults to `score` (global ranking score) so the most important venues come first.
  *           `oldest` is an alias for `coverage_start_year` (ASC by default — oldest coverage first); `newest` is an alias
  *           for `coverage_end_year` (DESC by default — most recently covered first). Rows with NULL coverage years are
- *           always pushed to the tail regardless of direction.
+ *           always pushed to the tail regardless of direction. The snake_case spelling `sort_by` is also accepted.
  *         example: score
+ *       - in: query
+ *         name: sort_by
+ *         schema:
+ *           type: string
+ *           enum: [name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest]
+ *         description: snake_case alias of `sortBy`.
  *       - in: query
  *         name: sortOrder
  *         schema:
  *           type: string
  *           enum: [ASC, DESC]
- *         description: Sort order. When omitted, numeric/ranking fields default to `DESC`; `id`, `name`, `type`, `coverage_start_year`, and `oldest` default to `ASC`; `coverage_end_year` and `newest` default to `DESC`.
+ *         description: Sort order. When omitted, numeric/ranking fields default to `DESC`; `id`, `name`, `type`, `coverage_start_year`, and `oldest` default to `ASC`; `coverage_end_year` and `newest` default to `DESC`. The snake_case spelling `sort_order` is also accepted.
  *         example: DESC
+ *       - in: query
+ *         name: sort_order
+ *         schema:
+ *           type: string
+ *           enum: [ASC, DESC]
+ *         description: snake_case alias of `sortOrder`.
  *       - in: query
  *         name: coverage_from
  *         schema:
@@ -120,7 +132,22 @@ const venuesController = require('../controllers/venues.controller');
  *         description: Keyset-pagination helper — return only venues with `id` greater than or equal to this value.
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Paginated list of venues. `offset` is snapped to a page boundary and echoed under `meta.pagination_extras.offset`; `meta.sort` reports the effective `{ by, order }`, and `meta.filters` appears only when a filter is applied.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/VenueListItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       500:
@@ -199,46 +226,22 @@ router.get(
  * /venues/statistics:
  *   get:
  *     summary: Get venue statistics
- *     description: Retrieve comprehensive statistics about venues in the system including type distribution and metrics
+ *     description: Retrieve aggregate venue counts (per type, all six types) and impact-factor / ranking-score summaries. Returns a single flat object (no pagination).
  *     tags: [Venues]
  *     responses:
  *       200:
- *         description: Venue statistics retrieved successfully
+ *         description: Aggregate venue statistics.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     total_venues:
- *                       type: integer
- *                       example: 1563
- *                     by_type:
- *                       type: object
- *                       properties:
- *                         JOURNAL:
- *                           type: integer
- *                           example: 892
- *                         CONFERENCE:
- *                           type: integer
- *                           example: 445
- *                         REPOSITORY:
- *                           type: integer
- *                           example: 156
- *                         BOOK_SERIES:
- *                           type: integer
- *                           example: 70
- *                     avg_impact_factor:
- *                       type: number
- *                       format: float
- *                       example: 3.2
+ *                     data:
+ *                       $ref: '#/components/schemas/VenueStatistics'
  *       500:
- *         description: Internal server error
+ *         $ref: '#/components/responses/InternalError'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  */
@@ -252,7 +255,7 @@ router.get(
  * /venues/search:
  *   get:
  *     summary: Search venues
- *     description: Search for venues by name and filter by type
+ *     description: Search venues by name (MariaDB LIKE over `name`, `abbreviated_name`, `issn`, `eissn`, and publisher name), optionally filtered by type. Rows are the same shape as `/venues`; results are fixed-ordered by `COALESCE(total_score,0) DESC, name ASC` (no sort param). `meta` carries `source` and the echoed `query`.
  *     tags: [Venues]
  *     parameters:
  *       - in: query
@@ -262,7 +265,7 @@ router.get(
  *           type: string
  *           minLength: 1
  *           maxLength: 200
- *         description: Search query for venue name
+ *         description: Search query for venue name (required; this endpoint uses `q`, not `search`).
  *         example: Nature
  *       - in: query
  *         name: type
@@ -287,21 +290,29 @@ router.get(
  *         description: Number of items to skip
  *     responses:
  *       200:
- *         description: Search results
+ *         description: Paginated venue search results (same row shape as `/venues`).
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Venue'
- *                 pagination:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/VenueListItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *                       properties:
+ *                         source:
+ *                           type: string
+ *                           example: venues
+ *                         query:
+ *                           type: string
+ *                           description: Echo of the `q` search term.
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -366,17 +377,16 @@ router.get(
  *         description: Include the venue's most recent works.
  *     responses:
  *       200:
- *         description: Venue details
+ *         description: Full venue detail. `meta.includes` reflects the effective include flags. `top_publications[]` is always present when non-empty (it has no include flag).
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   $ref: '#/components/schemas/Venue'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/VenueDetail'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -482,32 +492,45 @@ router.get(
  *         name: sort_by
  *         schema:
  *           type: string
- *           enum: [cited_by_count, references_count, publication_year]
- *         description: Primary sort key. `cited_by_count` surfaces the venue's most cited works first.
+ *           enum: [cited_by_count, references_count, publication_year, citation_count, reference_count, year]
+ *         description: Primary sort key. `cited_by_count` surfaces the venue's most cited works first. Accepted aliases — `citation_count` (= `cited_by_count`), `reference_count` (= `references_count`), `year` (= `publication_year`); the camelCase spelling `sortBy` is also honoured.
  *       - in: query
  *         name: sort_order
  *         schema:
  *           type: string
  *           enum: [ASC, DESC]
  *           default: DESC
- *         description: Sort direction for `sort_by`.
+ *         description: Sort direction for `sort_by` (camelCase `sortOrder` also honoured).
+ *       - in: query
+ *         name: citation_count_min
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Alias of `cited_by_min`.
+ *       - in: query
+ *         name: citation_count_max
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Alias of `cited_by_max`.
  *     responses:
  *       200:
- *         description: Works in venue
+ *         description: Paginated works published in the venue. Rows key the publication year as `year` (not `publication_year`). `meta` carries only `request` and `pagination_extras` (plus `filters.year` when `year` is set) — there is no `meta.match_mode` or `meta.sort` here.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Work'
- *                 pagination:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/VenueWork'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:

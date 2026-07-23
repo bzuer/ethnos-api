@@ -111,30 +111,54 @@ const validateInstructorBibliography = [
  *         name: role
  *         schema:
  *           type: string
- *         description: Filter by instructor role
+ *           minLength: 1
+ *           maxLength: 100
+ *         description: Exact match on course_instructors.role (e.g. PROFESSOR)
  *       - in: query
  *         name: program_id
  *         schema:
  *           type: integer
- *         description: Filter by program ID
+ *           minimum: 1
+ *         description: Exact match on courses.program_id
  *       - in: query
  *         name: year_from
  *         schema:
  *           type: integer
- *         description: Filter from year
+ *           minimum: 1900
+ *         description: Keep instructors teaching a course with year >= this
  *       - in: query
  *         name: year_to
  *         schema:
  *           type: integer
- *         description: Filter to year
+ *           minimum: 1900
+ *         description: Keep instructors teaching a course with year <= this
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
- *         description: Filter by instructor name
+ *           minLength: 2
+ *           maxLength: 200
+ *         description: LIKE match across preferred_name / given_names / family_name
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Paginated instructors, ordered by courses_taught DESC then preferred_name ASC (no sort param).
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/InstructorListItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -146,11 +170,23 @@ router.get('/', validateInstructorList, instructorsController.getInstructors);
  * @swagger
  * /instructors/statistics:
  *   get:
- *     summary: Instructors statistics
+ *     summary: Aggregate instructors statistics
+ *     description: Corpus-wide totals, role distribution, and a top-instructors leaderboard. No query params, no pagination.
  *     tags: [Instructors]
  *     responses:
  *       200:
- *         $ref: '#/components/responses/InstructorsStatisticsSuccess'
+ *         description: Aggregate instructor statistics.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/InstructorStatisticsSummary'
+ *                     meta:
+ *                       type: object
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -163,6 +199,7 @@ router.get('/statistics', instructorsController.getInstructorsStatistics);
  * /instructors/{id}:
  *   get:
  *     summary: Get instructor by ID
+ *     description: Single instructor. Returns 404 when the person id is not present in course_instructors.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -170,9 +207,23 @@ router.get('/statistics', instructorsController.getInstructorsStatistics);
  *         required: true
  *         schema:
  *           type: integer
+ *           minimum: 1
  *     responses:
  *       200:
- *         $ref: '#/components/responses/InstructorDetailsSuccess'
+ *         description: Instructor detail.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/InstructorDetail'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -187,6 +238,7 @@ router.get('/:id', validateInstructorId, instructorsController.getInstructorById
  * /instructors/{id}/courses:
  *   get:
  *     summary: List courses taught by an instructor
+ *     description: Courses for the instructor, ordered by year DESC, semester, name. Unknown ids yield an empty page (no 404).
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -194,6 +246,7 @@ router.get('/:id', validateInstructorId, instructorsController.getInstructorById
  *         required: true
  *         schema:
  *           type: integer
+ *           minimum: 1
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -201,25 +254,54 @@ router.get('/:id', validateInstructorId, instructorsController.getInstructorById
  *         name: year_from
  *         schema:
  *           type: integer
+ *           minimum: 1900
+ *         description: Keep courses with year >= this
  *       - in: query
  *         name: year_to
  *         schema:
  *           type: integer
+ *           minimum: 1900
+ *         description: Keep courses with year <= this
  *       - in: query
  *         name: program_id
  *         schema:
  *           type: integer
+ *           minimum: 1
+ *         description: Exact match on courses.program_id
  *       - in: query
  *         name: semester
  *         schema:
  *           type: string
+ *           minLength: 1
+ *           maxLength: 20
+ *         description: Exact match on courses.semester
  *       - in: query
  *         name: role
  *         schema:
  *           type: string
+ *           minLength: 1
+ *           maxLength: 100
+ *         description: Exact match on the instructor's role in the course
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Paginated courses taught by the instructor.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/InstructorCourse'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -230,7 +312,8 @@ router.get('/:id', validateInstructorId, instructorsController.getInstructorById
  * @swagger
  * /instructors/{id}/statistics:
  *   get:
- *     summary: Instructor statistics
+ *     summary: Rich instructor teaching and authorship profile
+ *     description: Combined teaching + authorship analytics for one instructor. Gates on course_instructors membership (404 for non-instructors). No pagination or query params. Sub-arrays are empty when the underlying course_bibliography / authorship data is not yet loaded.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -238,9 +321,23 @@ router.get('/:id', validateInstructorId, instructorsController.getInstructorById
  *         required: true
  *         schema:
  *           type: integer
+ *           minimum: 1
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Full instructor statistics payload.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/InstructorStatistics'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -256,6 +353,7 @@ router.get('/:id/courses', validateInstructorCourses, instructorsController.getI
  * /instructors/{id}/subjects:
  *   get:
  *     summary: List instructor subject expertise
+ *     description: Subjects derived from works in the instructor's course bibliographies, ordered by courses_count DESC then works_count DESC. Empty until course_bibliography data is loaded.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -263,6 +361,7 @@ router.get('/:id/courses', validateInstructorCourses, instructorsController.getI
  *         required: true
  *         schema:
  *           type: integer
+ *           minimum: 1
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -270,9 +369,29 @@ router.get('/:id/courses', validateInstructorCourses, instructorsController.getI
  *         name: vocabulary
  *         schema:
  *           type: string
+ *           minLength: 2
+ *           maxLength: 100
+ *         description: Exact match on subjects.vocabulary
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Paginated subject expertise for the instructor.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/InstructorSubject'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -285,6 +404,7 @@ router.get('/:id/subjects', validateInstructorSubjects, instructorsController.ge
  * /instructors/{id}/bibliographies:
  *   get:
  *     summary: List bibliography entries linked to an instructor
+ *     description: Works used as bibliography across the instructor's courses, ordered by used_in_courses DESC then publication_year DESC. Empty until course_bibliography data is loaded.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -292,6 +412,7 @@ router.get('/:id/subjects', validateInstructorSubjects, instructorsController.ge
  *         required: true
  *         schema:
  *           type: integer
+ *           minimum: 1
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -299,17 +420,41 @@ router.get('/:id/subjects', validateInstructorSubjects, instructorsController.ge
  *         name: reading_type
  *         schema:
  *           type: string
+ *           minLength: 1
+ *           maxLength: 50
+ *         description: Exact match on course_bibliography.reading_type
  *       - in: query
  *         name: year_from
  *         schema:
  *           type: integer
+ *           minimum: 1900
+ *         description: Keep works whose latest publication year >= this
  *       - in: query
  *         name: year_to
  *         schema:
  *           type: integer
+ *           minimum: 1900
+ *         description: Keep works whose latest publication year <= this
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Paginated bibliography works for the instructor.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/InstructorBibliographyItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:

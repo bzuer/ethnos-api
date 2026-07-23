@@ -123,14 +123,33 @@ const validatePublicationsQuery = [
  *   get:
  *     summary: List publications
  *     description: |
- *       Returns a paginated list of publications backed by `publications` + `works` + `venues`.
- *       Filters can target the parent work (`work_type`, `language`, `work_id`)
- *       or the publication itself (`year_from`, `year_to`, `open_access`,
- *       `peer_reviewed`, `has_files`, `venue`, `venue_id`, `publisher_id`,
- *       `doi`). Free-text queries (`q`) use MariaDB FULLTEXT against
- *       `ft_works_content`; metadata filters (`venue`, `author`, `subject`)
- *       use FULLTEXT against `ft_works_metadata` (authors + subjects) and
- *       `ft_venues_search` (venue name + abbreviated name).
+ *       Returns a paginated list of publications backed by
+ *       `publications p INNER JOIN works w LEFT JOIN venues v LEFT JOIN organizations publisher`.
+ *       Paginate-then-hydrate: a page of `p.id` is selected first (joining
+ *       `works` only when a `w.` column is referenced), then the full row set is
+ *       hydrated for those ids.
+ *
+ *       Full-text resolution:
+ *       - `q`, `author`, `subject` resolve matching work ids through **Manticore**
+ *         (`q` spans title+subtitle+abstract+authors+subjects+venue; `author` → `authors`;
+ *         `subject` → `subjects`), capped at 5000 work ids. When a full-text term
+ *         participates, `meta.engine` is `"Manticore"` and the total is exact; the cap
+ *         hit sets `meta.fulltext_truncated=true` and `meta.fulltext_work_cap=5000`.
+ *       - `venue` (substring) resolves through MariaDB `ft_venues_search`
+ *         (venue name + abbreviated name, boolean mode) and flips the venue join to INNER.
+ *       - All other filters (`type`, `language`, `year_from`/`year_to`, `open_access`,
+ *         `peer_reviewed`, `has_files`, `venue_id`, `publisher_id`, `work_id`, `doi`,
+ *         `cited_by_min`/`cited_by_max`) hit B-tree indexes directly and set `meta.engine="MariaDB"`.
+ *
+ *       `pagination.total` is only reliable when `meta.pagination_total_exact` is `true`.
+ *       When `false` (e.g. `type` or `year_from`/`year_to` whose count exceeds the 2s budget),
+ *       `pagination.total` is the whole-corpus estimate, NOT the filtered subset — use
+ *       `data.length < limit` as the last-page terminator. `cited_by_min`/`cited_by_max`
+ *       and the `cited_by_count`/`references_count` sorts run against the indexed
+ *       denormalized `p.citation_count`/`p.reference_count` and DO return exact totals fast.
+ *
+ *       Note: `sort_by=relevance` is accepted but is a no-op on this listing (falls back to
+ *       `p.id DESC`); publications are never ordered by full-text relevance.
  *     tags: [Publications]
  *     parameters:
  *       - in: query
@@ -161,14 +180,16 @@ const validatePublicationsQuery = [
  *           type: string
  *           minLength: 1
  *           maxLength: 200
- *         description: Free-text query over the work title and subjects of each publication.
- *         example: machine learning
+ *         description: >-
+ *           Manticore full-text query spanning title, subtitle, abstract, authors,
+ *           subjects and venue of each publication's parent work. Sets `meta.engine="Manticore"`.
+ *         example: ritual
  *       - in: query
  *         name: type
  *         schema:
  *           type: string
- *           maxLength: 50
- *         description: Work type filter (ARTICLE, BOOK, CHAPTER, ...)
+ *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
+ *         description: Exact publication type filter on `p.type`.
  *         example: ARTICLE
  *       - in: query
  *         name: language
@@ -196,23 +217,28 @@ const validatePublicationsQuery = [
  *         name: open_access
  *         schema:
  *           type: boolean
- *         description: Filter by open access flag
+ *         description: Filter by open access flag (accepts 1/0/true/false)
  *       - in: query
  *         name: peer_reviewed
  *         schema:
  *           type: boolean
- *         description: Filter by peer reviewed flag
+ *         description: Filter by peer reviewed flag (accepts 1/0/true/false)
  *       - in: query
  *         name: has_files
  *         schema:
  *           type: boolean
- *         description: Filter publications that carry attached files
+ *         description: >-
+ *           Keep only publications with (or without) attached files, enforced via
+ *           `EXISTS (files)`. Combine with a selective filter (e.g. `venue_id`);
+ *           a standalone `has_files=true` can exceed the statement budget.
  *       - in: query
  *         name: venue
  *         schema:
  *           type: string
  *           maxLength: 255
- *         description: Substring match against the publication venue search field
+ *         description: >-
+ *           Substring match against the venue name and abbreviated name via MariaDB
+ *           `ft_venues_search` (boolean mode). This is the only text predicate that runs in MariaDB.
  *       - in: query
  *         name: venue_id
  *         schema:
@@ -242,34 +268,37 @@ const validatePublicationsQuery = [
  *         schema:
  *           type: string
  *           maxLength: 255
- *         description: Match publications whose work has an author matching this term.
+ *         description: Manticore `authors` match; publications whose work has an author matching this term (AND semantics across tokens).
  *       - in: query
  *         name: subject
  *         schema:
  *           type: string
  *           maxLength: 255
- *         description: Match publications whose work is tagged with this subject term.
+ *         description: Manticore `subjects` match; publications whose work is tagged with this subject term.
  *       - in: query
  *         name: cited_by_min
  *         schema:
  *           type: integer
  *           minimum: 0
- *         description: Keep only publications whose parent work has cited_by_count >= this value.
+ *         description: >-
+ *           Inclusive lower bound on the indexed `p.citation_count`. Alias `citation_count_min`. Returns an exact total.
  *         example: 5
  *       - in: query
  *         name: cited_by_max
  *         schema:
  *           type: integer
  *           minimum: 0
- *         description: Keep only publications whose parent work has cited_by_count <= this value.
+ *         description: Inclusive upper bound on the indexed `p.citation_count`. Alias `citation_count_max`.
  *       - in: query
  *         name: sort_by
  *         schema:
  *           type: string
- *           enum: [cited_by_count, references_count, publication_year, id, relevance]
- *         description: |
- *           Primary sort key. `cited_by_count` surfaces the most cited publications first; `relevance`
- *           is only meaningful when `q`, `venue`, `author`, or `subject` is set (FULLTEXT path).
+ *           enum: [cited_by_count, citation_count, references_count, reference_count, publication_year, year, id, publication_id, relevance]
+ *         description: >-
+ *           Primary sort key (aliases: `citation_count`=`cited_by_count`, `reference_count`=`references_count`,
+ *           `year`=`publication_year`, `publication_id`=`id`; camelCase `sortBy` is also accepted).
+ *           `cited_by_count`/`references_count` sort the indexed `p.citation_count`/`p.reference_count`.
+ *           `relevance` is accepted but is a no-op (falls back to `p.id DESC`). Default order is `p.id DESC`.
  *         example: cited_by_count
  *       - in: query
  *         name: sort_order
@@ -277,32 +306,49 @@ const validatePublicationsQuery = [
  *           type: string
  *           enum: [ASC, DESC]
  *           default: DESC
- *         description: Sort direction for `sort_by`. Defaults to DESC.
+ *         description: Sort direction for `sort_by` (case-insensitive; alias `sortOrder`). Defaults to DESC.
  *     responses:
  *       200:
- *         description: Publications retrieved successfully
+ *         description: >-
+ *           Publications retrieved. `meta.engine` is `"Manticore"` when a full-text term
+ *           (`q`/`author`/`subject`) participates, else `"MariaDB"`; `meta.pagination_total_exact`
+ *           gates the reliability of `pagination.total`; `meta.fulltext_truncated`/`meta.fulltext_work_cap`
+ *           appear when the Manticore work-id cap is hit; `meta.page_degraded` appears if the id-selection
+ *           budget fires.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                 pagination:
- *                   $ref: '#/components/schemas/PaginationMeta'
- *                 meta:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     engine:
- *                       type: string
- *                       example: MariaDB
- *                     elapsed_ms:
- *                       type: integer
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/PublicationListItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *                       properties:
+ *                         engine:
+ *                           type: string
+ *                           enum: [MariaDB, Manticore]
+ *                         pagination_total_exact:
+ *                           type: boolean
+ *                         elapsed_ms:
+ *                           type: integer
+ *                         fulltext_truncated:
+ *                           type: boolean
+ *                         fulltext_work_cap:
+ *                           type: integer
+ *                         page_degraded:
+ *                           type: boolean
+ *                         pagination_extras:
+ *                           type: object
+ *                           properties:
+ *                             offset:
+ *                               type: integer
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -339,47 +385,29 @@ router.get('/', validatePublicationsQuery, publicationsController.getPublication
  *         schema:
  *           type: boolean
  *           default: true
- *         description: Include the cited_by block hydrated from work_references
+ *         description: >-
+ *           Include the incoming-citations array hydrated from `work_references`. When `false`,
+ *           `data.citations` is `null` (not an empty array).
  *       - in: query
  *         name: include_references
  *         schema:
  *           type: boolean
  *           default: true
- *         description: Include the references block hydrated from work_references
+ *         description: >-
+ *           Include the `references` block (`{resolved[], unresolved[]}`) hydrated from `work_references`.
+ *           When `false`, `data.references` is `null`.
  *     responses:
  *       200:
  *         description: Publication retrieved successfully
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     id:
- *                       type: integer
- *                     identifiers:
- *                       type: object
- *                     work:
- *                       type: object
- *                     siblings:
- *                       type: array
- *                       items:
- *                         type: object
- *                     files:
- *                       type: array
- *                       items:
- *                         type: object
- *                     venue:
- *                       type: object
- *                       nullable: true
- *                     publisher:
- *                       type: object
- *                       nullable: true
+ *                     data:
+ *                       $ref: '#/components/schemas/PublicationDetail'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       404:

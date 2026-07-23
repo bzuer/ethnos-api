@@ -81,7 +81,12 @@ const validateNetworkDepth = [
  *   get:
  *     summary: Get collaborators for a person
  *     tags: [Collaborations]
- *     description: Retrieve all research collaborators for a specific person with collaboration metrics
+ *     description: >-
+ *       Co-authors of a person ranked by shared-work count, with per-pair metrics
+ *       (shared works, average shared citations, collaboration strength) and the
+ *       collaboration timespan. Returns 200 with an empty `collaborators[]` when the
+ *       person exists and has co-authors but none meet `min_collaborations`; returns
+ *       404 only when the person has no co-authors at all or does not exist.
  *     parameters:
  *       - name: id
  *         in: path
@@ -89,10 +94,10 @@ const validateNetworkDepth = [
  *         description: Person ID
  *         schema:
  *           type: integer
- *           example: 1
+ *           example: 18165
  *       - name: min_collaborations
  *         in: query
- *         description: Minimum number of collaborations to include
+ *         description: Minimum shared-work count for a co-author to be included (HAVING >= n).
  *         schema:
  *           type: integer
  *           minimum: 1
@@ -100,7 +105,10 @@ const validateNetworkDepth = [
  *           default: 2
  *       - name: sort_by
  *         in: query
- *         description: Sort criteria
+ *         description: >-
+ *           Ordering of the collaborator list. `collaboration_count` sorts by shared works,
+ *           `latest_collaboration_year` by most recent shared publication year,
+ *           `avg_citations_together` by average citations of shared works.
  *         schema:
  *           type: string
  *           enum: [collaboration_count, latest_collaboration_year, avg_citations_together]
@@ -114,41 +122,29 @@ const validateNetworkDepth = [
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     person_id:
- *                       type: integer
- *                     collaborators:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           collaborator_id:
- *                             type: integer
- *                           collaborator_name:
- *                             type: string
- *                           collaboration_metrics:
- *                             type: object
- *                             properties:
- *                               total_collaborations:
- *                                 type: integer
- *                               collaboration_span_years:
- *                                 type: integer
- *                               avg_citations_together:
- *                                 type: number
- *                               open_access_percentage:
- *                                 type: number
- *                           collaboration_strength:
- *                             type: string
- *                             enum: [very_strong, strong, moderate, weak]
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         person_id:
+ *                           type: integer
+ *                           description: The queried person id.
+ *                         collaborators:
+ *                           type: array
+ *                           items:
+ *                             $ref: '#/components/schemas/PersonCollaborator'
  *                     pagination:
  *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *                       description: >-
+ *                         Includes `source` (`collaboration_analysis`), `person_id`,
+ *                         `filters.{min_collaborations,sort_by}`,
+ *                         `summary.{total_collaborators,avg_collaborations_per_collaborator}`,
+ *                         `query_time_ms`, and `pagination_extras.offset`.
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       404:
@@ -166,7 +162,12 @@ router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollab
  *   get:
  *     summary: Get collaboration network for a person
  *     tags: [Collaborations]
- *     description: Build collaboration network showing research relationships
+ *     description: >-
+ *       Co-authorship ego-network built by BFS outward from the person. `nodes` is a
+ *       map keyed by stringified person-id; `edges` are undirected co-authorship links
+ *       whose `weight` (shared works) is at least 2. The result is capped at 120 nodes
+ *       with a per-node fan-out of 20 direct collaborators. Returns 404 when the person
+ *       does not exist or has no co-authorship network.
  *     parameters:
  *       - name: id
  *         in: path
@@ -174,10 +175,10 @@ router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollab
  *         description: Person ID
  *         schema:
  *           type: integer
- *           example: 1
+ *           example: 18165
  *       - name: depth
  *         in: query
- *         description: Network depth (1-3 levels)
+ *         description: Network depth in levels (BFS hops from the central person).
  *         schema:
  *           type: integer
  *           minimum: 1
@@ -189,55 +190,17 @@ router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollab
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     central_person_id:
- *                       type: integer
- *                     network_depth:
- *                       type: integer
- *                     nodes:
+ *                     data:
+ *                       $ref: '#/components/schemas/PersonNetwork'
+ *                     meta:
  *                       type: object
- *                       additionalProperties:
- *                         type: object
- *                         properties:
- *                           id:
- *                             type: integer
- *                           name:
- *                             type: string
- *                           type:
- *                             type: string
- *                             enum: [central, direct_collaborator, second_degree_collaborator]
- *                           level:
- *                             type: integer
- *                     edges:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           source:
- *                             type: integer
- *                           target:
- *                             type: integer
- *                           weight:
- *                             type: integer
- *                           relationship:
- *                             type: string
- *                     network_stats:
- *                       type: object
- *                       properties:
- *                         total_nodes:
- *                           type: integer
- *                         total_edges:
- *                           type: integer
- *                         direct_collaborators:
- *                           type: integer
- *                         network_density:
- *                           type: string
+ *                       description: >-
+ *                         Includes `source` (`network_analysis`), `query_time_ms`, and
+ *                         `complexity` (a duplicate of `network_stats`).
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       404:
@@ -255,11 +218,16 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *   get:
  *     summary: Get top research collaborations
  *     tags: [Collaborations]
- *     description: Retrieve the most productive research partnerships
+ *     description: >-
+ *       Most productive research partnerships — pairs of persons who co-authored,
+ *       ranked by shared-work count. Restricted to the top 2000 persons by total works,
+ *       keeping pairs whose shared-work count is at least `min_collaborations`. `data`
+ *       is a flat array ordered by shared works descending; the partnership summary is in
+ *       `meta.summary`.
  *     parameters:
  *       - name: min_collaborations
  *         in: query
- *         description: Minimum collaborations required
+ *         description: Minimum shared-work count per pair.
  *         schema:
  *           type: integer
  *           minimum: 1
@@ -267,16 +235,18 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *           default: 5
  *       - name: year_from
  *         in: query
- *         description: Filter collaborations from this year
+ *         description: Keep pairs with at least one shared publication year >= this value.
  *         schema:
  *           type: integer
- *           example: 2020
+ *           minimum: 1900
+ *           example: 2015
  *       - name: year_to
  *         in: query
- *         description: Filter collaborations up to this year
+ *         description: Keep pairs with at least one shared publication year <= this value.
  *         schema:
  *           type: integer
- *           example: 2024
+ *           minimum: 1900
+ *           example: 2020
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -286,46 +256,25 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     top_collaborations:
+ *                     data:
  *                       type: array
  *                       items:
- *                         type: object
- *                         properties:
- *                           collaboration_pair:
- *                             type: object
- *                             properties:
- *                               person1:
- *                                 type: object
- *                                 properties:
- *                                   id:
- *                                     type: integer
- *                                   name:
- *                                     type: string
- *                               person2:
- *                                 type: object
- *                                 properties:
- *                                   id:
- *                                     type: integer
- *                                   name:
- *                                     type: string
- *                           collaboration_metrics:
- *                             type: object
- *                           collaboration_strength:
- *                             type: string
- *                     summary:
+ *                         $ref: '#/components/schemas/CollaborationPair'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
  *                       type: object
- *                       properties:
- *                         total_partnerships:
- *                           type: integer
- *                         avg_collaborations:
- *                           type: integer
+ *                       description: >-
+ *                         Includes `source` (`collaboration_ranking`),
+ *                         `summary.{total_partnerships,avg_collaborations}`,
+ *                         `filters.{min_collaborations,year_from,year_to}`,
+ *                         `query_time_ms`, `pagination_extras.offset`, and (only when the
+ *                         self-join hits its statement-timeout budget and the page falls
+ *                         back to empty) `degraded: true`.
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:

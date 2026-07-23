@@ -11,16 +11,25 @@ const router = express.Router();
  * @swagger
  * /health/readiness:
  *   get:
- *     summary: Kubernetes readiness probe
- *     description: Check if the service is ready to accept requests. Validates database connectivity and essential dependencies.
+ *     summary: Readiness probe (requires access key)
+ *     description: Check if the service is ready to accept requests. Validates database connectivity via testConnection(). Returns 200 when the database is reachable, 503 when it is not. Requires a valid X-Access-Key.
  *     tags: [Health]
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       200:
+ *         description: Service is ready (database reachable)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/HealthReadiness'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- *       200:
- *         $ref: '#/components/responses/Success'
  *       503:
  *         $ref: '#/components/responses/ServiceUnavailable'
  *       429:
@@ -48,13 +57,22 @@ router.get('/readiness', requireInternalAccessKey, catchAsync(async (req, res) =
  * @swagger
  * /health/liveness:
  *   get:
- *     summary: Kubernetes liveness probe
- *     description: Basic health check to verify the service is running and responsive. Always returns success if the service is operational. Public endpoint - no access key required.
+ *     summary: Liveness probe (public)
+ *     description: Basic health check to verify the process is running and responsive. No database access; always returns 200 while the process serves. Public endpoint - no access key required.
  *     tags: [Health]
  *     security: []
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Process is alive
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/HealthLiveness'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:

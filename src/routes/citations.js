@@ -67,7 +67,35 @@ const validateNetworkDepth = [
  *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Citing works retrieved successfully. `total` is an exact `COUNT(DISTINCT citing_work_id)`.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         work_id:
+ *                           type: integer
+ *                           description: Echoes the path id.
+ *                         citing_works:
+ *                           type: array
+ *                           items:
+ *                             $ref: '#/components/schemas/CitationRow'
+ *                         filters:
+ *                           type: object
+ *                           properties:
+ *                             type:
+ *                               type: string
+ *                               description: Echoes the requested citation-type filter.
+ *                               example: all
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       404:
@@ -99,23 +127,24 @@ router.get('/works/:id/citations', [...validateWorkId, ...validatePagination, ..
  *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
- *         description: References retrieved successfully
+ *         description: >-
+ *           References retrieved successfully. `referenced_works` and `unresolved_references` are
+ *           page-scoped (filtered from the current page's rows); `counts` is corpus-wide, so drive
+ *           summary badges off `counts`, not the array lengths. `unsolved` is an exact alias of
+ *           `unresolved_references`.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     work_id:
- *                       type: integer
- *                     referenced_works:
- *                       type: array
- *                       items:
- *                         type: object
+ *                     data:
+ *                       $ref: '#/components/schemas/ReferenceRow'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -131,7 +160,11 @@ router.get('/works/:id/references', [...validateWorkId, ...validatePagination], 
  *   get:
  *     summary: Get bibliometric metrics for a work
  *     tags: [Citations]
- *     description: Retrieve comprehensive citation metrics and impact indicators
+ *     description: >-
+ *       Retrieve citation/reference counts, citation-type breakdown, temporal span and impact
+ *       indicators for a work. `total_citations_received` counts RESOLVED `work_references` rows and
+ *       may differ from the denormalized `works.citation_count` surfaced as `cited_by_count` on
+ *       `/works`. `temporal_metrics` years are clamped to a valid range (1000..current year+1).
  *     parameters:
  *       - name: id
  *         in: path
@@ -142,7 +175,18 @@ router.get('/works/:id/references', [...validateWorkId, ...validatePagination], 
  *           example: 1
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Bibliometric metrics retrieved successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/WorkMetricsReport'
+ *                     meta:
+ *                       type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -158,7 +202,11 @@ router.get('/works/:id/metrics', validateWorkId, citationsController.getWorkMetr
  *   get:
  *     summary: Get citation network for a work
  *     tags: [Citations]
- *     description: Build citation network showing relationships between works
+ *     description: >-
+ *       Build a BFS-expanded citation network (nodes + directed edges) around a central work over
+ *       resolved `work_references`. The graph is a bounded sample, not exhaustive: it is capped at
+ *       ~120 nodes and 100 edges, so a deep/dense work returns a truncated graph. `nodes` is an
+ *       object keyed by work-id string, not an array.
  *     parameters:
  *       - name: id
  *         in: path
@@ -177,7 +225,18 @@ router.get('/works/:id/metrics', validateWorkId, citationsController.getWorkMetr
  *           default: 1
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Citation network retrieved successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/WorkCitationNetwork'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       404:

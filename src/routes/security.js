@@ -45,33 +45,26 @@ const handleValidation = (req, res) => {
  * /security/headers:
  *   get:
  *     summary: Inspect active security headers and CORS configuration
- *     description: Returns the currently active HTTP security headers as set by middleware and the effective CORS configuration. Requires internal access key.
+ *     description: Returns the currently active HTTP security headers (helmet) and the effective CORS configuration, plus the list of expected headers that are absent. Requires internal access key.
  *     tags: [Security]
  *     security:
  *       - XAccessKey: []
  *     responses:
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  *       200:
- *         description: Security headers snapshot
+ *         description: Security headers and CORS snapshot
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     headers:
+ *                     data:
+ *                       $ref: '#/components/schemas/SecurityHeaders'
+ *                     meta:
  *                       type: object
- *                     cors:
- *                       type: object
- *                     missing_headers:
- *                       type: array
- *                       items: { type: string }
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -118,15 +111,26 @@ router.get('/headers', requireAccessKey, (req, res) => {
  * /security/audit:
  *   get:
  *     summary: Audit protected routes for access key enforcement
- *     description: Quick static sweep of key route groups to verify internal access key enforcement.
+ *     description: Quick static sweep of the dashboard, health, and security route groups to verify the internal access-key guard is mounted. Requires internal access key.
  *     tags: [Security]
  *     security:
  *       - XAccessKey: []
  *     responses:
+ *       200:
+ *         description: Access-key enforcement audit results
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/SecurityAudit'
+ *                     meta:
+ *                       type: object
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- *       200:
- *         description: Audit results
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -164,42 +168,27 @@ router.get('/audit', requireAccessKey, (req, res) => {
  * @swagger
  * /security/stats:
  *   get:
- *     summary: Get security monitoring statistics
- *     description: Returns rate limiting violations, blocked IPs, and security metrics
+ *     summary: Get rate-limit configuration and block statistics
+ *     description: Returns the effective rate-limiter configuration, the (always-empty) in-memory blocked-IP list, and block/violation counters. Rate limiting uses in-memory rolling windows, so no per-IP violation or block tracking is persisted. Requires internal access key.
  *     tags: [Security]
  *     security:
  *       - XAccessKey: []
  *     responses:
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  *       200:
- *         description: Security statistics
+ *         description: Rate-limit configuration and block statistics
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     violations:
+ *                     data:
+ *                       $ref: '#/components/schemas/SecurityStats'
+ *                     meta:
  *                       type: object
- *                       description: IP addresses with recent violations
- *                     blocked_ips:
- *                       type: array
- *                       items:
- *                         type: string
- *                       description: Currently blocked IP addresses
- *                     stats:
- *                       type: object
- *                       properties:
- *                         total_blocked:
- *                           type: number
- *                         total_violations:
- *                           type: number
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -237,7 +226,7 @@ router.get('/stats', requireAccessKey, (req, res) => {
  * /security/unblock/{ip}:
  *   post:
  *     summary: Unblock an IP address (admin function)
- *     description: Remove an IP from the blocked list
+ *     description: Removes an IP from the in-memory blocked list. Because rate limiting uses in-memory rolling windows with no persistent block list, no IP is ever actually blocked, so a valid IP always returns 200 with unblocked=false. Requires internal access key.
  *     tags: [Security]
  *     security:
  *       - XAccessKey: []
@@ -247,27 +236,25 @@ router.get('/stats', requireAccessKey, (req, res) => {
  *         required: true
  *         schema:
  *           type: string
- *         description: IP address to unblock
+ *         description: IPv4 or IPv6 address to unblock (validated with isIP).
  *     responses:
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  *       200:
- *         description: IP unblocked successfully
+ *         description: Unblock result (no-op unless the IP was in the in-memory block list)
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 message:
- *                   type: string
- *                   example: IP unblocked successfully
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/UnblockResult'
+ *                     meta:
+ *                       type: object
  *       400:
- *         description: Invalid IP format
- *       404:
- *         description: IP not found in blocked list
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:

@@ -93,7 +93,13 @@ const validateWorksSearch = [
  *   get:
  *     summary: Search works using full-text search
  *     tags: [Search]
- *     description: Search academic works using MariaDB FULLTEXT against works (ft_works_content + ft_works_metadata) with venue matching via ft_venues_search.
+ *     description: >-
+ *       Full-text search over academic works served by Manticore across
+ *       (title, subtitle, abstract, authors, subjects, venue). `q` is optional when a
+ *       filter is supplied (filter-only queries are supported). The `author` and
+ *       `subject` filters resolve through the Manticore authors / subjects fields
+ *       (AND semantics); only the `venue`/`venue_name` filter runs against the MariaDB
+ *       ft_venues_search index. Pagination totals are exact (Manticore COUNT).
  *     parameters:
  *       - name: q
  *         in: query
@@ -153,13 +159,13 @@ const validateWorksSearch = [
  *           example: 2024
  *       - name: author
  *         in: query
- *         description: Filter by author name (full-text match against author_string)
+ *         description: Filter by author name (Manticore authors field match, AND semantics)
  *         schema:
  *           type: string
  *           example: "Geertz"
  *       - name: subject
  *         in: query
- *         description: Filter by subject (full-text match against subjects)
+ *         description: Filter by subject (Manticore subjects field match, AND semantics)
  *         schema:
  *           type: string
  *           example: "anthropology"
@@ -194,7 +200,33 @@ const validateWorksSearch = [
  *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: >-
+ *           Paginated work search results. Each data row is a WorkListItem enriched
+ *           with search provenance (`data_source`, `search_engine`, `relevance`). Note
+ *           `relevance` is always null even when `sort_by=relevance`.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/WorkListItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *                       properties:
+ *                         query:
+ *                           type: string
+ *                         search_type:
+ *                           type: string
+ *                           example: fulltext
+ *                         performance:
+ *                           type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -230,38 +262,21 @@ router.get('/works', validateWorksSearch, searchController.searchWorks);
  *           default: 5
  *     responses:
  *       200:
- *         description: Combined search results from all entities
+ *         description: >-
+ *           Combined works + persons results, each capped at `limit`. The institutions
+ *           block is permanently empty (`total:0`, `results:[]`, with an explanatory
+ *           `note`) — institutions search is disabled for performance.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 works:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     total:
- *                       type: integer
- *                     results:
- *                       type: array
- *                 persons:
- *                   type: object
- *                   properties:
- *                     total:
- *                       type: integer
- *                     results:
- *                       type: array
- *                 institutions:
- *                   type: object
- *                   properties:
- *                     total:
- *                       type: integer
- *                     results:
- *                       type: array
- *                 meta:
- *                   type: object
- *                   properties:
- *                     query_time_ms:
- *                       type: integer
+ *                     data:
+ *                       $ref: '#/components/schemas/GlobalSearchResult'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -277,7 +292,10 @@ router.get('/global', commonValidations.searchQuery, searchController.globalSear
  * /search/persons:
  *   get:
  *     summary: Search persons/researchers by name
- *     description: Search for researchers and authors using full-text search across name fields. Returns results with relevance scoring and supports filtering by affiliation and verification status.
+ *     description: >-
+ *       Full-text search for researchers and authors served by Manticore across the
+ *       name fields (preferred_name, given_names, family_name). Each row is a compact
+ *       PersonSearchItem, not the full person profile. `relevance` is always null.
  *     tags: [Search]
  *     parameters:
  *       - name: q
@@ -289,26 +307,33 @@ router.get('/global', commonValidations.searchQuery, searchController.globalSear
  *           minLength: 2
  *           maxLength: 255
  *           example: "John Smith"
+ *       - name: verified
+ *         in: query
+ *         required: false
+ *         description: Restrict to verified persons when true.
+ *         schema:
+ *           type: boolean
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
- *         description: Person search results
+ *         description: Compact person search results.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Person'
- *                 pagination:
- *                   $ref: '#/components/schemas/PaginationMeta'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/PersonSearchItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -323,9 +348,14 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  * @swagger
  * /search/advanced:
  *   get:
- *     summary: Advanced faceted search with filters
+ *     summary: Advanced works search with filters
  *     tags: [Search]
- *     description: Enhanced search with faceted results including years, work types, languages, venues, and authors
+ *     description: >-
+ *       Works search served by the same Manticore engine as /search/works, wrapping the
+ *       rows under `data.results` alongside a `data.facets` object. Faceting is not
+ *       implemented — `data.facets` is always an empty object `{}`. Use the individual
+ *       filter params (type/work_type, language, year_from/to, venue, author, subject,
+ *       cited_by_min/max) to narrow results.
  *     parameters:
  *       - name: q
  *         in: query
@@ -429,41 +459,42 @@ router.get('/persons', commonValidations.searchQuery, commonValidations.paginati
  *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
- *         description: Advanced search results with facets
+ *         description: >-
+ *           Works results under `data.results` (each row a WorkListItem; the `relevance`
+ *           key is omitted on this endpoint) plus an always-empty `data.facets` object.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     results:
- *                       type: array
- *                       items:
- *                         type: object
- *                     facets:
+ *                     data:
  *                       type: object
  *                       properties:
- *                         years:
+ *                         results:
  *                           type: array
- *                         work_types:
- *                           type: array
- *                         languages:
- *                           type: array
- *                         venues:
- *                           type: array
- *                         authors:
- *                           type: array
+ *                           items:
+ *                             $ref: '#/components/schemas/WorkListItem'
+ *                         facets:
+ *                           type: object
+ *                           description: Always an empty object; faceting is not implemented.
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
  *                     meta:
  *                       type: object
  *                       properties:
- *                         search_engine:
+ *                         query:
  *                           type: string
- *                         faceted_search:
+ *                         search_type:
+ *                           type: string
+ *                           example: fulltext_faceted
+ *                         filters_applied:
+ *                           type: integer
+ *                         engine:
+ *                           type: string
+ *                           enum: [Manticore, MariaDB]
+ *                         pagination_total_exact:
  *                           type: boolean
  *       400:
  *         $ref: '#/components/responses/BadRequest'
@@ -621,9 +652,22 @@ router.get('/advanced', validateAdvancedSearch, advancedSearch);
  *   get:
  *     summary: Search engine health
  *     tags: [Search]
+ *     description: >-
+ *       Reports the Manticore backend status and index topology. The works and persons
+ *       full-text surfaces are served unconditionally by Manticore; only the venue
+ *       filter uses the MariaDB ft_venues_search index.
  *     responses:
  *       200:
- *         $ref: '#/components/responses/Success'
+ *         description: Search engine status and index topology.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/SearchHealthStatus'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -668,11 +712,17 @@ const autocompleteService = require('../services/autocomplete.service');
  *   get:
  *     summary: Get autocomplete suggestions for search queries
  *     tags: [Search]
+ *     description: >-
+ *       Typeahead suggestions blending work titles, author names, and venue names.
+ *       Candidate work ids are discovered via Manticore then hydrated from MariaDB.
+ *       For a query shorter than 2 characters the endpoint still returns HTTP 200 but
+ *       with the reduced shape `data: { suggestions: [], message: "Query too short" }`
+ *       (no `query`/`type`/`count`/`generated_at`, and `meta.engine` absent).
  *     parameters:
  *       - name: q
  *         in: query
  *         required: true
- *         description: Search query for suggestions
+ *         description: Search query for suggestions (minimum 2 characters)
  *         schema:
  *           type: string
  *           minLength: 2
@@ -693,21 +743,18 @@ const autocompleteService = require('../services/autocomplete.service');
  *           default: 10
  *     responses:
  *       200:
- *         description: Autocomplete suggestions
+ *         description: Autocomplete suggestions envelope.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     suggestions:
- *                       type: array
- *                       items:
- *                         type: object
+ *                     data:
+ *                       $ref: '#/components/schemas/AutocompleteResult'
+ *                     meta:
+ *                       type: object
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -758,9 +805,33 @@ router.get('/autocomplete', async (req, res, next) => {
  *   get:
  *     summary: Get popular search terms
  *     tags: [Search]
+ *     description: >-
+ *       Most frequent title terms across the corpus, sourced from a precomputed
+ *       analytics aggregate (fast; no longer times out). Each term carries its
+ *       corpus frequency and a constant `type` of `popular`.
+ *     parameters:
+ *       - name: limit
+ *         in: query
+ *         description: Maximum number of terms to return.
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 50
+ *           default: 20
  *     responses:
  *       200:
- *         description: Popular search terms
+ *         description: Popular search terms.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/PopularTerms'
+ *                     meta:
+ *                       type: object
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:

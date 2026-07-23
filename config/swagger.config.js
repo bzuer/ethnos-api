@@ -1940,4 +1940,12 @@ const options = {
 
 const specs = swaggerJsdoc(options);
 
+const documentedSchemas = require('./openapi.schemas');
+specs.components = specs.components || {};
+specs.components.schemas = Object.assign({}, specs.components.schemas, documentedSchemas);
+
+for (const staleSchema of ['Work', 'Person', 'Organization', 'Venue', 'Collaboration', 'Author', 'Signature']) {
+  delete specs.components.schemas[staleSchema];
+}
+
 module.exports = specs;

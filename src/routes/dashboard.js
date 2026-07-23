@@ -76,31 +76,31 @@ const liveHealthStatus = () => ({
  * @swagger
  * /dashboard/overview:
  *   get:
- *     summary: Get complete system overview for dashboard
+ *     summary: Complete dashboard snapshot (real in-process telemetry)
+ *     description: >-
+ *       Returns a live operational snapshot sourced from the in-process monitoring
+ *       middleware (same source as /health/metrics), not the database. Numbers are
+ *       cumulative since the last process restart and reset on restart. No pagination
+ *       and no query parameters. Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []
  *     responses:
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Complete dashboard overview
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     search_performance:
+ *                     data:
+ *                       $ref: '#/components/schemas/DashboardOverview'
+ *                     meta:
  *                       type: object
- *                     system_health:
- *                       type: object
- *                     recent_activity:
- *                       type: object
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -165,24 +165,44 @@ router.get('/overview', async (req, res) => {
  * @swagger
  * /dashboard/performance:
  *   get:
- *     summary: Get detailed performance metrics for charts
+ *     summary: Performance summary, status distribution and (empty) chart series
+ *     description: >-
+ *       Returns live performance telemetry from the in-process monitoring middleware.
+ *       data.chart_data is always an empty array (no historical retention). The hours
+ *       parameter is validated and echoed to meta.hours_requested but has no functional
+ *       effect on the response (the time series stays empty regardless). Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []
  *     parameters:
  *       - name: hours
  *         in: query
- *         description: Number of hours of data to return
+ *         description: >-
+ *           Requested window in hours. Validated (1..168) and echoed to
+ *           meta.hours_requested; does not change the empty chart_data series.
  *         schema:
  *           type: integer
  *           minimum: 1
  *           maximum: 168
  *           default: 24
  *     responses:
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Performance metrics for visualization
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/DashboardPerformance'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -235,15 +255,46 @@ router.get('/performance', validatePerformanceParams, async (req, res) => {
  * @swagger
  * /dashboard/search-trends:
  *   get:
- *     summary: Get search trends and popular queries
+ *     summary: Search trend indicators, popular terms and per-day analytics
+ *     description: >-
+ *       Returns trend indicators (search volume, unique queries, avg results),
+ *       popular autocomplete terms (corpus frequency, not user searches), and a
+ *       per-day search-analytics series. Note data.analytics_period is hardcoded to
+ *       the fixed 7-day analytics window and stays "7 days" even when days is larger;
+ *       only meta.days_analyzed reflects the days parameter. Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []
+ *     parameters:
+ *       - name: days
+ *         in: query
+ *         description: >-
+ *           Number of days of search analytics to consider. Validated (1..365) and
+ *           echoed to meta.days_analyzed; does not change the hardcoded
+ *           data.analytics_period label.
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 365
+ *           default: 7
  *     responses:
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Search trends analysis
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/DashboardSearchTrends'
+ *                     meta:
+ *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -291,15 +342,31 @@ router.get('/search-trends', validateTrendParams, async (req, res) => {
  * @swagger
  * /dashboard/alerts:
  *   get:
- *     summary: Get current system alerts and warnings
+ *     summary: Current threshold-based system alerts with severity rollup
+ *     description: >-
+ *       Returns live threshold alerts computed from in-process telemetry: an error
+ *       alert when error_rate exceeds 5 percent, a performance alert when average
+ *       response time exceeds 50ms, and a volume alert when queries per second exceed
+ *       100. Includes a severity rollup. Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []
  *     responses:
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  *       200:
  *         description: Current system alerts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/DashboardAlerts'
+ *                     meta:
+ *                       type: object
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:

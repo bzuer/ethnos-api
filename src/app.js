@@ -177,12 +177,16 @@ homepageStatsService.refresh();
  *     tags: [System]
  *     responses:
  *       200:
- *         description: Service metadata
+ *         description: Service metadata and live corpus totals
  *         content:
  *           application/json:
  *             schema:
  *               allOf:
  *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/SystemRoot'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -412,26 +416,25 @@ const publicationsController = require('./controllers/publications.controller');
  *         schema:
  *           type: boolean
  *           default: true
- *         description: Include cited_by in the response
+ *         description: When false, `data.citations` is set to null (the key is still present, not omitted).
  *       - in: query
  *         name: include_references
  *         schema:
  *           type: boolean
  *           default: true
- *         description: Include references in the response
+ *         description: When false, `data.references` is set to null (the key is still present, not omitted).
  *     responses:
  *       200:
- *         description: Publication retrieved successfully
+ *         description: Publication resolved from the DOI, with the parent work embedded
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/PublicationDetail'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:

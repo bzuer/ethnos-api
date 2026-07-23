@@ -65,48 +65,51 @@ const validateCollaborations = [
  *   get:
  *     summary: Annual publication statistics
  *     tags: [Metrics]
- *     description: Get yearly statistics rolled up from publications and works
+ *     description: >-
+ *       Yearly roll-up grouped by publications.year (bounded 1000..YEAR(CURDATE())+1;
+ *       garbage future years excluded, so 2027 is the newest observed). Ordered by year DESC.
+ *       Each row nests a metrics block and a growth block (growth.* are always null;
+ *       metrics.unique_organizations and metrics.total_downloads are always 0). meta.summary
+ *       carries total_years, date_range, total_works_all_years, avg_works_per_year and a
+ *       growth_trend enum (increasing|stable|decreasing|insufficient_data or null).
  *     parameters:
  *       - name: year_from
  *         in: query
- *         description: Starting year for filtering
+ *         required: false
+ *         description: Inclusive lower bound on year (effective service floor is 1000).
  *         schema:
  *           type: integer
+ *           minimum: 1900
  *           example: 2020
  *       - name: year_to
  *         in: query
- *         description: Ending year for filtering
+ *         required: false
+ *         description: Inclusive upper bound on year.
  *         schema:
  *           type: integer
+ *           minimum: 1900
  *           example: 2024
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
- *         description: Annual statistics
+ *         description: Annual statistics, newest year first.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       year:
- *                         type: integer
- *                       total_publications:
- *                         type: integer
- *                       open_access_count:
- *                         type: integer
- *                       articles:
- *                         type: integer
- *                       unique_organizations:
- *                         type: integer
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/MetricsAnnualItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -120,8 +123,13 @@ router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
  * @swagger
  * /metrics/venues:
  *   get:
- *     summary: Top venues by publication impact
- *     description: Get the top academic venues ranked by publication count, citation metrics, and impact factors.
+ *     summary: Top venues by works count
+ *     description: >-
+ *       Venues ranked by venues.works_count DESC (tiebreak total_score DESC). Compact ranking
+ *       rows only. Note: metrics.unique_authors, metrics.open_access_works and
+ *       metrics.open_access_percentage are placeholder zeros (not yet computed). timespan uses
+ *       the venue coverage years. meta.summary carries total_venues_ranked, top_venue_publications,
+ *       total_unique_authors (0), avg_open_access_percentage (0) and the page's distinct venue_types.
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -129,19 +137,22 @@ router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
  *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
- *         description: Top venues list
+ *         description: Venue ranking list.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Venue'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/MetricsVenueRankingItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -156,7 +167,12 @@ router.get('/venues', validateLimit, metricsController.getTopVenues);
  * /metrics/institutions:
  *   get:
  *     summary: Institution productivity ranking
- *     description: Get academic institutions ranked by research productivity, publication count, and citation metrics.
+ *     description: >-
+ *       Organizations ranked by organizations.publication_count DESC (tiebreak id ASC), restricted
+ *       to publication_count > 0. Compact ranking rows only. productivity_score is always null.
+ *       metrics.open_access_works_count is scope-mismatched and can exceed total_works, so do not
+ *       derive an OA percentage from it. timespan first/latest publication year come from a bounded
+ *       authorships+publications join and the latest year may be a garbage future year.
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -165,27 +181,30 @@ router.get('/venues', validateLimit, metricsController.getTopVenues);
  *       - name: country_code
  *         in: query
  *         required: false
- *         description: Filter by country code
+ *         description: Filter by ISO 3166-1 alpha-2 country code (exactly 2 characters).
  *         schema:
  *           type: string
  *           minLength: 2
- *           maxLength: 3
+ *           maxLength: 2
  *           example: "BR"
  *     responses:
  *       200:
- *         description: Institution productivity ranking
+ *         description: Institution ranking list.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Organization'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/MetricsInstitutionRankingItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -200,7 +219,10 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  * /metrics/persons:
  *   get:
  *     summary: Person production analytics
- *     description: Get researchers ranked by publication productivity and citation metrics.
+ *     description: >-
+ *       Researchers ranked by persons.total_works DESC (base filter total_works > 0). Compact
+ *       ranking rows only. primary_affiliation and productivity_score are always null.
+ *       meta.filters echoes organization_id (as a string when provided).
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -209,26 +231,35 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  *       - name: min_works
  *         in: query
  *         required: false
- *         description: Minimum number of works
+ *         description: Minimum works threshold (filters total_works >= min_works). No default applied when omitted.
  *         schema:
  *           type: integer
  *           minimum: 1
- *           default: 5
+ *       - name: organization_id
+ *         in: query
+ *         required: false
+ *         description: Restrict to persons with an authorship whose affiliation_id equals this organization id.
+ *         schema:
+ *           type: integer
+ *           minimum: 1
  *     responses:
  *       200:
- *         description: Person production metrics
+ *         description: Person ranking list.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Person'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/MetricsPersonRankingItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -242,8 +273,14 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  * @swagger
  * /metrics/collaborations:
  *   get:
- *     summary: Collaboration network statistics
- *     description: Get statistics on research collaboration networks, including top collaborator pairs and collaboration patterns.
+ *     summary: Top collaboration pairs
+ *     description: >-
+ *       Top co-authorship pairs computed over the top ~2000 authors (persons.total_works >= 30),
+ *       ordered by shared_works DESC. Each row is a flat pair shape identical to CollaborationPair
+ *       (also served by /collaborations/top). meta.summary carries total_collaboration_pairs,
+ *       strongest_collaboration_count, avg_collaboration_years and a
+ *       collaboration_strength_distribution histogram. On statement-timeout the service degrades to
+ *       an empty data array with meta.degraded = true.
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -252,26 +289,30 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  *       - name: min_collaborations
  *         in: query
  *         required: false
- *         description: Minimum number of collaborative works
+ *         description: Minimum shared works per pair (HAVING shared_works >= min_collaborations). Defaults to 2.
  *         schema:
  *           type: integer
- *           minimum: 2
- *           default: 3
+ *           minimum: 1
+ *           maximum: 50
+ *           default: 2
  *     responses:
  *       200:
- *         description: Collaboration network statistics
+ *         description: Collaboration pair ranking list.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Collaboration'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/MetricsCollaborationRankingItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:

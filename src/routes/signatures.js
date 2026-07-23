@@ -9,42 +9,26 @@ const { relationalLimiter } = require('../middleware/rateLimiting');
  * /signatures/statistics:
  *   get:
  *     summary: Get signature statistics
- *     description: Retrieve comprehensive statistics about signatures in the system
+ *     description: Aggregate statistics over the whole signatures table (length buckets and person linkage). No query parameters. Cached for 48h.
  *     tags: [Signatures]
  *     responses:
  *       200:
- *         description: Signature statistics retrieved successfully
+ *         description: Signature statistics
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     total_signatures:
- *                       type: integer
- *                       example: 378134
- *                     average_signature_length:
- *                       type: number
- *                       format: float
- *                       example: 10.17
- *                     total_characters:
- *                       type: integer
- *                       example: 3847823
- *                     shortest_signature:
- *                       type: integer
- *                       example: 1
- *                     longest_signature:
- *                       type: integer
- *                       example: 255
- *       500:
- *         description: Internal server error
+ *                     data:
+ *                       $ref: '#/components/schemas/SignatureStatistics'
+ *                     meta:
+ *                       type: object
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get(
   '/statistics',
@@ -56,7 +40,7 @@ router.get(
  * /signatures/search:
  *   get:
  *     summary: Search signatures
- *     description: Search for signatures by name with exact and fuzzy matching options
+ *     description: Substring (or exact) search over the normalized signature string via MariaDB LIKE/= over signatures.signature. Returns matching signatures with a per-signature persons_count. Rows are raw service rows and do NOT carry _links. The search term and exact flag are echoed under meta.searchTerm / meta.exact; the raw offset is echoed under meta.pagination_extras.offset.
  *     tags: [Signatures]
  *     parameters:
  *       - in: query
@@ -66,14 +50,14 @@ router.get(
  *           type: string
  *           minLength: 1
  *           maxLength: 100
- *         description: Search query for signature name
- *         example: J. Smith
+ *         description: Search term (trimmed). Empty or missing yields 400.
+ *         example: silva
  *       - in: query
  *         name: exact
  *         schema:
  *           type: boolean
  *           default: false
- *         description: Whether to perform exact matching
+ *         description: When true, matches signature = q exactly; otherwise signature LIKE %q%.
  *       - in: query
  *         name: limit
  *         schema:
@@ -91,27 +75,34 @@ router.get(
  *         description: Number of items to skip
  *     responses:
  *       200:
- *         description: Search results
+ *         description: Matching signatures ordered by exact-match first, then persons_count DESC, then signature ASC. pagination.total is exact.
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Signature'
- *                 pagination:
- *                   type: object
- *                 query:
- *                   type: string
- *                   example: J. Smith
- *                 exact_match:
- *                   type: boolean
- *                   example: false
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/SignatureSearchItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *                       properties:
+ *                         searchTerm:
+ *                           type: string
+ *                           example: silva
+ *                         exact:
+ *                           type: boolean
+ *                           example: false
+ *                         pagination_extras:
+ *                           type: object
+ *                           properties:
+ *                             offset:
+ *                               type: integer
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -147,7 +138,7 @@ router.get(
  * /signatures/{id}:
  *   get:
  *     summary: Get signature by ID
- *     description: Retrieve detailed information about a specific signature
+ *     description: Retrieve a single signature with its person linkage count and a self link. Cached for 1h.
  *     tags: [Signatures]
  *     parameters:
  *       - in: path
@@ -157,20 +148,21 @@ router.get(
  *           type: integer
  *           minimum: 1
  *         description: Signature ID
- *         example: 123
+ *         example: 14490421
  *     responses:
  *       200:
- *         description: Signature details
+ *         description: Signature detail
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   $ref: '#/components/schemas/Signature'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/SignatureDetail'
+ *                     meta:
+ *                       type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -193,7 +185,7 @@ router.get(
  * /signatures/{id}/persons:
  *   get:
  *     summary: Get persons associated with a signature
- *     description: Retrieve all persons associated with a specific signature
+ *     description: Paginated list of persons that share this signature (persons.signature_id). Returns the shared person list-item shape with nested identifiers and metrics. Returns 404 when the signature id does not exist. pagination.total is exact.
  *     tags: [Signatures]
  *     parameters:
  *       - in: path
@@ -203,7 +195,7 @@ router.get(
  *           type: integer
  *           minimum: 1
  *         description: Signature ID
- *         example: 123
+ *         example: 14490421
  *       - in: query
  *         name: limit
  *         schema:
@@ -221,21 +213,22 @@ router.get(
  *         description: Number of items to skip
  *     responses:
  *       200:
- *         description: Associated persons
+ *         description: Persons sharing this signature
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Person'
- *                 pagination:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/SignaturePersonItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -248,7 +241,7 @@ router.get(
  * /signatures/{id}/works:
  *   get:
  *     summary: Get works associated with a signature
- *     description: Retrieve all academic works (publications) associated with a specific signature
+ *     description: Paginated list of works authored by any person carrying this signature. Ordering is fixed at COALESCE(publication.year, 2024) DESC, work_id DESC. This endpoint accepts ONLY page and limit — it does NOT honor the standard work-listing sort/citation/type/language/year filters. Returns 404 when the signature id does not exist. pagination.total is exact.
  *     tags: [Signatures]
  *     parameters:
  *       - in: path
@@ -258,7 +251,7 @@ router.get(
  *           type: integer
  *           minimum: 1
  *         description: Signature ID
- *         example: 92152
+ *         example: 14490421
  *       - in: query
  *         name: page
  *         schema:
@@ -276,108 +269,28 @@ router.get(
  *         description: Results per page
  *     responses:
  *       200:
- *         description: Works retrieved successfully
+ *         description: Works authored under this signature
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       id:
- *                         type: integer
- *                         description: Work ID
- *                       title:
- *                         type: string
- *                         description: Work title
- *                       subtitle:
- *                         type: string
- *                         description: Work subtitle
- *                       type:
- *                         type: string
- *                         description: Type of work
- *                       language:
- *                         type: string
- *                         description: Publication language
- *                       doi:
- *                         type: string
- *                         description: DOI identifier
- *                       authorship:
- *                         type: object
- *                         properties:
- *                           role:
- *                             type: string
- *                             enum: [AUTHOR, EDITOR]
- *                             description: Person's role in this work
- *                           position:
- *                             type: integer
- *                             description: Position in author list
- *                           is_corresponding:
- *                             type: boolean
- *                             description: Whether this person is corresponding author
- *                           person_id:
- *                             type: integer
- *                             description: Person ID
- *                           person_name:
- *                             type: string
- *                             description: Person name
- *                       publication:
- *                         type: object
- *                         properties:
- *                           year:
- *                             type: integer
- *                             description: Publication year
- *                           journal:
- *                             type: string
- *                             description: Journal name
- *                           volume:
- *                             type: string
- *                             description: Volume number
- *                           issue:
- *                             type: string
- *                             description: Issue number
- *                           pages:
- *                             type: string
- *                             description: Page range
- *                       authors:
- *                         type: object
- *                         properties:
- *                           total_count:
- *                             type: integer
- *                             description: Total number of authors
- *                           author_string:
- *                             type: string
- *                             description: Full author list string
- *                       created_at:
- *                         type: string
- *                         format: date-time
- *                 pagination:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
- *                     totalPages:
- *                       type: integer
- *                     hasNext:
- *                       type: boolean
- *                     hasPrev:
- *                       type: boolean
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/SignatureWork'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
  *       404:
- *         description: Signature not found
- *       500:
- *         description: Internal server error
+ *         $ref: '#/components/responses/NotFound'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 const validateWorksQuery = [
   param('id')

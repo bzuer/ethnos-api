@@ -49,103 +49,80 @@ const validatePersonsQuery = [
  * /persons:
  *   get:
  *     summary: Get list of researchers and authors
- *     description: Retrieve a paginated list of academic researchers and authors. Supports filtering by name, signature, and verification status.
+ *     description: >-
+ *       Paginated list of academic researchers and authors, ordered newest-first
+ *       (`id DESC`). The base list has NO metric/name sort — `sort_by`/`sort_order`
+ *       are not honoured here. Free-text name search (`search`, alias `q`) resolves
+ *       through Manticore; `signature` is a MariaDB LIKE-prefix lookup; `verified`
+ *       filters on verification status. There is no affiliation or country filter.
  *     tags: [Persons]
  *     parameters:
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number for pagination
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Number of results per page (max 100)
- *       - in: query
- *         name: offset
- *         schema:
- *           type: integer
- *           minimum: 0
- *           default: 0
- *         description: Number of items to skip (alternative to page parameter)
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *       - in: query
  *         name: search
  *         schema:
  *           type: string
  *           minLength: 2
  *           maxLength: 255
- *         description: Search term to filter persons by name
- *         example: John Smith
+ *         description: >-
+ *           Full-text name search via Manticore (min 2 chars). Sets
+ *           `meta.engine=Manticore` and `meta.query_type=search`. Alias: `q`.
+ *         example: silva
+ *       - in: query
+ *         name: q
+ *         schema:
+ *           type: string
+ *           minLength: 2
+ *           maxLength: 255
+ *         description: Alias of `search` — Manticore full-text name search.
  *       - in: query
  *         name: signature
  *         schema:
  *           type: string
  *           minLength: 2
  *           maxLength: 100
- *         description: Filter by author signature or identifier
- *         example: j.smith
+ *         description: >-
+ *           Filter by normalized name signature (MariaDB LIKE-prefix `{value}%`
+ *           over `signatures.signature`). Sets `meta.query_type=signature_lookup`.
+ *         example: SILVA
  *       - in: query
  *         name: verified
  *         schema:
- *           type: boolean
- *         description: Filter by verification status
- *         example: true
+ *           type: string
+ *           enum: ['true', 'false']
+ *         description: Filter by verification status (`is_verified`).
+ *         example: 'true'
  *     responses:
  *       200:
  *         description: List of persons retrieved successfully
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Person'
- *                 pagination:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     page:
- *                       type: integer
- *                       example: 1
- *                     limit:
- *                       type: integer
- *                       example: 20
- *                     total:
- *                       type: integer
- *                       example: 385678
- *                     totalPages:
- *                       type: integer
- *                       example: 19284
- *                     hasNext:
- *                       type: boolean
- *                       example: true
- *                     hasPrev:
- *                       type: boolean
- *                       example: false
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/PersonListItem'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *                       description: >-
+ *                         `engine` (`MariaDB` for list/signature paths, `Manticore`
+ *                         for search), `query_type` (`list|signature_lookup|search`),
+ *                         `elapsed_ms` (absent on the Manticore search path),
+ *                         `pagination_extras.offset`. Counts are exact.
  *       400:
- *         description: Invalid query parameters
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
- *         description: Rate limit exceeded
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/responses/RateLimitExceeded'
+ *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
- *         description: Internal server error
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/', validatePersonsQuery, personsController.getPersons);
 
@@ -171,33 +148,20 @@ router.get('/', validatePersonsQuery, personsController.getPersons);
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   $ref: '#/components/schemas/Person'
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/PersonDetail'
  *       400:
- *         description: Invalid person ID
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
- *         description: Person not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
+ *         $ref: '#/components/responses/NotFound'
  *       429:
- *         description: Rate limit exceeded
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/responses/RateLimitExceeded'
+ *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
- *         description: Internal server error
+ *         $ref: '#/components/responses/InternalError'
  */
 router.get('/:id', validatePersonId, personsController.getPerson);
 
@@ -216,77 +180,31 @@ router.get('/:id', validatePersonId, personsController.getPerson);
  *           type: integer
  *           minimum: 1
  *         description: Person ID
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Results per page
- *       - in: query
- *         name: offset
- *         schema:
- *           type: integer
- *           minimum: 0
- *           default: 0
- *         description: Number of items to skip (alternative to page parameter)
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *     responses:
  *       200:
  *         description: Signatures retrieved successfully
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       id:
- *                         type: integer
- *                         description: Signature ID
- *                       signature:
- *                         type: string
- *                         description: Name signature
- *                       created_at:
- *                         type: string
- *                         format: date-time
- *                       persons_count:
- *                         type: integer
- *                         description: Total persons with this signature
- *                 pagination:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
- *                     totalPages:
- *                       type: integer
- *                     hasNext:
- *                       type: boolean
- *                     hasPrev:
- *                       type: boolean
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/PersonSignature'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
  *       404:
- *         description: Person not found
- *       500:
- *         description: Internal server error
+ *         $ref: '#/components/responses/NotFound'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 const validateSignaturesQuery = [
   query('page')
@@ -320,34 +238,15 @@ const validateSignaturesQuery = [
  *           type: integer
  *           minimum: 1
  *         description: Person ID
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Results per page
- *       - in: query
- *         name: offset
- *         schema:
- *           type: integer
- *           minimum: 0
- *           default: 0
- *         description: Number of items to skip (alternative to page parameter)
+ *       - $ref: '#/components/parameters/pageParam'
+ *       - $ref: '#/components/parameters/limitParam'
+ *       - $ref: '#/components/parameters/offsetParam'
  *       - in: query
  *         name: role
  *         schema:
  *           type: string
  *           enum: [AUTHOR, EDITOR]
- *         description: Filter by role (AUTHOR or EDITOR)
+ *         description: Filter by authorship role (case-insensitive).
  *       - in: query
  *         name: year_from
  *         schema:
@@ -365,131 +264,57 @@ const validateSignaturesQuery = [
  *         schema:
  *           type: integer
  *           minimum: 0
- *         description: Keep only works whose cited_by_count is greater than or equal to this value.
+ *         description: >-
+ *           Inclusive lower bound on `cited_by_count` (against `works.citation_count`).
+ *           Alias: `citation_count_min`.
  *         example: 5
  *       - in: query
  *         name: cited_by_max
  *         schema:
  *           type: integer
  *           minimum: 0
- *         description: Keep only works whose cited_by_count is less than or equal to this value.
+ *         description: >-
+ *           Inclusive upper bound on `cited_by_count`. Alias: `citation_count_max`.
  *       - in: query
  *         name: sort_by
  *         schema:
  *           type: string
- *           enum: [cited_by_count, references_count, publication_year]
- *         description: Primary sort key. `cited_by_count` surfaces the person's most cited works first. Default falls back to publication_year DESC.
+ *           enum: [cited_by_count, references_count, publication_year, citation_count, reference_count, year]
+ *         description: >-
+ *           Primary sort key. `citation_count`/`reference_count`/`year` are accepted
+ *           aliases of `cited_by_count`/`references_count`/`publication_year`. With
+ *           `sort_by` omitted the order falls back to publication_year DESC.
  *       - in: query
  *         name: sort_order
  *         schema:
  *           type: string
  *           enum: [ASC, DESC]
  *           default: DESC
- *         description: Sort direction for `sort_by`.
+ *         description: Sort direction for `sort_by` (case-insensitive).
  *     responses:
  *       200:
  *         description: Works retrieved successfully
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: success
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       id:
- *                         type: integer
- *                         description: Work ID
- *                       title:
- *                         type: string
- *                         description: Work title
- *                       subtitle:
- *                         type: string
- *                         description: Work subtitle
- *                       type:
- *                         type: string
- *                         description: Type of work
- *                       language:
- *                         type: string
- *                         description: Publication language
- *                       doi:
- *                         type: string
- *                         description: DOI identifier
- *                       cited_by_count:
- *                         type: integer
- *                         description: Number of works citing this one (surfaced from works.citation_count).
- *                       references_count:
- *                         type: integer
- *                         description: Number of references this work makes.
- *                       authorship:
- *                         type: object
- *                         properties:
- *                           role:
- *                             type: string
- *                             enum: [AUTHOR, EDITOR]
- *                             description: Person's role in this work
- *                           position:
- *                             type: integer
- *                             description: Position in author list
- *                           is_corresponding:
- *                             type: boolean
- *                             description: Whether this person is corresponding author
- *                       publication:
- *                         type: object
- *                         properties:
- *                           year:
- *                             type: integer
- *                             description: Publication year
- *                           journal:
- *                             type: string
- *                             description: Journal name
- *                           volume:
- *                             type: string
- *                             description: Volume number
- *                           issue:
- *                             type: string
- *                             description: Issue number
- *                           pages:
- *                             type: string
- *                             description: Page range
- *                       authors:
- *                         type: object
- *                         properties:
- *                           total_count:
- *                             type: integer
- *                             description: Total number of authors
- *                           author_string:
- *                             type: string
- *                             description: Full author list string
- *                       created_at:
- *                         type: string
- *                         format: date-time
- *                 pagination:
- *                   type: object
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessEnvelope'
+ *                 - type: object
  *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
- *                     totalPages:
- *                       type: integer
- *                     hasNext:
- *                       type: boolean
- *                     hasPrev:
- *                       type: boolean
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/PersonWork'
+ *                     pagination:
+ *                       $ref: '#/components/schemas/PaginationMeta'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
- *         description: Person not found
- *       500:
- *         description: Internal server error
+ *         $ref: '#/components/responses/NotFound'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
+ *       500:
+ *         $ref: '#/components/responses/InternalError'
  */
 const validateWorksQuery = [
   query('page')
