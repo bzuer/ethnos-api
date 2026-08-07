@@ -393,6 +393,15 @@ describe('Integration smoke (real DB)', () => {
         assert.ok(!('issn' in venue), 'top-level issn removed');
         assert.ok(!('open_access_percentage' in venue), 'top-level open_access_percentage removed');
         assert.ok(!('global_ranking_score' in venue), 'top-level global_ranking_score removed');
+        assert.ok('summary' in venue, 'venue summary field present');
+        assert.equal(typeof venue.summary_truncated, 'boolean', 'summary_truncated flag');
+        for (const row of body.data) {
+          assert.ok(row.summary === null || typeof row.summary === 'string', 'summary is string or null');
+          assert.ok((row.summary || '').length <= 501, 'listing summary is capped at the excerpt length');
+          if (row.summary_truncated) {
+            assert.ok(row.summary.endsWith('…'), 'truncated summary carries an ellipsis');
+          }
+        }
       }
     });
 
@@ -411,6 +420,14 @@ describe('Integration smoke (real DB)', () => {
       assert.equal(typeof body.data.publication_summary.open_access_works_count, 'number', 'publication_summary.open_access_works_count');
       const oaPct = body.data.publication_summary.open_access_percentage;
       assert.ok(oaPct === null || (typeof oaPct === 'number' && oaPct >= 0 && oaPct <= 100), 'open_access_percentage in [0,100] or null');
+      assert.ok('summary' in body.data, 'detail summary field present');
+      assert.equal(body.data.summary_truncated, false, 'detail summary is never truncated');
+    });
+
+    test('GET /venues/statistics reports editorial summary coverage', async () => {
+      const body = assertSuccess(await fetchJson('/venues/statistics'), 'GET /venues/statistics');
+      assert.equal(typeof body.data.with_summary, 'number', 'with_summary count');
+      assert.ok(body.data.with_summary >= 0 && body.data.with_summary <= body.data.total_venues, 'with_summary bounded by total_venues');
     });
 
     test('GET /persons', async () => {

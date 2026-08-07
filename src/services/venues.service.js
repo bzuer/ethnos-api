@@ -51,10 +51,14 @@ const BASE_SORT_FIELDS = {
   newest: 'v.coverage_end_year'
 };
 
-const BASE_SELECT = `
+const SUMMARY_FETCH_LENGTH = 1200;
+
+const buildBaseSelect = (summaryExpr) => `
   v.id AS id,
   v.name,
   v.abbreviated_name,
+  ${summaryExpr},
+  CHAR_LENGTH(v.summary) AS summary_length,
   v.type,
   v.aggregation_type,
   v.open_access,
@@ -98,6 +102,9 @@ const BASE_SELECT = `
   pub.country_code AS publisher_org_country
 `;
 
+const BASE_SELECT_DETAIL = buildBaseSelect('v.summary AS summary');
+const BASE_SELECT_LIST = buildBaseSelect(`LEFT(v.summary, ${SUMMARY_FETCH_LENGTH}) AS summary`);
+
 const BASE_FROM = `
   FROM venues v
   LEFT JOIN organizations pub ON pub.id = v.publisher_id
@@ -119,6 +126,8 @@ const mapVenueRow = (row) => {
     id: toInt(row.id, null),
     name: row.name || null,
     abbreviated_name: row.abbreviated_name || null,
+    summary: row.summary || null,
+    summary_length: toNullableInt(row.summary_length),
     type: row.type || null,
     aggregation_type: row.aggregation_type || null,
     open_access: toNullableBoolean(row.open_access),
@@ -170,7 +179,7 @@ class VenuesService {
     const uniqueIds = Array.from(new Set((venueIds || []).filter(Boolean)));
     if (uniqueIds.length === 0) return [];
     const sql = `
-      SELECT ${BASE_SELECT}
+      SELECT ${BASE_SELECT_DETAIL}
       ${BASE_FROM}
       WHERE v.id IN (:venueIds)
     `;
@@ -444,7 +453,7 @@ class VenuesService {
     const currentOffset = Math.max(0, parseInt(pagination.offset, 10) || 0);
     const type = options.type;
 
-    const cacheKey = `venues:search:v5:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
+    const cacheKey = `venues:search:v6:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info(`Venues search "${query}" retrieved from cache`);
@@ -477,7 +486,7 @@ class VenuesService {
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v7:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v8:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -592,7 +601,7 @@ class VenuesService {
       : ', COALESCE(v.total_score, 0) DESC';
 
     const listSql = `
-      SELECT ${BASE_SELECT}
+      SELECT ${BASE_SELECT_LIST}
       ${BASE_FROM}
       ${whereClause}
       ORDER BY ${sortNullGuard}${sortField} ${sortOrderFinal}${scoreTiebreaker}, v.name ASC
@@ -649,7 +658,7 @@ class VenuesService {
     const includeTopAuthors = options.includeTopAuthors !== false;
     const includeRecentWorks = options.includeRecentWorks !== false;
 
-    const cacheKey = `venue:v6:${venueId}:${JSON.stringify({
+    const cacheKey = `venue:v7:${venueId}:${JSON.stringify({
       includeSubjects,
       includeYearly,
       includeTopAuthors,
@@ -907,7 +916,7 @@ class VenuesService {
   }
 
   async getVenueStatistics() {
-    const cacheKey = 'venues:statistics:v4';
+    const cacheKey = 'venues:statistics:v5';
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venue statistics retrieved from cache');
@@ -924,6 +933,7 @@ class VenuesService {
         SUM(CASE WHEN type = 'SOURCE_BOOK' THEN 1 ELSE 0 END) AS source_books,
         SUM(CASE WHEN type = 'OTHER' THEN 1 ELSE 0 END) AS other,
         SUM(CASE WHEN impact_factor IS NOT NULL THEN 1 ELSE 0 END) AS with_impact_factor,
+        SUM(CASE WHEN summary IS NOT NULL AND summary <> '' THEN 1 ELSE 0 END) AS with_summary,
         AVG(impact_factor) AS avg_impact_factor,
         MAX(impact_factor) AS max_impact_factor,
         MIN(impact_factor) AS min_impact_factor,
@@ -945,6 +955,7 @@ class VenuesService {
       source_books: toInt(row?.source_books, 0),
       other: toInt(row?.other, 0),
       with_impact_factor: toInt(row?.with_impact_factor, 0),
+      with_summary: toInt(row?.with_summary, 0),
       avg_impact_factor: toNullableFloat(row?.avg_impact_factor),
       max_impact_factor: toNullableFloat(row?.max_impact_factor),
       min_impact_factor: toNullableFloat(row?.min_impact_factor),

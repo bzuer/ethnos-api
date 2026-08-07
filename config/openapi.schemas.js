@@ -3280,6 +3280,15 @@ module.exports = {
         "nullable": true,
         "description": "Short/abbreviated name (always paired with name)."
       },
+      "summary": {
+        "type": "string",
+        "nullable": true,
+        "description": "Editorial presentation of the venue (venues.summary), whitespace-collapsed and truncated to 500 characters on a word boundary with a trailing ellipsis. Null when the venue has no summary (~60% of venues carry one). Fetch GET /venues/{id} for the full text."
+      },
+      "summary_truncated": {
+        "type": "boolean",
+        "description": "True when `summary` is an excerpt of a longer stored text; always false on GET /venues/{id}, which returns the full summary."
+      },
       "type": {
         "type": "string",
         "nullable": true,
@@ -3536,7 +3545,7 @@ module.exports = {
       },
       {
         "type": "object",
-        "description": "Detail-only fields added by GET /venues/{id}.",
+        "description": "Detail-only fields added by GET /venues/{id}. The inherited `summary` carries the complete stored text here (never an excerpt), so `summary_truncated` is always false.",
         "properties": {
           "created_at": {
             "type": "string",
@@ -3911,6 +3920,10 @@ module.exports = {
       "with_impact_factor": {
         "type": "integer",
         "description": "Venues that have an impact factor."
+      },
+      "with_summary": {
+        "type": "integer",
+        "description": "Venues carrying a non-empty editorial summary."
       },
       "avg_impact_factor": {
         "type": "number"

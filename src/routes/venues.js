@@ -9,7 +9,7 @@ const venuesController = require('../controllers/venues.controller');
  * /venues:
  *   get:
  *     summary: Get list of academic venues
- *     description: Retrieve a paginated list of academic venues including journals, conferences, repositories, and book series. Supports filtering and sorting.
+ *     description: Retrieve a paginated list of academic venues including journals, conferences, repositories, and book series. Supports filtering and sorting. Each row carries `summary`, the editorial presentation of the venue, truncated to 500 characters with `summary_truncated` flagging the cut; the full text is on `/venues/{id}`.
  *     tags: [Venues]
  *     parameters:
  *       - in: query
@@ -226,7 +226,7 @@ router.get(
  * /venues/statistics:
  *   get:
  *     summary: Get venue statistics
- *     description: Retrieve aggregate venue counts (per type, all six types) and impact-factor / ranking-score summaries. Returns a single flat object (no pagination).
+ *     description: Retrieve aggregate venue counts (per type, all six types), editorial-summary coverage (`with_summary`), and impact-factor / ranking-score summaries. Returns a single flat object (no pagination).
  *     tags: [Venues]
  *     responses:
  *       200:
@@ -255,7 +255,7 @@ router.get(
  * /venues/search:
  *   get:
  *     summary: Search venues
- *     description: Search venues by name (MariaDB LIKE over `name`, `abbreviated_name`, `issn`, `eissn`, and publisher name), optionally filtered by type. Rows are the same shape as `/venues`; results are fixed-ordered by `COALESCE(total_score,0) DESC, name ASC` (no sort param). `meta` carries `source` and the echoed `query`.
+ *     description: Search venues by name (MariaDB LIKE over `name`, `abbreviated_name`, `issn`, `eissn`, and publisher name — the `summary` text is not searched), optionally filtered by type. Rows are the same shape as `/venues`; results are fixed-ordered by `COALESCE(total_score,0) DESC, name ASC` (no sort param). `meta` carries `source` and the echoed `query`.
  *     tags: [Venues]
  *     parameters:
  *       - in: query
@@ -348,7 +348,7 @@ router.get(
  * /venues/{id}:
  *   get:
  *     summary: Get venue by ID
- *     description: Retrieve detailed information about a specific venue
+ *     description: Retrieve detailed information about a specific venue. `summary` carries the complete editorial presentation text (never truncated, so `summary_truncated` is always false).
  *     tags: [Venues]
  *     parameters:
  *       - in: path

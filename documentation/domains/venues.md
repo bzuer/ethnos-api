@@ -53,6 +53,8 @@ GET /venues?type=SOURCE_BOOK&min_id=1000000&limit=50
       "_links": { "self": "/venues/1012121" },
       "name": "Annual Review of Anthropology",
       "abbreviated_name": "Annu. Rev. Anthropol.",
+      "summary": "The Annual Review of Anthropology is a premier publication for the entire field of anthropology, including social and cultural anthropology. It publishes comprehensive review articles that are foundational to the discipline, making it a core venue",
+      "summary_truncated": false,
       "type": "BOOK_SERIES",
       "aggregation_type": "bookseries",
       "country_code": "US",
@@ -108,6 +110,8 @@ The `subjects[]` array is trimmed above; **list rows carry up to 5 subjects**. `
 | `_links.self` | string | `/venues/{id}` |
 | `name` | string\|null | official venue name |
 | `abbreviated_name` | string\|null | short name; always paired with `name` |
+| `summary` | string\|null | editorial presentation of the venue (`venues.summary`); on listings it is whitespace-collapsed and cut at **500 chars** on a word boundary with a trailing `…`. Null when the venue has none (~60% of venues carry one) |
+| `summary_truncated` | boolean | `true` when `summary` is an excerpt — fetch `/venues/{id}` for the full text. Always `false` on the detail endpoint |
 | `type` | string\|null | `JOURNAL`\|`CONFERENCE`\|`REPOSITORY`\|`BOOK_SERIES`\|`SOURCE_BOOK`\|`OTHER` |
 | `aggregation_type` | string\|null | free label, e.g. `journal`, `bookseries` |
 | `country_code` | string\|null | ISO-2 |
@@ -157,6 +161,7 @@ The `subjects[]` array is trimmed above; **list rows carry up to 5 subjects**. `
 - `pagination.total` on the unfiltered list is the full corpus count (189,076); it is computed under a bounded budget — treat as authoritative for venues but see [../00-conventions.md](../00-conventions.md) for the shared `pagination_total_exact` semantics on heavier listings.
 - Root-list free-text is `search=`; the dedicated endpoint below is `q=`. Mixing them 400s.
 - `coverage_end_year` can be a garbage future year — do not trust it as a hard "still active" signal.
+- `summary` is presentation copy, not searchable: `search=` / `q=` never match against it (there is no index on the column). It is safe to render as plain text on cards; when `summary_truncated` is `true`, link to `/venues/{id}` for the whole text.
 
 ---
 
@@ -192,6 +197,8 @@ GET /venues/search?q=anthropology&offset=20&limit=20
       "_links": { "self": "/venues/1012128" },
       "name": "Mana",
       "abbreviated_name": "Mana",
+      "summary": "Mana is a Brazilian journal dedicated to social anthropology, publishing ethnographic and theoretical research with a strong regional and international readership",
+      "summary_truncated": false,
       "type": "JOURNAL",
       "aggregation_type": "journal",
       "country_code": "BR",
@@ -270,7 +277,8 @@ GET /venues/statistics
     "book_series": 287,
     "source_books": 165444,
     "other": 314,
-    "with_impact_factor": 79842,
+    "with_impact_factor": 134788,
+    "with_summary": 192579,
     "avg_impact_factor": 0.8502489,
     "max_impact_factor": 295,
     "min_impact_factor": 0,
@@ -295,6 +303,7 @@ GET /venues/statistics
 | `source_books` | integer | `SOURCE_BOOK` (dominant, ~87%) |
 | `other` | integer | `OTHER` |
 | `with_impact_factor` | integer | venues carrying a non-null impact factor |
+| `with_summary` | integer | venues carrying a non-empty editorial `summary` |
 | `avg_impact_factor` | number | mean impact factor across venues that have one |
 | `max_impact_factor` | number | maximum IF observed |
 | `min_impact_factor` | number | minimum IF observed |
@@ -349,6 +358,8 @@ GET /venues/1012128?include_top_authors=false
     "_links": { "self": "/venues/1012121" },
     "name": "Annual Review of Anthropology",
     "abbreviated_name": "Annu. Rev. Anthropol.",
+    "summary": "The Annual Review of Anthropology is a premier publication for the entire field of anthropology, including social and cultural anthropology. It publishes comprehensive review articles that are foundational to the discipline, making it a core venue for the field.",
+    "summary_truncated": false,
     "type": "BOOK_SERIES",
     "aggregation_type": "bookseries",
     "country_code": "US",
@@ -427,7 +438,7 @@ In the live payload `subjects[]` holds up to 10 rows, `yearly_stats[]` and `publ
 
 ### Fields — base block
 
-Everything in the `/venues` list-item table above applies unchanged (same `identifiers`/`indexing`/`metrics`/`ranking`/`publisher`), except `subjects[]` is capped at **10** (vs 5 on list).
+Everything in the `/venues` list-item table above applies unchanged (same `identifiers`/`indexing`/`metrics`/`ranking`/`publisher`), except `subjects[]` is capped at **10** (vs 5 on list) and `summary` carries the **complete** stored text (no 500-char cut, so `summary_truncated` is always `false`). Summaries run ~880 chars on average and can exceed 30 kB on the longest book records — size the layout for a variable-length block.
 
 ### Fields — detail-only blocks
 

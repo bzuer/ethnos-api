@@ -30,6 +30,32 @@ const toNullableBoolean = (value) => {
 
 const SCORE_COMPONENT_KEYS = ['subject', 'oa', 'impact', 'llm'];
 
+const SUMMARY_EXCERPT_LENGTH = 500;
+
+const normalizeSummary = (value) => {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text.length ? text : null;
+};
+
+const buildSummaryExcerpt = (venue = {}) => {
+  const summary = normalizeSummary(venue.summary);
+  if (!summary) return { summary: null, summary_truncated: false };
+
+  const flattened = summary.replace(/\s+/g, ' ');
+  const storedLength = toNullableInt(venue.summary_length);
+  const fullLength = storedLength !== null && storedLength > 0 ? storedLength : summary.length;
+
+  if (flattened.length <= SUMMARY_EXCERPT_LENGTH && fullLength <= SUMMARY_EXCERPT_LENGTH) {
+    return { summary: flattened, summary_truncated: false };
+  }
+
+  const slice = flattened.slice(0, SUMMARY_EXCERPT_LENGTH);
+  const lastBreak = slice.lastIndexOf(' ');
+  const cut = lastBreak > SUMMARY_EXCERPT_LENGTH * 0.6 ? slice.slice(0, lastBreak) : slice;
+  return { summary: `${cut.replace(/[\s.,;:—–-]+$/, '')}…`, summary_truncated: true };
+};
+
 const buildRanking = (venue = {}) => {
   const source = venue.score_breakdown && typeof venue.score_breakdown === 'object' ? venue.score_breakdown : null;
   const score = toNullableNumber(source?.total ?? venue.global_ranking_score);
@@ -112,6 +138,8 @@ const baseVenue = (venue = {}) => ({
   _links: { self: toNullableInt(venue.id) === null ? null : `/venues/${toNullableInt(venue.id)}` },
   name: venue.name || null,
   abbreviated_name: venue.abbreviated_name || null,
+  summary: normalizeSummary(venue.summary),
+  summary_truncated: false,
   type: venue.type || null,
   aggregation_type: venue.aggregation_type || null,
   country_code: venue.country_code || null,
@@ -134,6 +162,7 @@ function formatVenueListItem(venue = {}, options = {}) {
   const subjectsLimit = Number.isInteger(options.subjectsLimit) ? options.subjectsLimit : 5;
 
   const result = baseVenue(venue);
+  Object.assign(result, buildSummaryExcerpt(venue));
 
   if (includeSubjects) {
     result.subjects = buildSubjects(venue.subjects || [], { limit: subjectsLimit });

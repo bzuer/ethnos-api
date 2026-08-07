@@ -512,6 +512,32 @@ describe('DTOs structure', () => {
     expect(out).not.toHaveProperty('is_in_doaj');
   });
 
+  test('Venue DTO truncates summary on listings and keeps it whole on detail', () => {
+    const { formatVenueListItem, formatVenueDetails } = require('../src/dto/venue.dto');
+    const longSummary = `${'palavra '.repeat(200)}fim`;
+    const shortSummary = 'A dedicated journal for social and cultural anthropology.';
+
+    const short = formatVenueListItem({ id: 1, name: 'Short', summary: shortSummary, summary_length: shortSummary.length });
+    expect(short.summary).toBe(shortSummary);
+    expect(short.summary_truncated).toBe(false);
+
+    const truncated = formatVenueListItem({ id: 2, name: 'Long', summary: longSummary, summary_length: longSummary.length });
+    expect(truncated.summary_truncated).toBe(true);
+    expect(truncated.summary.length).toBeLessThanOrEqual(501);
+    expect(truncated.summary.endsWith('…')).toBe(true);
+
+    const clipped = formatVenueListItem({ id: 3, name: 'Clipped', summary: longSummary.slice(0, 1200), summary_length: 4000 });
+    expect(clipped.summary_truncated).toBe(true);
+
+    const empty = formatVenueListItem({ id: 4, name: 'None', summary: null, summary_length: null });
+    expect(empty.summary).toBeNull();
+    expect(empty.summary_truncated).toBe(false);
+
+    const detail = formatVenueDetails({ id: 2, name: 'Long', summary: longSummary, summary_length: longSummary.length }, {});
+    expect(detail.summary).toBe(longSummary);
+    expect(detail.summary_truncated).toBe(false);
+  });
+
   test('Person DTO includes explicit IDs and name_variations', () => {
     const { formatPersonDetails, formatPersonListItem } = require('../src/dto/person.dto');
     const person = {
