@@ -42,13 +42,58 @@ const BASE_SORT_FIELDS = {
   works_count: 'COALESCE(v.works_count, 0)',
   cited_by_count: 'COALESCE(v.cited_by_count, 0)',
   impact_factor: 'v.impact_factor',
+  citescore: 'v.citescore',
+  sjr: 'v.sjr',
+  snip: 'v.snip',
   h_index: 'v.h_index',
+  i10_index: 'v.i10_index',
+  two_yr_mean_citedness: 'v.`2yr_mean_citedness`',
+  overton: 'v.overton',
+  female_share: 'v.female_share',
   score: 'COALESCE(v.total_score, 0)',
   ranking: 'COALESCE(v.total_score, 0)',
   coverage_start_year: 'v.coverage_start_year',
   coverage_end_year: 'v.coverage_end_year',
   oldest: 'v.coverage_start_year',
-  newest: 'v.coverage_end_year'
+  newest: 'v.coverage_end_year',
+  created_at: 'v.created_at',
+  updated_at: 'v.updated_at'
+};
+
+const NULLABLE_SORT_KEYS = new Set([
+  'impact_factor', 'citescore', 'sjr', 'snip', 'h_index', 'i10_index',
+  'two_yr_mean_citedness', 'overton', 'female_share',
+  'coverage_start_year', 'coverage_end_year', 'oldest', 'newest'
+]);
+
+const VENUE_QUARTILES = ['Q1', 'Q2', 'Q3', 'Q4'];
+const VENUE_VALIDATION_STATUSES = ['PENDING', 'VALIDATED', 'NOT_FOUND', 'FAILED'];
+
+const toBooleanFilter = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes'].includes(normalized)) return true;
+  if (['0', 'false', 'no'].includes(normalized)) return false;
+  return null;
+};
+
+const toNumericFilter = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toIntegerFilter = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toEnumFilter = (value, allowed) => {
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = String(value).trim().toUpperCase();
+  return allowed.includes(normalized) ? normalized : null;
 };
 
 const SUMMARY_FETCH_LENGTH = 1200;
@@ -67,10 +112,13 @@ const buildBaseSelect = (summaryExpr) => `
   v.homepage_url,
   v.issn,
   v.eissn,
+  v.isbn13,
   v.scopus_id,
   v.wikidata_id,
   v.openalex_id,
   v.scielo_id,
+  v.mag_id,
+  v.openlibrary_work,
   v.coverage_start_year,
   v.coverage_end_year,
   v.works_count,
@@ -78,13 +126,17 @@ const buildBaseSelect = (summaryExpr) => `
   v.impact_factor,
   v.citescore,
   v.sjr,
+  v.sjr_best_quartile,
   v.snip,
   v.h_index,
   v.i10_index,
   v.\`2yr_mean_citedness\` AS two_yr_mean_citedness,
+  v.overton,
+  v.female_share,
   v.is_in_doaj,
   v.is_in_scielo,
   v.is_indexed_in_scopus,
+  v.is_oa_diamond,
   v.validation_status,
   v.total_score,
   v.subject_score,
@@ -99,7 +151,12 @@ const buildBaseSelect = (summaryExpr) => `
   pub.id AS publisher_org_id,
   pub.name AS publisher_org_name,
   pub.type AS publisher_org_type,
-  pub.country_code AS publisher_org_country
+  pub.country_code AS publisher_org_country,
+  pub.url AS publisher_org_url,
+  pub.ror_id AS publisher_org_ror_id,
+  pub.grid_id AS publisher_org_grid_id,
+  pub.wikidata_id AS publisher_org_wikidata_id,
+  pub.openalex_id AS publisher_org_openalex_id
 `;
 
 const BASE_SELECT_DETAIL = buildBaseSelect('v.summary AS summary');
@@ -136,10 +193,13 @@ const mapVenueRow = (row) => {
     homepage_url: row.homepage_url || null,
     issn: row.issn || null,
     eissn: row.eissn || null,
+    isbn13: row.isbn13 || null,
     scopus_id: row.scopus_id || null,
     wikidata_id: row.wikidata_id || null,
     openalex_id: row.openalex_id || null,
     scielo_id: row.scielo_id || null,
+    mag_id: row.mag_id || null,
+    openlibrary_work: row.openlibrary_work || null,
     coverage_start_year: toNullableInt(row.coverage_start_year),
     coverage_end_year: toNullableInt(row.coverage_end_year),
     works_count: toInt(row.works_count, 0),
@@ -147,13 +207,17 @@ const mapVenueRow = (row) => {
     impact_factor: toNullableFloat(row.impact_factor),
     citescore: toNullableFloat(row.citescore),
     sjr: toNullableFloat(row.sjr),
+    sjr_best_quartile: row.sjr_best_quartile || null,
     snip: toNullableFloat(row.snip),
     h_index: toNullableInt(row.h_index),
     i10_index: toNullableInt(row.i10_index),
     two_yr_mean_citedness: toNullableFloat(row.two_yr_mean_citedness),
+    overton: toNullableInt(row.overton),
+    female_share: toNullableFloat(row.female_share),
     is_in_doaj: toNullableBoolean(row.is_in_doaj),
     is_in_scielo: toNullableBoolean(row.is_in_scielo),
     is_indexed_in_scopus: toNullableBoolean(row.is_indexed_in_scopus),
+    is_oa_diamond: toNullableBoolean(row.is_oa_diamond),
     validation_status: row.validation_status || null,
     global_ranking_score: toNullableFloat(row.total_score),
     score_breakdown: buildScoreBreakdown(row),
@@ -167,7 +231,12 @@ const mapVenueRow = (row) => {
       id: row.publisher_org_id ?? null,
       name: row.publisher_org_name || null,
       type: row.publisher_org_type || null,
-      country_code: row.publisher_org_country || null
+      country_code: row.publisher_org_country || null,
+      url: row.publisher_org_url || null,
+      ror_id: row.publisher_org_ror_id || null,
+      grid_id: row.publisher_org_grid_id || null,
+      wikidata_id: row.publisher_org_wikidata_id || null,
+      openalex_id: row.publisher_org_openalex_id || null
     } : null,
     subjects: [],
     top_publications: []
@@ -453,7 +522,7 @@ class VenuesService {
     const currentOffset = Math.max(0, parseInt(pagination.offset, 10) || 0);
     const type = options.type;
 
-    const cacheKey = `venues:search:v6:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
+    const cacheKey = `venues:search:v7:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info(`Venues search "${query}" retrieved from cache`);
@@ -486,7 +555,7 @@ class VenuesService {
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v8:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v9:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -516,6 +585,35 @@ class VenuesService {
       coverage_end_to,
       active_in_year
     } = options;
+
+    const country = typeof (options.country ?? options.country_code) === 'string'
+      ? (options.country ?? options.country_code).trim().toUpperCase()
+      : null;
+    const language = typeof (options.language ?? options.lang) === 'string'
+      ? (options.language ?? options.lang).trim().toLowerCase()
+      : null;
+    const aggregationType = typeof options.aggregation_type === 'string' && options.aggregation_type.trim()
+      ? options.aggregation_type.trim()
+      : null;
+    const publisherId = toIntegerFilter(options.publisher_id);
+    const quartile = toEnumFilter(options.sjr_best_quartile ?? options.quartile, VENUE_QUARTILES);
+    const validationStatus = toEnumFilter(options.validation_status, VENUE_VALIDATION_STATUSES);
+    const openAccess = toBooleanFilter(options.open_access);
+    const inDoaj = toBooleanFilter(options.is_in_doaj);
+    const inScielo = toBooleanFilter(options.is_in_scielo);
+    const inScopus = toBooleanFilter(options.is_indexed_in_scopus);
+    const oaDiamond = toBooleanFilter(options.is_oa_diamond);
+    const hasIssn = toBooleanFilter(options.has_issn);
+    const hasIsbn13 = toBooleanFilter(options.has_isbn13);
+    const hasSummary = toBooleanFilter(options.has_summary);
+    const worksMin = toIntegerFilter(options.works_min);
+    const worksMax = toIntegerFilter(options.works_max);
+    const citedByMin = toIntegerFilter(options.cited_by_min);
+    const citedByMax = toIntegerFilter(options.cited_by_max);
+    const impactFactorMin = toNumericFilter(options.impact_factor_min);
+    const impactFactorMax = toNumericFilter(options.impact_factor_max);
+    const hIndexMin = toIntegerFilter(options.h_index_min);
+    const scoreMin = toNumericFilter(options.score_min);
 
     const toYear = (value) => {
       if (value === undefined || value === null || value === '') return null;
@@ -579,19 +677,103 @@ class VenuesService {
       replacements.activeInYear = activeInYear;
     }
 
+    if (country) {
+      where.push('v.country_code = :country');
+      replacements.country = country;
+    }
+    if (language) {
+      where.push('v.lang = :language');
+      replacements.language = language;
+    }
+    if (aggregationType) {
+      where.push('v.aggregation_type = :aggregationType');
+      replacements.aggregationType = aggregationType;
+    }
+    if (publisherId !== null) {
+      where.push('v.publisher_id = :publisherId');
+      replacements.publisherId = publisherId;
+    }
+    if (quartile) {
+      where.push('v.sjr_best_quartile = :quartile');
+      replacements.quartile = quartile;
+    }
+    if (validationStatus) {
+      where.push('v.validation_status = :validationStatus');
+      replacements.validationStatus = validationStatus;
+    }
+    if (openAccess !== null) {
+      where.push('v.open_access = :openAccess');
+      replacements.openAccess = openAccess ? 1 : 0;
+    }
+    if (inDoaj !== null) {
+      where.push('v.is_in_doaj = :inDoaj');
+      replacements.inDoaj = inDoaj ? 1 : 0;
+    }
+    if (inScielo !== null) {
+      where.push('v.is_in_scielo = :inScielo');
+      replacements.inScielo = inScielo ? 1 : 0;
+    }
+    if (inScopus !== null) {
+      where.push('v.is_indexed_in_scopus = :inScopus');
+      replacements.inScopus = inScopus ? 1 : 0;
+    }
+    if (oaDiamond !== null) {
+      where.push(oaDiamond ? 'v.is_oa_diamond = 1' : '(v.is_oa_diamond = 0 OR v.is_oa_diamond IS NULL)');
+    }
+    if (hasIssn !== null) {
+      where.push(hasIssn ? '(v.issn IS NOT NULL OR v.eissn IS NOT NULL)' : '(v.issn IS NULL AND v.eissn IS NULL)');
+    }
+    if (hasIsbn13 !== null) {
+      where.push(hasIsbn13 ? 'v.isbn13 IS NOT NULL' : 'v.isbn13 IS NULL');
+    }
+    if (hasSummary !== null) {
+      where.push(hasSummary ? "(v.summary IS NOT NULL AND v.summary <> '')" : "(v.summary IS NULL OR v.summary = '')");
+    }
+    if (worksMin !== null) {
+      where.push('COALESCE(v.works_count, 0) >= :worksMin');
+      replacements.worksMin = worksMin;
+    }
+    if (worksMax !== null) {
+      where.push('COALESCE(v.works_count, 0) <= :worksMax');
+      replacements.worksMax = worksMax;
+    }
+    if (citedByMin !== null) {
+      where.push('COALESCE(v.cited_by_count, 0) >= :citedByMin');
+      replacements.citedByMin = citedByMin;
+    }
+    if (citedByMax !== null) {
+      where.push('COALESCE(v.cited_by_count, 0) <= :citedByMax');
+      replacements.citedByMax = citedByMax;
+    }
+    if (impactFactorMin !== null) {
+      where.push('v.impact_factor >= :impactFactorMin');
+      replacements.impactFactorMin = impactFactorMin;
+    }
+    if (impactFactorMax !== null) {
+      where.push('v.impact_factor <= :impactFactorMax');
+      replacements.impactFactorMax = impactFactorMax;
+    }
+    if (hIndexMin !== null) {
+      where.push('v.h_index >= :hIndexMin');
+      replacements.hIndexMin = hIndexMin;
+    }
+    if (scoreMin !== null) {
+      where.push('COALESCE(v.total_score, 0) >= :scoreMin');
+      replacements.scoreMin = scoreMin;
+    }
+
     const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const requestedSortBy = typeof sortBy === 'string' && sortBy.trim() ? sortBy.trim().toLowerCase() : null;
     const normalizedSortBy = requestedSortBy && BASE_SORT_FIELDS[requestedSortBy] ? requestedSortBy : 'score';
     const sortField = BASE_SORT_FIELDS[normalizedSortBy];
-    const descByDefault = new Set(['score', 'ranking', 'impact_factor', 'citescore', 'sjr', 'snip', 'works_count', 'cited_by_count', 'h_index', 'i10_index', 'coverage_end_year', 'newest']);
+    const descByDefault = new Set(['score', 'ranking', 'impact_factor', 'citescore', 'sjr', 'snip', 'works_count', 'cited_by_count', 'h_index', 'i10_index', 'two_yr_mean_citedness', 'overton', 'female_share', 'coverage_end_year', 'newest', 'created_at', 'updated_at']);
     const ascByDefault = new Set(['coverage_start_year', 'oldest']);
     const requestedOrder = typeof sortOrder === 'string' ? sortOrder.trim().toUpperCase() : '';
     const sortOrderFinal = requestedOrder === 'ASC' || requestedOrder === 'DESC'
       ? requestedOrder
       : (ascByDefault.has(normalizedSortBy) ? 'ASC' : (descByDefault.has(normalizedSortBy) ? 'DESC' : 'ASC'));
 
-    const coverageSortKeys = new Set(['coverage_start_year', 'coverage_end_year', 'oldest', 'newest']);
-    const sortNullGuard = coverageSortKeys.has(normalizedSortBy)
+    const sortNullGuard = NULLABLE_SORT_KEYS.has(normalizedSortBy)
       ? `${sortField} IS NULL, `
       : '';
 
@@ -638,6 +820,35 @@ class VenuesService {
     if (type) filters.type = type;
     if (search) filters.search = search;
     if (Number.isInteger(min_id) && min_id > 0) filters.min_id = min_id;
+    if (country) filters.country = country;
+    if (language) filters.language = language;
+    if (aggregationType) filters.aggregation_type = aggregationType;
+    if (publisherId !== null) filters.publisher_id = publisherId;
+    if (quartile) filters.sjr_best_quartile = quartile;
+    if (validationStatus) filters.validation_status = validationStatus;
+    if (openAccess !== null) filters.open_access = openAccess;
+    if (inDoaj !== null) filters.is_in_doaj = inDoaj;
+    if (inScielo !== null) filters.is_in_scielo = inScielo;
+    if (inScopus !== null) filters.is_indexed_in_scopus = inScopus;
+    if (oaDiamond !== null) filters.is_oa_diamond = oaDiamond;
+    if (hasIssn !== null) filters.has_issn = hasIssn;
+    if (hasIsbn13 !== null) filters.has_isbn13 = hasIsbn13;
+    if (hasSummary !== null) filters.has_summary = hasSummary;
+    if (worksMin !== null) filters.works_min = worksMin;
+    if (worksMax !== null) filters.works_max = worksMax;
+    if (citedByMin !== null) filters.cited_by_min = citedByMin;
+    if (citedByMax !== null) filters.cited_by_max = citedByMax;
+    if (impactFactorMin !== null) filters.impact_factor_min = impactFactorMin;
+    if (impactFactorMax !== null) filters.impact_factor_max = impactFactorMax;
+    if (hIndexMin !== null) filters.h_index_min = hIndexMin;
+    if (scoreMin !== null) filters.score_min = scoreMin;
+    if (coverageFrom !== null) filters.coverage_from = coverageFrom;
+    if (coverageTo !== null) filters.coverage_to = coverageTo;
+    if (coverageStartFrom !== null) filters.coverage_start_from = coverageStartFrom;
+    if (coverageStartTo !== null) filters.coverage_start_to = coverageStartTo;
+    if (coverageEndFrom !== null) filters.coverage_end_from = coverageEndFrom;
+    if (coverageEndTo !== null) filters.coverage_end_to = coverageEndTo;
+    if (activeInYear !== null) filters.active_in_year = activeInYear;
     if (Object.keys(filters).length) meta.filters = filters;
 
     return {
@@ -658,7 +869,7 @@ class VenuesService {
     const includeTopAuthors = options.includeTopAuthors !== false;
     const includeRecentWorks = options.includeRecentWorks !== false;
 
-    const cacheKey = `venue:v7:${venueId}:${JSON.stringify({
+    const cacheKey = `venue:v8:${venueId}:${JSON.stringify({
       includeSubjects,
       includeYearly,
       includeTopAuthors,
@@ -916,7 +1127,7 @@ class VenuesService {
   }
 
   async getVenueStatistics() {
-    const cacheKey = 'venues:statistics:v5';
+    const cacheKey = 'venues:statistics:v6';
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venue statistics retrieved from cache');
@@ -940,6 +1151,19 @@ class VenuesService {
         SUM(CASE WHEN is_in_doaj = 1 THEN 1 ELSE 0 END) AS in_doaj,
         SUM(CASE WHEN is_in_scielo = 1 THEN 1 ELSE 0 END) AS in_scielo,
         SUM(CASE WHEN is_indexed_in_scopus = 1 THEN 1 ELSE 0 END) AS in_scopus,
+        SUM(CASE WHEN open_access = 1 THEN 1 ELSE 0 END) AS open_access,
+        SUM(CASE WHEN is_oa_diamond = 1 THEN 1 ELSE 0 END) AS oa_diamond,
+        SUM(CASE WHEN sjr_best_quartile = 'Q1' THEN 1 ELSE 0 END) AS q1,
+        SUM(CASE WHEN sjr_best_quartile = 'Q2' THEN 1 ELSE 0 END) AS q2,
+        SUM(CASE WHEN sjr_best_quartile = 'Q3' THEN 1 ELSE 0 END) AS q3,
+        SUM(CASE WHEN sjr_best_quartile = 'Q4' THEN 1 ELSE 0 END) AS q4,
+        SUM(CASE WHEN issn IS NOT NULL OR eissn IS NOT NULL THEN 1 ELSE 0 END) AS with_issn,
+        SUM(CASE WHEN isbn13 IS NOT NULL THEN 1 ELSE 0 END) AS with_isbn13,
+        SUM(CASE WHEN openlibrary_work IS NOT NULL THEN 1 ELSE 0 END) AS with_openlibrary_work,
+        SUM(CASE WHEN openalex_id IS NOT NULL THEN 1 ELSE 0 END) AS with_openalex_id,
+        SUM(CASE WHEN scopus_id IS NOT NULL THEN 1 ELSE 0 END) AS with_scopus_id,
+        SUM(CASE WHEN wikidata_id IS NOT NULL THEN 1 ELSE 0 END) AS with_wikidata_id,
+        SUM(CASE WHEN publisher_id IS NOT NULL THEN 1 ELSE 0 END) AS with_publisher,
         AVG(total_score) AS avg_ranking_score
       FROM venues
     `), {
@@ -962,6 +1186,23 @@ class VenuesService {
       indexed_in_doaj: toInt(row?.in_doaj, 0),
       indexed_in_scielo: toInt(row?.in_scielo, 0),
       indexed_in_scopus: toInt(row?.in_scopus, 0),
+      open_access: toInt(row?.open_access, 0),
+      oa_diamond: toInt(row?.oa_diamond, 0),
+      sjr_quartiles: {
+        Q1: toInt(row?.q1, 0),
+        Q2: toInt(row?.q2, 0),
+        Q3: toInt(row?.q3, 0),
+        Q4: toInt(row?.q4, 0)
+      },
+      identifier_coverage: {
+        issn: toInt(row?.with_issn, 0),
+        isbn13: toInt(row?.with_isbn13, 0),
+        openlibrary_work: toInt(row?.with_openlibrary_work, 0),
+        openalex_id: toInt(row?.with_openalex_id, 0),
+        scopus_id: toInt(row?.with_scopus_id, 0),
+        wikidata_id: toInt(row?.with_wikidata_id, 0)
+      },
+      with_publisher: toInt(row?.with_publisher, 0),
       avg_global_ranking_score: toNullableFloat(row?.avg_ranking_score)
     };
 

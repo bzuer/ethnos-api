@@ -81,16 +81,20 @@ const buildRanking = (venue = {}) => {
 const buildIdentifiers = (venue = {}) => ({
   issn: venue.issn || null,
   eissn: venue.eissn || null,
+  isbn13: venue.isbn13 || null,
   scopus_id: venue.scopus_id || null,
   wikidata_id: venue.wikidata_id || null,
   openalex_id: venue.openalex_id || null,
-  scielo_id: venue.scielo_id || null
+  scielo_id: venue.scielo_id || null,
+  mag_id: venue.mag_id || null,
+  openlibrary_work: venue.openlibrary_work || null
 });
 
 const buildIndexing = (venue = {}) => ({
   is_in_doaj: toNullableBoolean(venue.is_in_doaj),
   is_in_scielo: toNullableBoolean(venue.is_in_scielo),
   is_indexed_in_scopus: toNullableBoolean(venue.is_indexed_in_scopus),
+  is_oa_diamond: toNullableBoolean(venue.is_oa_diamond),
   validation_status: venue.validation_status || null
 });
 
@@ -98,10 +102,13 @@ const buildMetrics = (venue = {}) => ({
   impact_factor: toNullableNumber(venue.impact_factor),
   citescore: toNullableNumber(venue.citescore),
   sjr: toNullableNumber(venue.sjr),
+  sjr_best_quartile: venue.sjr_best_quartile || null,
   snip: toNullableNumber(venue.snip),
   h_index: toNullableInt(venue.h_index),
   i10_index: toNullableInt(venue.i10_index),
-  two_yr_mean_citedness: toNullableNumber(venue.two_yr_mean_citedness)
+  two_yr_mean_citedness: toNullableNumber(venue.two_yr_mean_citedness),
+  overton: toNullableInt(venue.overton),
+  female_share: toNullableNumber(venue.female_share)
 });
 
 const buildPublisher = (venue = {}) => {
@@ -112,7 +119,15 @@ const buildPublisher = (venue = {}) => {
     id: publisher.id ?? null,
     name: publisher.name || null,
     type: publisher.type || null,
-    country_code: publisher.country_code || null
+    country_code: publisher.country_code || null,
+    url: publisher.url || null,
+    identifiers: {
+      ror_id: publisher.ror_id || null,
+      grid_id: publisher.grid_id || null,
+      wikidata_id: publisher.wikidata_id || null,
+      openalex_id: publisher.openalex_id || null
+    },
+    _links: { self: publisher.id ? `/institutions/${publisher.id}` : null }
   };
 };
 

@@ -67,7 +67,29 @@ class VenuesController {
         coverage_start_to: req.query.coverage_start_to,
         coverage_end_from: req.query.coverage_end_from,
         coverage_end_to: req.query.coverage_end_to,
-        active_in_year: req.query.active_in_year
+        active_in_year: req.query.active_in_year,
+        country: req.query.country ?? req.query.country_code,
+        language: req.query.language ?? req.query.lang,
+        aggregation_type: req.query.aggregation_type,
+        publisher_id: req.query.publisher_id,
+        sjr_best_quartile: req.query.sjr_best_quartile ?? req.query.quartile,
+        validation_status: req.query.validation_status,
+        open_access: req.query.open_access,
+        is_in_doaj: req.query.is_in_doaj,
+        is_in_scielo: req.query.is_in_scielo,
+        is_indexed_in_scopus: req.query.is_indexed_in_scopus,
+        is_oa_diamond: req.query.is_oa_diamond,
+        has_issn: req.query.has_issn,
+        has_isbn13: req.query.has_isbn13,
+        has_summary: req.query.has_summary,
+        works_min: req.query.works_min,
+        works_max: req.query.works_max,
+        cited_by_min: req.query.cited_by_min,
+        cited_by_max: req.query.cited_by_max,
+        impact_factor_min: req.query.impact_factor_min,
+        impact_factor_max: req.query.impact_factor_max,
+        h_index_min: req.query.h_index_min,
+        score_min: req.query.score_min
       };
 
       const result = await venuesService.getVenues(options);

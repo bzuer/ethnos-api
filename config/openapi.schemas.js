@@ -3348,7 +3348,7 @@ module.exports = {
       "publisher": {
         "type": "object",
         "nullable": true,
-        "description": "Publishing organization, or null when absent.",
+        "description": "Publishing organization (from organizations), or null when absent.",
         "properties": {
           "id": {
             "type": "integer"
@@ -3364,12 +3364,37 @@ module.exports = {
           "country_code": {
             "type": "string",
             "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "nullable": true,
+            "description": "Publisher homepage."
+          },
+          "identifiers": {
+            "type": "object",
+            "description": "Publisher identifiers carried over from the organizations row.",
+            "properties": {
+              "ror_id": { "type": "string", "nullable": true },
+              "grid_id": { "type": "string", "nullable": true },
+              "wikidata_id": { "type": "string", "nullable": true },
+              "openalex_id": { "type": "string", "nullable": true }
+            }
+          },
+          "_links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string",
+                "nullable": true,
+                "description": "Canonical path of the publisher, /institutions/{id}."
+              }
+            }
           }
         }
       },
       "identifiers": {
         "type": "object",
-        "description": "External identifiers (mag_id is never exposed).",
+        "description": "External identifiers. isbn13 and openlibrary_work are the identifiers that matter for SOURCE_BOOK venues (isbn13 is populated on ~92% of the corpus); issn/eissn/scopus_id carry the serial surface.",
         "properties": {
           "issn": {
             "type": "string",
@@ -3378,6 +3403,11 @@ module.exports = {
           "eissn": {
             "type": "string",
             "nullable": true
+          },
+          "isbn13": {
+            "type": "string",
+            "nullable": true,
+            "description": "ISBN-13 of the source book / monographic venue."
           },
           "scopus_id": {
             "type": "string",
@@ -3394,6 +3424,16 @@ module.exports = {
           "scielo_id": {
             "type": "string",
             "nullable": true
+          },
+          "mag_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Legacy Microsoft Academic Graph id."
+          },
+          "openlibrary_work": {
+            "type": "string",
+            "nullable": true,
+            "description": "OpenLibrary work key (OL...W), populated for book venues."
           }
         }
       },
@@ -3411,6 +3451,11 @@ module.exports = {
           "is_indexed_in_scopus": {
             "type": "boolean",
             "nullable": true
+          },
+          "is_oa_diamond": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "Diamond open access (no fees for authors or readers)."
           },
           "validation_status": {
             "type": "string",
@@ -3441,6 +3486,12 @@ module.exports = {
             "type": "number",
             "nullable": true
           },
+          "sjr_best_quartile": {
+            "type": "string",
+            "nullable": true,
+            "enum": ["Q1", "Q2", "Q3", "Q4"],
+            "description": "Best SJR subject quartile."
+          },
           "snip": {
             "type": "number",
             "nullable": true
@@ -3456,6 +3507,16 @@ module.exports = {
           "two_yr_mean_citedness": {
             "type": "number",
             "nullable": true
+          },
+          "overton": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Overton policy-document citation count."
+          },
+          "female_share": {
+            "type": "number",
+            "nullable": true,
+            "description": "Share of female authorship, 0-100."
           }
         }
       },
@@ -3924,6 +3985,40 @@ module.exports = {
       "with_summary": {
         "type": "integer",
         "description": "Venues carrying a non-empty editorial summary."
+      },
+      "open_access": {
+        "type": "integer",
+        "description": "Venues flagged fully open access."
+      },
+      "oa_diamond": {
+        "type": "integer",
+        "description": "Diamond open-access venues."
+      },
+      "sjr_quartiles": {
+        "type": "object",
+        "description": "Venue counts per best SJR quartile.",
+        "properties": {
+          "Q1": { "type": "integer" },
+          "Q2": { "type": "integer" },
+          "Q3": { "type": "integer" },
+          "Q4": { "type": "integer" }
+        }
+      },
+      "identifier_coverage": {
+        "type": "object",
+        "description": "How many venues carry each external identifier. isbn13/openlibrary_work dominate because SOURCE_BOOK is ~92% of the corpus.",
+        "properties": {
+          "issn": { "type": "integer", "description": "Venues with issn or eissn." },
+          "isbn13": { "type": "integer" },
+          "openlibrary_work": { "type": "integer" },
+          "openalex_id": { "type": "integer" },
+          "scopus_id": { "type": "integer" },
+          "wikidata_id": { "type": "integer" }
+        }
+      },
+      "with_publisher": {
+        "type": "integer",
+        "description": "Venues linked to a publisher organization."
       },
       "avg_impact_factor": {
         "type": "number"

@@ -4,12 +4,57 @@ const { body, query, param } = require('express-validator');
 const { commonValidations } = require('../middleware/validation');
 const venuesController = require('../controllers/venues.controller');
 
+const VENUE_TYPES = ['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES', 'SOURCE_BOOK', 'OTHER'];
+const VENUE_QUARTILES = ['Q1', 'Q2', 'Q3', 'Q4'];
+const VENUE_VALIDATION_STATUSES = ['PENDING', 'VALIDATED', 'NOT_FOUND', 'FAILED'];
+const VENUE_SORTS = [
+  'name', 'type', 'id', 'score', 'ranking', 'works_count', 'cited_by_count',
+  'impact_factor', 'citescore', 'sjr', 'snip', 'h_index', 'i10_index',
+  'two_yr_mean_citedness', 'overton', 'female_share',
+  'coverage_start_year', 'coverage_end_year', 'oldest', 'newest',
+  'created_at', 'updated_at'
+];
+
+const validateVenueFilters = [
+  query('country').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 2 }).withMessage('country must be a 2-letter ISO code'),
+  query('country_code').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 2 }).withMessage('country_code must be a 2-letter ISO code'),
+  query('language').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 3 }).withMessage('language must be a 2 or 3 letter code'),
+  query('lang').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 3 }).withMessage('lang must be a 2 or 3 letter code'),
+  query('aggregation_type').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 50 }).withMessage('aggregation_type must be between 2 and 50 characters'),
+  query('publisher_id').optional({ values: 'falsy' }).isInt({ min: 1 }).withMessage('publisher_id must be a positive integer'),
+  query('sjr_best_quartile').optional({ values: 'falsy' }).trim().toUpperCase().isIn(VENUE_QUARTILES).withMessage(`sjr_best_quartile must be one of: ${VENUE_QUARTILES.join(', ')}`),
+  query('validation_status').optional({ values: 'falsy' }).trim().toUpperCase().isIn(VENUE_VALIDATION_STATUSES).withMessage(`validation_status must be one of: ${VENUE_VALIDATION_STATUSES.join(', ')}`),
+  query('open_access').optional({ values: 'falsy' }).isBoolean().withMessage('open_access must be a boolean'),
+  query('is_in_doaj').optional({ values: 'falsy' }).isBoolean().withMessage('is_in_doaj must be a boolean'),
+  query('is_in_scielo').optional({ values: 'falsy' }).isBoolean().withMessage('is_in_scielo must be a boolean'),
+  query('is_indexed_in_scopus').optional({ values: 'falsy' }).isBoolean().withMessage('is_indexed_in_scopus must be a boolean'),
+  query('is_oa_diamond').optional({ values: 'falsy' }).isBoolean().withMessage('is_oa_diamond must be a boolean'),
+  query('has_issn').optional({ values: 'falsy' }).isBoolean().withMessage('has_issn must be a boolean'),
+  query('has_isbn13').optional({ values: 'falsy' }).isBoolean().withMessage('has_isbn13 must be a boolean'),
+  query('has_summary').optional({ values: 'falsy' }).isBoolean().withMessage('has_summary must be a boolean'),
+  query('works_min').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('works_min must be a non-negative integer'),
+  query('works_max').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('works_max must be a non-negative integer'),
+  query('cited_by_min').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('cited_by_min must be a non-negative integer'),
+  query('cited_by_max').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('cited_by_max must be a non-negative integer'),
+  query('impact_factor_min').optional({ values: 'falsy' }).isFloat({ min: 0 }).withMessage('impact_factor_min must be a non-negative number'),
+  query('impact_factor_max').optional({ values: 'falsy' }).isFloat({ min: 0 }).withMessage('impact_factor_max must be a non-negative number'),
+  query('h_index_min').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('h_index_min must be a non-negative integer'),
+  query('score_min').optional({ values: 'falsy' }).isFloat().withMessage('score_min must be a number')
+];
+
 /**
  * @swagger
  * /venues:
  *   get:
  *     summary: Get list of academic venues
- *     description: Retrieve a paginated list of academic venues including journals, conferences, repositories, and book series. Supports filtering and sorting. Each row carries `summary`, the editorial presentation of the venue, truncated to 500 characters with `summary_truncated` flagging the cut; the full text is on `/venues/{id}`.
+ *     description: >-
+ *       Retrieve a paginated list of academic venues including journals, conferences, repositories, book series, and
+ *       source books. Every row carries the full venue surface: `identifiers` (issn, eissn, isbn13, scopus_id,
+ *       wikidata_id, openalex_id, scielo_id, mag_id, openlibrary_work), `indexing` (doaj, scielo, scopus, oa_diamond,
+ *       validation_status), `metrics` (impact_factor, citescore, sjr, sjr_best_quartile, snip, h_index, i10_index,
+ *       two_yr_mean_citedness, overton, female_share), `ranking` (score, components, llm), and the `publisher`
+ *       organization with its own identifiers and `_links.self`. `summary` is the editorial presentation of the venue,
+ *       truncated to 500 characters with `summary_truncated` flagging the cut; the full text is on `/venues/{id}`.
  *     tags: [Venues]
  *     parameters:
  *       - in: query
@@ -52,7 +97,7 @@ const venuesController = require('../controllers/venues.controller');
  *         name: sortBy
  *         schema:
  *           type: string
- *           enum: [name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest]
+ *           enum: [name, type, id, score, ranking, works_count, cited_by_count, impact_factor, citescore, sjr, snip, h_index, i10_index, two_yr_mean_citedness, overton, female_share, coverage_start_year, coverage_end_year, oldest, newest, created_at, updated_at]
  *           default: score
  *         description: |
  *           Field to sort by. Defaults to `score` (global ranking score) so the most important venues come first.
@@ -64,7 +109,7 @@ const venuesController = require('../controllers/venues.controller');
  *         name: sort_by
  *         schema:
  *           type: string
- *           enum: [name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest]
+ *           enum: [name, type, id, score, ranking, works_count, cited_by_count, impact_factor, citescore, sjr, snip, h_index, i10_index, two_yr_mean_citedness, overton, female_share, coverage_start_year, coverage_end_year, oldest, newest, created_at, updated_at]
  *         description: snake_case alias of `sortBy`.
  *       - in: query
  *         name: sortOrder
@@ -130,6 +175,133 @@ const venuesController = require('../controllers/venues.controller');
  *           type: integer
  *           minimum: 1
  *         description: Keyset-pagination helper — return only venues with `id` greater than or equal to this value.
+ *       - in: query
+ *         name: country
+ *         schema:
+ *           type: string
+ *           minLength: 2
+ *           maxLength: 2
+ *         description: ISO-2 country code of the venue (`country_code` is an accepted alias).
+ *         example: BR
+ *       - in: query
+ *         name: language
+ *         schema:
+ *           type: string
+ *           minLength: 2
+ *           maxLength: 3
+ *         description: Venue language from `venues.lang` (`lang` is an accepted alias).
+ *         example: pt
+ *       - in: query
+ *         name: aggregation_type
+ *         schema:
+ *           type: string
+ *         description: Source aggregation label. Live values are `journal`, `bookseries`, `conferenceproceeding`, `tradejournal`.
+ *         example: journal
+ *       - in: query
+ *         name: publisher_id
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: Keep only venues published by this organization id (see `/institutions/{id}`).
+ *       - in: query
+ *         name: sjr_best_quartile
+ *         schema:
+ *           type: string
+ *           enum: [Q1, Q2, Q3, Q4]
+ *         description: Filter by best SJR subject quartile (`quartile` is an accepted alias).
+ *       - in: query
+ *         name: validation_status
+ *         schema:
+ *           type: string
+ *           enum: [PENDING, VALIDATED, NOT_FOUND, FAILED]
+ *         description: Filter by the operator validation audit status.
+ *       - in: query
+ *         name: open_access
+ *         schema:
+ *           type: boolean
+ *         description: Keep only fully open-access venues (or only non-OA when false).
+ *       - in: query
+ *         name: is_in_doaj
+ *         schema:
+ *           type: boolean
+ *         description: Filter on DOAJ indexing.
+ *       - in: query
+ *         name: is_in_scielo
+ *         schema:
+ *           type: boolean
+ *         description: Filter on SciELO indexing.
+ *       - in: query
+ *         name: is_indexed_in_scopus
+ *         schema:
+ *           type: boolean
+ *         description: Filter on Scopus indexing.
+ *       - in: query
+ *         name: is_oa_diamond
+ *         schema:
+ *           type: boolean
+ *         description: Filter on diamond open access. `false` also matches venues where the flag is NULL.
+ *       - in: query
+ *         name: has_issn
+ *         schema:
+ *           type: boolean
+ *         description: Keep venues carrying an `issn` or `eissn` (serial surface).
+ *       - in: query
+ *         name: has_isbn13
+ *         schema:
+ *           type: boolean
+ *         description: Keep venues carrying an `isbn13` — the identifier that matters for SOURCE_BOOK venues.
+ *       - in: query
+ *         name: has_summary
+ *         schema:
+ *           type: boolean
+ *         description: Keep venues that do (or do not) carry an editorial `summary`.
+ *       - in: query
+ *         name: works_min
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive lower bound on `works_count`.
+ *       - in: query
+ *         name: works_max
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive upper bound on `works_count`.
+ *       - in: query
+ *         name: cited_by_min
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive lower bound on `cited_by_count`.
+ *       - in: query
+ *         name: cited_by_max
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive upper bound on `cited_by_count`.
+ *       - in: query
+ *         name: impact_factor_min
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *         description: Inclusive lower bound on `impact_factor`. Venues with a NULL impact factor are excluded.
+ *       - in: query
+ *         name: impact_factor_max
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *         description: Inclusive upper bound on `impact_factor`.
+ *       - in: query
+ *         name: h_index_min
+ *         schema:
+ *           type: integer
+ *           minimum: 0
+ *         description: Inclusive lower bound on `h_index`.
+ *       - in: query
+ *         name: score_min
+ *         schema:
+ *           type: number
+ *         description: Inclusive lower bound on the ranking score (`venues.total_score`).
  *     responses:
  *       200:
  *         description: Paginated list of venues. `offset` is snapped to a page boundary and echoed under `meta.pagination_extras.offset`; `meta.sort` reports the effective `{ by, order }`, and `meta.filters` appears only when a filter is applied.
@@ -161,20 +333,20 @@ router.get(
     ...commonValidations.pagination,
     query('type')
       .optional({ values: 'falsy' })
-      .isIn(['JOURNAL', 'CONFERENCE', 'REPOSITORY', 'BOOK_SERIES', 'SOURCE_BOOK', 'OTHER'])
-      .withMessage('Type must be one of: JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES, SOURCE_BOOK, OTHER'),
+      .isIn(VENUE_TYPES)
+      .withMessage(`Type must be one of: ${VENUE_TYPES.join(', ')}`),
     query('search')
       .optional({ values: 'falsy' })
       .isLength({ min: 1, max: 200 })
       .withMessage('Search term must be between 1 and 200 characters'),
     query('sortBy')
       .optional({ values: 'falsy' })
-      .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count', 'coverage_start_year', 'coverage_end_year', 'oldest', 'newest'])
-      .withMessage('Sort field must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest'),
+      .isIn(VENUE_SORTS)
+      .withMessage(`Sort field must be one of: ${VENUE_SORTS.join(', ')}`),
     query('sort_by')
       .optional({ values: 'falsy' })
-      .isIn(['name', 'type', 'impact_factor', 'works_count', 'id', 'score', 'ranking', 'h_index', 'cited_by_count', 'coverage_start_year', 'coverage_end_year', 'oldest', 'newest'])
-      .withMessage('sort_by must be one of: name, type, impact_factor, works_count, id, score, ranking, h_index, cited_by_count, coverage_start_year, coverage_end_year, oldest, newest'),
+      .isIn(VENUE_SORTS)
+      .withMessage(`sort_by must be one of: ${VENUE_SORTS.join(', ')}`),
     query('sortOrder')
       .optional({ values: 'falsy' })
       .isIn(['ASC', 'DESC'])
@@ -216,7 +388,8 @@ router.get(
       .optional({ values: 'falsy' })
       .isInt({ min: 1 })
       .withMessage('min_id must be a positive integer')
-      .toInt()
+      .toInt(),
+    ...validateVenueFilters
   ],
   venuesController.getAllVenues
 );
@@ -226,7 +399,11 @@ router.get(
  * /venues/statistics:
  *   get:
  *     summary: Get venue statistics
- *     description: Retrieve aggregate venue counts (per type, all six types), editorial-summary coverage (`with_summary`), and impact-factor / ranking-score summaries. Returns a single flat object (no pagination).
+ *     description: >-
+ *       Retrieve aggregate venue counts (per type, all six types), open-access and diamond-OA counts, the SJR quartile
+ *       distribution (`sjr_quartiles`), identifier coverage (`identifier_coverage` — issn, isbn13, openlibrary_work,
+ *       openalex_id, scopus_id, wikidata_id), publisher linkage (`with_publisher`), editorial-summary coverage
+ *       (`with_summary`), and impact-factor / ranking-score summaries. Returns a single flat object (no pagination).
  *     tags: [Venues]
  *     responses:
  *       200:

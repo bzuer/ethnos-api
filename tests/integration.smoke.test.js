@@ -424,10 +424,54 @@ describe('Integration smoke (real DB)', () => {
       assert.equal(body.data.summary_truncated, false, 'detail summary is never truncated');
     });
 
-    test('GET /venues/statistics reports editorial summary coverage', async () => {
+    test('GET /venues/statistics reports coverage, quartiles and identifiers', async () => {
       const body = assertSuccess(await fetchJson('/venues/statistics'), 'GET /venues/statistics');
       assert.equal(typeof body.data.with_summary, 'number', 'with_summary count');
       assert.ok(body.data.with_summary >= 0 && body.data.with_summary <= body.data.total_venues, 'with_summary bounded by total_venues');
+      assert.equal(typeof body.data.open_access, 'number', 'open_access count');
+      assert.equal(typeof body.data.oa_diamond, 'number', 'oa_diamond count');
+      for (const q of ['Q1', 'Q2', 'Q3', 'Q4']) {
+        assert.equal(typeof body.data.sjr_quartiles[q], 'number', `sjr_quartiles.${q}`);
+      }
+      for (const key of ['issn', 'isbn13', 'openlibrary_work', 'openalex_id', 'scopus_id', 'wikidata_id']) {
+        assert.equal(typeof body.data.identifier_coverage[key], 'number', `identifier_coverage.${key}`);
+      }
+      assert.ok(body.data.identifier_coverage.isbn13 > 0, 'isbn13 coverage is non-zero — source books carry it');
+    });
+
+    test('GET /venues exposes the full venues column surface', async () => {
+      const body = assertSuccess(await fetchJson('/venues?type=SOURCE_BOOK&has_isbn13=true&limit=3'), 'GET /venues?has_isbn13');
+      assert.ok(body.data.length > 0, 'source books with isbn13 exist');
+      const venue = body.data[0];
+      for (const key of ['issn', 'eissn', 'isbn13', 'scopus_id', 'wikidata_id', 'openalex_id', 'scielo_id', 'mag_id', 'openlibrary_work']) {
+        assert.ok(key in venue.identifiers, `identifiers.${key} present`);
+      }
+      assert.ok(venue.identifiers.isbn13, 'has_isbn13 filter guarantees an isbn13');
+      assert.ok('is_oa_diamond' in venue.indexing, 'indexing.is_oa_diamond present');
+      for (const key of ['sjr_best_quartile', 'overton', 'female_share']) {
+        assert.ok(key in venue.metrics, `metrics.${key} present`);
+      }
+      if (venue.publisher) {
+        assert.ok(venue.publisher.identifiers && 'ror_id' in venue.publisher.identifiers, 'publisher.identifiers block');
+        assert.match(venue.publisher._links.self, /^\/institutions\/\d+$/, 'publisher links to /institutions/{id}');
+      }
+      assert.equal(body.meta.filters.has_isbn13, true, 'meta.filters echoes has_isbn13');
+    });
+
+    test('GET /venues honours the metric filters and sorts', async () => {
+      const body = assertSuccess(await fetchJson('/venues?sjr_best_quartile=Q1&sortBy=citescore&sort_order=DESC&limit=5'), 'GET /venues?quartile+citescore');
+      assert.equal(body.meta.sort.by, 'citescore');
+      assert.equal(body.meta.sort.order, 'DESC');
+      assert.equal(body.meta.filters.sjr_best_quartile, 'Q1');
+      const scores = body.data.map((v) => v.metrics.citescore).filter((v) => v !== null);
+      for (let i = 1; i < scores.length; i += 1) {
+        assert.ok(scores[i - 1] >= scores[i], `citescore must be ordered DESC (got ${scores.join(', ')})`);
+      }
+      for (const v of body.data) {
+        assert.equal(v.metrics.sjr_best_quartile, 'Q1', 'quartile filter applied');
+      }
+      const rejected = await fetchJson('/venues?sjr_best_quartile=Q9');
+      assert.equal(rejected.status, 400, 'invalid quartile rejected');
     });
 
     test('GET /persons', async () => {

@@ -461,11 +461,18 @@ describe('DTOs structure', () => {
       openalex_id: 'V123',
       issn: '1111-2222',
       eissn: '3333-4444',
+      isbn13: '9780000000001',
+      mag_id: '112914683',
+      openlibrary_work: 'OL123W',
       impact_factor: 3.2,
       h_index: 42,
       citescore: 2.8,
       sjr: 1.1,
+      sjr_best_quartile: 'Q1',
       snip: 0.9,
+      overton: 15,
+      female_share: 47.09,
+      is_oa_diamond: 1,
       is_in_doaj: 1,
       is_in_scielo: 0,
       is_indexed_in_scopus: 1,
@@ -480,13 +487,31 @@ describe('DTOs structure', () => {
     expect(out.identifiers).toEqual({
       issn: '1111-2222',
       eissn: '3333-4444',
+      isbn13: '9780000000001',
       scopus_id: '12345',
       wikidata_id: 'Q123',
       openalex_id: 'V123',
-      scielo_id: null
+      scielo_id: null,
+      mag_id: '112914683',
+      openlibrary_work: 'OL123W'
     });
-    expect(out.metrics).toMatchObject({ impact_factor: 3.2, h_index: 42, citescore: 2.8, sjr: 1.1, snip: 0.9 });
-    expect(out.indexing).toEqual({ is_in_doaj: true, is_in_scielo: false, is_indexed_in_scopus: true, validation_status: 'VALIDATED' });
+    expect(out.metrics).toMatchObject({
+      impact_factor: 3.2,
+      h_index: 42,
+      citescore: 2.8,
+      sjr: 1.1,
+      sjr_best_quartile: 'Q1',
+      snip: 0.9,
+      overton: 15,
+      female_share: 47.09
+    });
+    expect(out.indexing).toEqual({
+      is_in_doaj: true,
+      is_in_scielo: false,
+      is_indexed_in_scopus: true,
+      is_oa_diamond: true,
+      validation_status: 'VALIDATED'
+    });
     expect(out.ranking).toMatchObject({ score: 15.5 });
     expect(out.ranking.components).toEqual({ subject: 5, oa: 0.5, impact: 6, llm: 4 });
     const c = out.ranking.components;
@@ -499,6 +524,9 @@ describe('DTOs structure', () => {
 
     expect(out).not.toHaveProperty('issn');
     expect(out).not.toHaveProperty('eissn');
+    expect(out).not.toHaveProperty('isbn13');
+    expect(out).not.toHaveProperty('mag_id');
+    expect(out).not.toHaveProperty('openlibrary_work');
     expect(out).not.toHaveProperty('scopus_id');
     expect(out).not.toHaveProperty('impact_factor');
     expect(out).not.toHaveProperty('h_index');
@@ -510,6 +538,37 @@ describe('DTOs structure', () => {
     expect(out).not.toHaveProperty('keywords');
     expect(out).not.toHaveProperty('top_subjects');
     expect(out).not.toHaveProperty('is_in_doaj');
+  });
+
+  test('Venue DTO exposes the publisher organization with its identifiers', () => {
+    const { formatVenueListItem } = require('../src/dto/venue.dto');
+    const out = formatVenueListItem({
+      id: 1012126,
+      name: 'The Journal of Peasant Studies',
+      publisher: {
+        id: 986434,
+        name: 'Informa',
+        type: 'PUBLISHER',
+        country_code: 'GB',
+        url: 'http://www.informa.com',
+        ror_id: '0571arb76',
+        grid_id: null,
+        wikidata_id: 'Q680946',
+        openalex_id: 'P4310320449'
+      }
+    });
+
+    expect(out.publisher).toMatchObject({ id: 986434, name: 'Informa', type: 'PUBLISHER', country_code: 'GB', url: 'http://www.informa.com' });
+    expect(out.publisher.identifiers).toEqual({
+      ror_id: '0571arb76',
+      grid_id: null,
+      wikidata_id: 'Q680946',
+      openalex_id: 'P4310320449'
+    });
+    expect(out.publisher._links.self).toBe('/institutions/986434');
+
+    const orphan = formatVenueListItem({ id: 2, name: 'No publisher' });
+    expect(orphan.publisher).toBeNull();
   });
 
   test('Venue DTO truncates summary on listings and keeps it whole on detail', () => {

@@ -21,7 +21,7 @@ Paginated list of venues. Default sort is `score DESC` (global ranking, most imp
 | `offset` | integer | 0 | ≥0 | alternative to `page`; snapped to a page boundary and echoed at `meta.pagination_extras.offset` (e.g. `offset=5&limit=2` → page 3, echoed offset 4) |
 | `type` | string | — | `JOURNAL`,`CONFERENCE`,`REPOSITORY`,`BOOK_SERIES`,`SOURCE_BOOK`,`OTHER` | filter by venue type; invalid value → 400. `SOURCE_BOOK` dominates the corpus |
 | `search` | string | — | 1..200 chars | free-text; MariaDB `LIKE` over `name`, `abbreviated_name`, `issn`, `eissn`, publisher name. (The dedicated `/venues/search` uses `q` instead — the two are **not** interchangeable) |
-| `sortBy` / `sort_by` | string | `score` | `name`,`type`,`impact_factor`,`works_count`,`id`,`score`,`ranking`,`h_index`,`cited_by_count`,`coverage_start_year`,`coverage_end_year`,`oldest`,`newest` | sort key; invalid → 400. `oldest`=alias of `coverage_start_year`, `newest`=alias of `coverage_end_year`, `ranking`=`score` |
+| `sortBy` / `sort_by` | string | `score` | `name`,`type`,`id`,`score`,`ranking`,`works_count`,`cited_by_count`,`impact_factor`,`citescore`,`sjr`,`snip`,`h_index`,`i10_index`,`two_yr_mean_citedness`,`overton`,`female_share`,`coverage_start_year`,`coverage_end_year`,`oldest`,`newest`,`created_at`,`updated_at` | sort key; invalid → 400. `oldest`=alias of `coverage_start_year`, `newest`=alias of `coverage_end_year`, `ranking`=`score`. Rows with a NULL value on any nullable metric sort are pushed to the tail |
 | `sortOrder` / `sort_order` | string | see effect | `ASC`,`DESC` (snake alias is upper-cased) | direction. Default when omitted: numeric/ranking fields → `DESC`; `id`,`name`,`type`,`coverage_start_year`,`oldest` → `ASC`; `coverage_end_year`,`newest` → `DESC` |
 | `coverage_from` | integer | — | ≥0 | keep venues whose `coverage_start_year` ≥ value |
 | `coverage_to` | integer | — | ≥0 | keep venues whose `coverage_end_year` ≤ value |
@@ -29,6 +29,25 @@ Paginated list of venues. Default sort is `score DESC` (global ranking, most imp
 | `coverage_end_from` / `coverage_end_to` | integer | — | ≥0 | inclusive bounds on `coverage_end_year` |
 | `active_in_year` | integer | — | ≥0 | keep venues whose range encloses the year (`start ≤ year ≤ end`) |
 | `min_id` | integer | — | ≥1 | keyset helper — only venues with `id ≥ value` |
+| `country` / `country_code` | string | — | ISO-2, upper-cased | venue country |
+| `language` / `lang` | string | — | 2..3 chars, lower-cased | venue language (`venues.lang`) |
+| `aggregation_type` | string | — | live values: `journal`, `bookseries`, `conferenceproceeding`, `tradejournal` | source aggregation label |
+| `publisher_id` | integer | — | ≥1 | only venues published by this organization (`/institutions/{id}`) |
+| `sjr_best_quartile` / `quartile` | string | — | `Q1`,`Q2`,`Q3`,`Q4` | best SJR subject quartile |
+| `validation_status` | string | — | `PENDING`,`VALIDATED`,`NOT_FOUND`,`FAILED` | operator validation audit status |
+| `open_access` | boolean | — | `true`/`false`/`1`/`0`/`yes`/`no` | fully-OA policy flag |
+| `is_in_doaj` | boolean | — | idem | DOAJ indexing |
+| `is_in_scielo` | boolean | — | idem | SciELO indexing |
+| `is_indexed_in_scopus` | boolean | — | idem | Scopus indexing |
+| `is_oa_diamond` | boolean | — | idem | diamond OA. `false` also matches rows where the flag is NULL |
+| `has_issn` | boolean | — | idem | venue carries `issn` or `eissn` (serial surface) |
+| `has_isbn13` | boolean | — | idem | venue carries `isbn13` — the identifier that matters for `SOURCE_BOOK` |
+| `has_summary` | boolean | — | idem | venue carries a non-empty editorial `summary` |
+| `works_min` / `works_max` | integer | — | ≥0 | inclusive bounds on `works_count` |
+| `cited_by_min` / `cited_by_max` | integer | — | ≥0 | inclusive bounds on `cited_by_count` |
+| `impact_factor_min` / `impact_factor_max` | number | — | ≥0 | inclusive bounds on `impact_factor`; NULL impact factors are excluded |
+| `h_index_min` | integer | — | ≥0 | inclusive lower bound on `h_index` |
+| `score_min` | number | — | any | inclusive lower bound on the ranking score (`venues.total_score`) |
 
 Rows with NULL coverage years are always pushed to the tail regardless of sort direction. When the primary sort is not `score`/`ranking`, `COALESCE(v.total_score,0) DESC` then `v.name ASC` are appended as tiebreakers. `meta.sort` reports the effective `{by,order}`; `meta.filters` appears only when a filter is applied.
 
@@ -40,6 +59,11 @@ GET /venues?type=JOURNAL&sortBy=impact_factor&sort_order=DESC&limit=20
 GET /venues?search=Nature&limit=10
 GET /venues?active_in_year=2010&coverage_from=1990&sortBy=works_count
 GET /venues?type=SOURCE_BOOK&min_id=1000000&limit=50
+GET /venues?sjr_best_quartile=Q1&sortBy=citescore&limit=20
+GET /venues?type=SOURCE_BOOK&has_isbn13=true&limit=50
+GET /venues?country=BR&language=pt&is_in_doaj=true&sortBy=works_count
+GET /venues?publisher_id=986434&sortBy=impact_factor
+GET /venues?is_oa_diamond=true&sortBy=cited_by_count
 ```
 
 ### Example response
@@ -65,18 +89,24 @@ GET /venues?type=SOURCE_BOOK&min_id=1000000&limit=50
       "coverage_end_year": 2026,
       "works_count": 1230,
       "cited_by_count": 62126,
-      "publisher": { "id": 2428364, "name": "Annual Reviews Inc.", "type": "PUBLISHER", "country_code": "US" },
+      "publisher": {
+        "id": 2428364, "name": "Annual Reviews Inc.", "type": "PUBLISHER", "country_code": "US",
+        "url": null,
+        "identifiers": { "ror_id": null, "grid_id": null, "wikidata_id": null, "openalex_id": null },
+        "_links": { "self": "/institutions/2428364" }
+      },
       "identifiers": {
-        "issn": "0084-6570", "eissn": "1545-4290", "scopus_id": "68623",
-        "wikidata_id": "Q4769665", "openalex_id": "S195167216", "scielo_id": null
+        "issn": "0084-6570", "eissn": "1545-4290", "isbn13": null, "scopus_id": "68623",
+        "wikidata_id": "Q4769665", "openalex_id": "S195167216", "scielo_id": null,
+        "mag_id": "195167216", "openlibrary_work": null
       },
       "indexing": {
-        "is_in_doaj": false, "is_in_scielo": false, "is_indexed_in_scopus": true,
+        "is_in_doaj": false, "is_in_scielo": false, "is_indexed_in_scopus": true, "is_oa_diamond": false,
         "validation_status": "VALIDATED"
       },
       "metrics": {
-        "impact_factor": 4.004, "citescore": 6.4, "sjr": 1.341, "snip": 4.007,
-        "h_index": 114, "i10_index": 768, "two_yr_mean_citedness": 0.2903
+        "impact_factor": 4.163, "citescore": 6.4, "sjr": 1.341, "sjr_best_quartile": "Q1", "snip": 4.007,
+        "h_index": 114, "i10_index": 768, "two_yr_mean_citedness": 0.2903, "overton": 0, "female_share": 63.16
       },
       "ranking": {
         "score": 25.006,
@@ -122,24 +152,35 @@ The `subjects[]` array is trimmed above; **list rows carry up to 5 subjects**. `
 | `coverage_end_year` | integer\|null | last covered year; **can hold a future/garbage year** (e.g. 2028/2029) — validate on display |
 | `works_count` | integer | stored count; defaults 0 |
 | `cited_by_count` | integer | stored count; defaults 0 |
-| `publisher` | object\|null | `{id, name, type, country_code}`; null when no publisher linked |
+| `publisher` | object\|null | publishing organization; null when none linked |
+| `publisher.id` / `.name` / `.type` / `.country_code` | | core publisher fields |
+| `publisher.url` | string\|null | publisher homepage |
+| `publisher.identifiers` | object | `{ror_id, grid_id, wikidata_id, openalex_id}` from the `organizations` row |
+| `publisher._links.self` | string\|null | `/institutions/{publisher_id}` — follow for the full organization |
 | `identifiers.issn` | string\|null | |
 | `identifiers.eissn` | string\|null | electronic ISSN |
+| `identifiers.isbn13` | string\|null | **ISBN-13 of the book/monographic venue — populated on ~297k venues (92%), the primary identifier for `SOURCE_BOOK`** |
 | `identifiers.scopus_id` | string\|null | |
 | `identifiers.wikidata_id` | string\|null | |
 | `identifiers.openalex_id` | string\|null | |
-| `identifiers.scielo_id` | string\|null | |
+| `identifiers.scielo_id` | string\|null | column exists but is empty corpus-wide (always null today) |
+| `identifiers.mag_id` | string\|null | legacy Microsoft Academic Graph id (~12.5k venues) |
+| `identifiers.openlibrary_work` | string\|null | **OpenLibrary work key (`OL…W`) — populated on ~239k venues (74%)** |
 | `indexing.is_in_doaj` | boolean\|null | |
 | `indexing.is_in_scielo` | boolean\|null | |
 | `indexing.is_indexed_in_scopus` | boolean\|null | |
+| `indexing.is_oa_diamond` | boolean\|null | diamond OA — free for authors and readers (1,804 venues) |
 | `indexing.validation_status` | string\|null | audit status, e.g. `VALIDATED`, `PENDING`, `NOT_FOUND`, `FAILED` |
 | `metrics.impact_factor` | number\|null | |
 | `metrics.citescore` | number\|null | |
 | `metrics.sjr` | number\|null | SCImago Journal Rank |
+| `metrics.sjr_best_quartile` | string\|null | `Q1`..`Q4`, best SJR subject quartile (~11.5k venues) |
 | `metrics.snip` | number\|null | Source Normalized Impact per Paper |
 | `metrics.h_index` | integer\|null | |
 | `metrics.i10_index` | integer\|null | |
 | `metrics.two_yr_mean_citedness` | number\|null | 2-year mean citedness |
+| `metrics.overton` | integer\|null | Overton policy-document citations (~11.5k venues) |
+| `metrics.female_share` | number\|null | share of female authorship, 0..100 (~11.5k venues) |
 | `ranking.score` | number\|null | = `venues.total_score` = subject+oa+impact+llm (the four components sum exactly to this) |
 | `ranking.components.subject` | number\|null | subject-relevance component |
 | `ranking.components.oa` | number\|null | open-access component |
@@ -154,7 +195,9 @@ The `subjects[]` array is trimmed above; **list rows carry up to 5 subjects**. `
 | `subjects[].vocabulary` | string\|null | e.g. `SCImago`, `OpenAlex`, `Scopus` |
 | `subjects[].lang` | string\|null | ISO 639-1 |
 
-`mag_id` is stored on the base table but **never exposed**. Identifiers live only under `identifiers{}` — they are not duplicated at the top level.
+Identifiers live only under `identifiers{}` — they are not duplicated at the top level.
+
+Only four `venues` columns are withheld: the generated `name_dedup_key` (internal dedup key) and the operator ranking inputs `affiliation_score` / `citation_score` / `authorship_score`, which feed `sp_calculate_venue_ranking` and are `0.000` for every row today. Everything else the table stores is on this payload.
 
 ### Notes / caveats
 
@@ -209,10 +252,15 @@ GET /venues/search?q=anthropology&offset=20&limit=20
       "coverage_end_year": 2026,
       "works_count": 893,
       "cited_by_count": 6302,
-      "publisher": { "id": 2903095, "name": "Universidade Federal do Rio de Janeiro", "type": "PUBLISHER", "country_code": "BR" },
-      "identifiers": { "issn": "0104-9313", "eissn": "1678-4944", "scopus_id": "5100154602", "wikidata_id": "Q15759471", "openalex_id": "S4210222159", "scielo_id": null },
-      "indexing": { "is_in_doaj": true, "is_in_scielo": true, "is_indexed_in_scopus": true, "validation_status": "VALIDATED" },
-      "metrics": { "impact_factor": 0.339, "citescore": 0.8, "sjr": 0.142, "snip": 0.844, "h_index": 36, "i10_index": 139, "two_yr_mean_citedness": 0 },
+      "publisher": {
+        "id": 2903095, "name": "Universidade Federal do Rio de Janeiro", "type": "PUBLISHER", "country_code": "BR",
+        "url": null,
+        "identifiers": { "ror_id": null, "grid_id": null, "wikidata_id": null, "openalex_id": null },
+        "_links": { "self": "/institutions/2903095" }
+      },
+      "identifiers": { "issn": "0104-9313", "eissn": "1678-4944", "isbn13": null, "scopus_id": "5100154602", "wikidata_id": "Q15759471", "openalex_id": "S4210222159", "scielo_id": null, "mag_id": "4210222159", "openlibrary_work": null },
+      "indexing": { "is_in_doaj": true, "is_in_scielo": true, "is_indexed_in_scopus": true, "is_oa_diamond": true, "validation_status": "VALIDATED" },
+      "metrics": { "impact_factor": 0.348, "citescore": 0.8, "sjr": 0.142, "sjr_best_quartile": "Q3", "snip": 0.844, "h_index": 34, "i10_index": 136, "two_yr_mean_citedness": 0, "overton": 0, "female_share": 0 },
       "ranking": { "score": 21.332, "components": { "subject": 10, "oa": 0.05, "impact": 1.282, "llm": 10 }, "llm": { "relevance": 5, "justification": "Mana is a prominent Brazilian journal ..." } },
       "subjects": [
         { "subject_id": 2537289, "term": "Anthropology", "score": 0.5, "vocabulary": "SCImago", "lang": "en" }
@@ -270,22 +318,34 @@ GET /venues/statistics
 {
   "status": "success",
   "data": {
-    "total_venues": 189076,
-    "journals": 22680,
-    "conferences": 144,
-    "repositories": 207,
-    "book_series": 287,
-    "source_books": 165444,
-    "other": 314,
+    "total_venues": 322912,
+    "journals": 24115,
+    "conferences": 242,
+    "repositories": 644,
+    "book_series": 283,
+    "source_books": 297506,
+    "other": 122,
     "with_impact_factor": 134788,
     "with_summary": 192579,
-    "avg_impact_factor": 0.8502489,
-    "max_impact_factor": 295,
+    "avg_impact_factor": 1.184905,
+    "max_impact_factor": 625,
     "min_impact_factor": 0,
-    "indexed_in_doaj": 5529,
+    "indexed_in_doaj": 5317,
     "indexed_in_scielo": 1,
-    "indexed_in_scopus": 11648,
-    "avg_global_ranking_score": 12.518824
+    "indexed_in_scopus": 12955,
+    "open_access": 8816,
+    "oa_diamond": 1804,
+    "sjr_quartiles": { "Q1": 5102, "Q2": 2972, "Q3": 2011, "Q4": 1392 },
+    "identifier_coverage": {
+      "issn": 22361,
+      "isbn13": 297564,
+      "openlibrary_work": 239071,
+      "openalex_id": 23161,
+      "scopus_id": 12954,
+      "wikidata_id": 14198
+    },
+    "with_publisher": 315858,
+    "avg_global_ranking_score": 12.6156052
   },
   "meta": { "request": { "method": "GET", "path": "/venues/statistics" } }
 }
@@ -304,6 +364,14 @@ GET /venues/statistics
 | `other` | integer | `OTHER` |
 | `with_impact_factor` | integer | venues carrying a non-null impact factor |
 | `with_summary` | integer | venues carrying a non-empty editorial `summary` |
+| `open_access` | integer | venues flagged fully open access |
+| `oa_diamond` | integer | diamond-OA venues (free for authors and readers) |
+| `sjr_quartiles.Q1`..`Q4` | integer | venue count per best SJR quartile |
+| `identifier_coverage.issn` | integer | venues with `issn` **or** `eissn` |
+| `identifier_coverage.isbn13` | integer | venues with an ISBN-13 (dominant — `SOURCE_BOOK` is ~92% of the corpus) |
+| `identifier_coverage.openlibrary_work` | integer | venues with an OpenLibrary work key |
+| `identifier_coverage.openalex_id` / `.scopus_id` / `.wikidata_id` | integer | coverage of each external id |
+| `with_publisher` | integer | venues linked to a publisher organization |
 | `avg_impact_factor` | number | mean impact factor across venues that have one |
 | `max_impact_factor` | number | maximum IF observed |
 | `min_impact_factor` | number | minimum IF observed |
@@ -370,10 +438,15 @@ GET /venues/1012128?include_top_authors=false
     "coverage_end_year": 2026,
     "works_count": 1230,
     "cited_by_count": 62126,
-    "publisher": { "id": 2428364, "name": "Annual Reviews Inc.", "type": "PUBLISHER", "country_code": "US" },
-    "identifiers": { "issn": "0084-6570", "eissn": "1545-4290", "scopus_id": "68623", "wikidata_id": "Q4769665", "openalex_id": "S195167216", "scielo_id": null },
-    "indexing": { "is_in_doaj": false, "is_in_scielo": false, "is_indexed_in_scopus": true, "validation_status": "VALIDATED" },
-    "metrics": { "impact_factor": 4.004, "citescore": 6.4, "sjr": 1.341, "snip": 4.007, "h_index": 114, "i10_index": 768, "two_yr_mean_citedness": 0.2903 },
+    "publisher": {
+      "id": 2428364, "name": "Annual Reviews Inc.", "type": "PUBLISHER", "country_code": "US",
+      "url": null,
+      "identifiers": { "ror_id": null, "grid_id": null, "wikidata_id": null, "openalex_id": null },
+      "_links": { "self": "/institutions/2428364" }
+    },
+    "identifiers": { "issn": "0084-6570", "eissn": "1545-4290", "isbn13": null, "scopus_id": "68623", "wikidata_id": "Q4769665", "openalex_id": "S195167216", "scielo_id": null, "mag_id": "195167216", "openlibrary_work": null },
+    "indexing": { "is_in_doaj": false, "is_in_scielo": false, "is_indexed_in_scopus": true, "is_oa_diamond": false, "validation_status": "VALIDATED" },
+    "metrics": { "impact_factor": 4.163, "citescore": 6.4, "sjr": 1.341, "sjr_best_quartile": "Q1", "snip": 4.007, "h_index": 114, "i10_index": 768, "two_yr_mean_citedness": 0.2903, "overton": 0, "female_share": 63.16 },
     "ranking": { "score": 25.006, "components": { "subject": 10, "oa": 0, "impact": 5.006, "llm": 10 }, "llm": { "relevance": 5, "justification": "The Annual Review of Anthropology is a premier publication ..." } },
 
     "created_at": "2025-08-15T01:08:49.000Z",
