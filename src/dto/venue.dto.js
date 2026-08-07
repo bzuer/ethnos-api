@@ -221,6 +221,7 @@ function formatVenueDetails(venue = {}, options = {}) {
       authors: Array.isArray(w.authors) ? w.authors.map((a) => ({
         person_id: a.person_id,
         name: a.name,
+        role: a.role || 'AUTHOR',
         position: toInteger(a.position, 0),
         is_corresponding: toNullableBoolean(a.is_corresponding)
       })) : []

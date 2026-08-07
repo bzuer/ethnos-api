@@ -215,7 +215,7 @@ class SignaturesService {
             MIN(a.role) AS role,
             MIN(a.position) AS position,
             MAX(a.is_corresponding) AS is_corresponding,
-            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
+            (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
           FROM persons p
           INNER JOIN authorships a ON a.person_id = p.id
           INNER JOIN works w ON w.id = a.work_id

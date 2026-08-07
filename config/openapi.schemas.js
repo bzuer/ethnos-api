@@ -79,15 +79,23 @@ module.exports = {
         "items": {
           "type": "string"
         },
-        "description": "Up to 3 preferred author names."
+        "description": "Up to 3 contributor names, deduplicated by person and ordered AUTHOR first. Carries no role - use contributors_preview to tell an author from an editor or translator."
+      },
+      "contributors_preview": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/ContributorPreview"
+        },
+        "description": "The same people as authors_preview, each carrying its authorship role."
       },
       "author_count": {
         "type": "integer",
-        "description": "Total authors on the work."
+        "description": "Distinct people credited on the work across every role. A person credited as both AUTHOR and EDITOR counts once."
       },
       "first_author": {
         "type": "object",
         "nullable": true,
+        "description": "Always an AUTHOR-role contributor; falls back to the highest-ranked role only when the work credits no author.",
         "properties": {
           "person_id": {
             "type": "integer"
@@ -428,8 +436,27 @@ module.exports = {
       },
       "authors": {
         "type": "array",
+        "description": "One entry per authorship row, so a person credited under two roles appears twice. Ordered by role (AUTHOR, EDITOR, TRANSLATOR, REVIEWER) then position.",
         "items": {
           "$ref": "#/components/schemas/WorkAuthor"
+        }
+      },
+      "authors_count": {
+        "type": "integer",
+        "description": "Distinct people in authors[], counting a person credited under several roles once."
+      },
+      "contributors": {
+        "type": "array",
+        "description": "authors[] collapsed to one entry per person, each declaring every role it holds.",
+        "items": {
+          "$ref": "#/components/schemas/WorkContributor"
+        }
+      },
+      "contributor_roles": {
+        "type": "object",
+        "description": "Authorship-row tallies per role, e.g. {\"AUTHOR\": 3, \"EDITOR\": 3}.",
+        "additionalProperties": {
+          "type": "integer"
         }
       },
       "subjects": {
@@ -1038,11 +1065,12 @@ module.exports = {
       },
       "role": {
         "type": "string",
+        "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"],
         "description": "Authorship role, default AUTHOR."
       },
       "position": {
         "type": "integer",
-        "description": "1-based author position."
+        "description": "1-based position within this role, not within the work. An AUTHOR at position 1 and a TRANSLATOR at position 1 can coexist, so order by role before position."
       },
       "is_corresponding": {
         "type": "boolean"
@@ -1076,6 +1104,85 @@ module.exports = {
             }
           }
         }
+      }
+    }
+  },
+  "ContributorPreview": {
+    "type": "object",
+    "description": "A credited person on a work listing row, carrying its authorship role.",
+    "properties": {
+      "person_id": {
+        "type": "integer",
+        "nullable": true
+      },
+      "name": {
+        "type": "string",
+        "nullable": true
+      },
+      "role": {
+        "type": "string",
+        "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"],
+        "description": "Highest-ranked role this person holds on the work."
+      },
+      "roles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"]
+        },
+        "description": "Every role this person holds on the work."
+      },
+      "position": {
+        "type": "integer",
+        "nullable": true,
+        "description": "1-based position within the primary role."
+      }
+    }
+  },
+  "WorkContributor": {
+    "type": "object",
+    "description": "A person credited on the work, deduplicated across roles.",
+    "properties": {
+      "person_id": {
+        "type": "integer",
+        "nullable": true
+      },
+      "preferred_name": {
+        "type": "string",
+        "nullable": true
+      },
+      "given_names": {
+        "type": "string",
+        "nullable": true
+      },
+      "family_name": {
+        "type": "string",
+        "nullable": true
+      },
+      "identifiers": {
+        "type": "object",
+        "nullable": true
+      },
+      "roles": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"]
+        },
+        "description": "Every role this person holds on the work, e.g. [\"AUTHOR\", \"EDITOR\"] for someone who both wrote in and edited the volume."
+      },
+      "position": {
+        "type": "integer",
+        "nullable": true,
+        "description": "1-based position within the primary role."
+      },
+      "is_corresponding": {
+        "type": "boolean",
+        "nullable": true
+      },
+      "affiliation": {
+        "type": "object",
+        "nullable": true
       }
     }
   },
@@ -2824,17 +2931,35 @@ module.exports = {
       },
       "authorship": {
         "type": "object",
+        "description": "How this person is credited on the work. One row per work even when the person holds several roles.",
         "properties": {
           "role": {
             "type": "string",
             "enum": [
               "AUTHOR",
-              "EDITOR"
-            ]
+              "EDITOR",
+              "TRANSLATOR",
+              "REVIEWER"
+            ],
+            "description": "Highest-ranked role this person holds on the work."
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "AUTHOR",
+                "EDITOR",
+                "TRANSLATOR",
+                "REVIEWER"
+              ]
+            },
+            "description": "Every role this person holds on the work."
           },
           "position": {
             "type": "integer",
-            "nullable": true
+            "nullable": true,
+            "description": "1-based position within the primary role, not within the work."
           },
           "is_corresponding": {
             "type": "boolean"

@@ -9,6 +9,7 @@ const {
 } = require('../dto/organization.dto');
 const { withTimeout, latestPublicationJoin } = require('../utils/db');
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
+const { authorshipRoleOrderSql, contributorNames } = require('../dto/helpers');
 
 const ORG_TYPES = new Set(['UNIVERSITY', 'INSTITUTE', 'PUBLISHER', 'FUNDER', 'COMPANY', 'OTHER']);
 const ORG_STATUSES = new Set(['active', 'inactive', 'withdrawn']);
@@ -337,7 +338,7 @@ class OrganizationsService {
             pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
             pub.open_access, pub.peer_reviewed,
             v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
-            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
+            (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM works w
           JOIN authorships a ON a.work_id = w.id
           ${latestPublicationJoin('pub', 'LEFT')}
@@ -371,15 +372,19 @@ class OrganizationsService {
           try {
             const ph = rwIds.map(() => '?').join(',');
             const authorRows = await sequelize.query(
-              withTimeout(`SELECT a.work_id, p.preferred_name
+              withTimeout(`SELECT a.work_id, a.person_id, a.role, a.position, p.preferred_name
                            FROM authorships a JOIN persons p ON p.id = a.person_id
                            WHERE a.work_id IN (${ph})
-                           ORDER BY a.work_id, a.position`),
+                           ORDER BY a.work_id, ${authorshipRoleOrderSql('a')}, a.position, a.person_id`),
               { replacements: rwIds, type: sequelize.QueryTypes.SELECT }
             );
-            const namesByWork = Object.create(null);
+            const contributorsByWork = Object.create(null);
             for (const r of authorRows) {
-              (namesByWork[r.work_id] = namesByWork[r.work_id] || []).push(r.preferred_name);
+              (contributorsByWork[r.work_id] = contributorsByWork[r.work_id] || []).push(r);
+            }
+            const namesByWork = Object.create(null);
+            for (const [workId, contributors] of Object.entries(contributorsByWork)) {
+              namesByWork[workId] = contributorNames(contributors);
             }
             for (const w of recentWorks) {
               w.author_names = namesByWork[w.id] || [];
@@ -555,7 +560,7 @@ class OrganizationsService {
             pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
             pub.open_access, pub.peer_reviewed,
             v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
-            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
+            (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM works w
           INNER JOIN authorships a ON a.work_id = w.id
           ${latestPublicationJoin('pub', 'LEFT')}
@@ -644,7 +649,7 @@ class OrganizationsService {
             pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
             pub.open_access, pub.peer_reviewed,
             v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
-            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
+            (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM funding f
           INNER JOIN works w ON w.id = f.work_id
           ${latestPublicationJoin('pub', 'LEFT')}

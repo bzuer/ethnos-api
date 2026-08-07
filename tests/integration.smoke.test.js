@@ -174,6 +174,74 @@ describe('Integration smoke (real DB)', () => {
       }
     });
 
+    test('GET /works/:id groups contributors by role and counts people once', async () => {
+      const list = assertSuccess(await fetchJson('/works?limit=1'), 'GET /works for contributor probe');
+      const workId = list.data?.[0]?.id;
+      if (!workId) return;
+      const body = assertSuccess(await fetchJson(`/works/${workId}`), `GET /works/${workId} contributors`);
+      const authors = body.data.authors;
+      assert.ok(Array.isArray(authors), 'authors[] must be an array');
+      assert.ok(Array.isArray(body.data.contributors), 'contributors[] must be an array');
+      assert.equal(typeof body.data.authors_count, 'number', 'authors_count must be numeric');
+      assert.ok(body.data.contributor_roles && typeof body.data.contributor_roles === 'object', 'contributor_roles must be present');
+
+      const roleOrder = ['AUTHOR', 'EDITOR', 'TRANSLATOR', 'REVIEWER'];
+      const rank = role => {
+        const index = roleOrder.indexOf(role);
+        return index === -1 ? roleOrder.length : index;
+      };
+      for (let i = 1; i < authors.length; i += 1) {
+        const prev = authors[i - 1];
+        const curr = authors[i];
+        const prevRank = rank(prev.role);
+        const currRank = rank(curr.role);
+        assert.ok(prevRank <= currRank, 'authors[] must be grouped by role, not interleaved by position');
+        if (prevRank === currRank && prev.position !== null && curr.position !== null) {
+          assert.ok(prev.position <= curr.position, 'within a role, position must ascend');
+        }
+      }
+
+      const distinctPeople = new Set(authors.map(a => a.person_id)).size;
+      assert.equal(body.data.authors_count, distinctPeople, 'authors_count must count distinct people');
+      assert.equal(body.data.contributors.length, distinctPeople, 'contributors[] must be deduped by person');
+      for (const contributor of body.data.contributors) {
+        assert.ok(Array.isArray(contributor.roles) && contributor.roles.length > 0, 'each contributor must declare roles[]');
+      }
+    });
+
+    test('GET /works list exposes contributor roles and a real first author', async () => {
+      const body = assertSuccess(await fetchJson('/works?limit=10'), 'GET /works contributor preview');
+      for (const row of body.data) {
+        assert.ok(Array.isArray(row.contributors_preview), 'contributors_preview must be an array');
+        for (const contributor of row.contributors_preview) {
+          assert.ok(typeof contributor.role === 'string' && contributor.role, 'preview contributors must carry a role');
+        }
+        const names = row.authors_preview || [];
+        assert.equal(new Set(names.map(n => n.toLowerCase())).size, names.length, 'authors_preview must not repeat a name');
+        const authorEntry = row.contributors_preview.find(c => c.role === 'AUTHOR');
+        if (authorEntry && row.first_author) {
+          assert.equal(row.first_author.name, authorEntry.name, 'first_author must be an AUTHOR, not another role');
+        }
+      }
+    });
+
+    test('GET /persons/:id/works returns one row per work', async () => {
+      const persons = assertSuccess(await fetchJson('/persons?limit=1'), 'GET /persons for works probe');
+      const personId = persons.data?.[0]?.id;
+      if (!personId) return;
+      const body = assertSuccess(await fetchJson(`/persons/${personId}/works?limit=50`), `GET /persons/${personId}/works`);
+      const ids = body.data.map(row => row.id);
+      assert.equal(new Set(ids).size, ids.length, 'a work must not repeat because the person holds two roles');
+      for (const row of body.data) {
+        assert.ok(Array.isArray(row.authorship?.roles), 'authorship.roles[] must be present');
+        const authorString = row.authors?.author_string;
+        if (authorString) {
+          const names = authorString.split('; ');
+          assert.equal(new Set(names).size, names.length, 'author_string must not repeat a name');
+        }
+      }
+    });
+
     test('GET /publications exposes identifiers+files', async () => {
       const list = assertSuccess(await fetchJson('/publications?limit=1'), 'GET /publications for /publications/:id probe');
       const publicationId = list.data?.[0]?.id;

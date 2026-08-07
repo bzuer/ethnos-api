@@ -5,11 +5,15 @@ const { createPagination, normalizePagination } = require('../utils/pagination')
 const { formatWorkListItem, formatWorkDetails } = require('../dto/work.dto');
 const {
   normalizeType,
-  toOptionalInteger
+  toOptionalInteger,
+  authorshipRoleOrderSql,
+  contributorNames,
+  countDistinctContributors,
+  pickPrimaryAuthor
 } = require('../dto/helpers');
 const { formatPublicationEntry } = require('../dto/publication.dto');
 const { withTimeout, latestPublicationJoin } = require('../utils/db');
-const { hydrateAuthorsForWorks } = require('../utils/hydration');
+const { hydrateAuthorsForWorks, hydrateAuthorCountsByWork } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
 const WORK_LEVEL_FILE_CAP = 50;
@@ -539,15 +543,16 @@ class WorksService {
     const rows = workIds.map(id => byId.get(id)).filter(Boolean);
     const primaryQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
 
-    const [authorsMap, publicationCounts] = await Promise.all([
+    const [authorsMap, publicationCounts, authorCounts] = await Promise.all([
       hydrateAuthorsForWorks(workIds, 5),
-      hydratePublicationCountsByWork(workIds)
+      hydratePublicationCountsByWork(workIds),
+      hydrateAuthorCountsByWork(workIds)
     ]);
 
     const data = rows.map(row => {
       const authors = authorsMap.get(row.id) || [];
-      const authorsPreview = authors.map(a => a.preferred_name).filter(Boolean).slice(0, 3);
-      const first = authors[0];
+      const authorsPreview = contributorNames(authors, 3);
+      const first = pickPrimaryAuthor(authors);
       return formatWorkListItem({
         id: row.id,
         publication_id: row.publication_id || null,
@@ -563,7 +568,8 @@ class WorksService {
         peer_reviewed: row.peer_reviewed,
         venue: buildVenuePayloadFromRow(row),
         authors_preview: authorsPreview,
-        author_count: authors.length,
+        contributors_preview: authors,
+        author_count: authorCounts.get(row.id) ?? countDistinctContributors(authors),
         first_author: first ? first.preferred_name : null,
         first_author_id: first ? first.person_id : null,
         first_author_identifiers: null,
@@ -661,15 +667,16 @@ class WorksService {
     const rows = workIds.map(id => byId.get(id)).filter(Boolean);
     const primaryQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
 
-    const [authorsMap, publicationCounts] = await Promise.all([
+    const [authorsMap, publicationCounts, authorCounts] = await Promise.all([
       hydrateAuthorsForWorks(workIds, 5),
-      hydratePublicationCountsByWork(workIds)
+      hydratePublicationCountsByWork(workIds),
+      hydrateAuthorCountsByWork(workIds)
     ]);
 
     const data = rows.map(row => {
       const authors = authorsMap.get(row.id) || [];
-      const authorsPreview = authors.map(a => a.preferred_name).filter(Boolean).slice(0, 3);
-      const first = authors[0];
+      const authorsPreview = contributorNames(authors, 3);
+      const first = pickPrimaryAuthor(authors);
       return formatWorkListItem({
         id: row.id,
         publication_id: row.publication_id || null,
@@ -685,7 +692,8 @@ class WorksService {
         peer_reviewed: row.peer_reviewed,
         venue: buildVenuePayloadFromRow(row),
         authors_preview: authorsPreview,
-        author_count: authors.length,
+        contributors_preview: authors,
+        author_count: authorCounts.get(row.id) ?? countDistinctContributors(authors),
         first_author: first ? first.preferred_name : null,
         first_author_id: first ? first.person_id : null,
         first_author_identifiers: null,
@@ -793,7 +801,7 @@ class WorksService {
         LEFT JOIN persons p ON p.id = a.person_id
         LEFT JOIN organizations o ON o.id = a.affiliation_id
         WHERE a.work_id = ?
-        ORDER BY a.position ASC
+        ORDER BY ${authorshipRoleOrderSql('a')}, a.position ASC, a.person_id ASC
       `, { replacements: [id], type: sequelize.QueryTypes.SELECT }),
 
       sequelize.query(`
@@ -1221,7 +1229,7 @@ class WorksService {
         const authorsForWork = authorMap.get(row.work_id) || [];
         workMap[row.work_id] = {
           ...row,
-          authors_string: authorsForWork.map(a => a.preferred_name).filter(Boolean).join('; ') || null
+          authors_string: contributorNames(authorsForWork).join('; ') || null
         };
       }
     }

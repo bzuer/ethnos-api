@@ -836,3 +836,124 @@ describe('Dashboard', () => {
     expect(res.body.status).toBe('error');
   });
 });
+
+describe('Contributor roles and positions', () => {
+  const {
+    sortContributors,
+    dedupeContributorsByPerson,
+    countDistinctContributors,
+    contributorNames,
+    pickPrimaryAuthor,
+    authorshipRoleOrderSql
+  } = require('../src/dto/helpers');
+
+  const rokne = { person_id: 1761056, preferred_name: 'Jon Rokne' };
+  const alhajj = { person_id: 1761057, preferred_name: 'Reda Alhajj' };
+  const interleaved = [
+    { ...rokne, role: 'AUTHOR', position: 1 },
+    { ...alhajj, role: 'EDITOR', position: 1 },
+    { ...alhajj, role: 'AUTHOR', position: 2 },
+    { ...rokne, role: 'EDITOR', position: 2 }
+  ];
+
+  test('position is per role, so ordering groups by role before position', () => {
+    const ordered = sortContributors(interleaved);
+    expect(ordered.map(c => `${c.role}:${c.position}`)).toEqual([
+      'AUTHOR:1',
+      'AUTHOR:2',
+      'EDITOR:1',
+      'EDITOR:2'
+    ]);
+  });
+
+  test('a role-1 translator never outranks a role-1 author', () => {
+    const withTranslator = [
+      { person_id: 124382, preferred_name: 'Lise Garond', role: 'TRANSLATOR', position: 1 },
+      { person_id: 291446, preferred_name: 'Giora Sternberg', role: 'AUTHOR', position: 1 }
+    ];
+    expect(pickPrimaryAuthor(withTranslator).preferred_name).toBe('Giora Sternberg');
+  });
+
+  test('a work with only non-author roles still yields a primary contributor', () => {
+    const editorsOnly = [{ person_id: 7, preferred_name: 'Sole Editor', role: 'EDITOR', position: 1 }];
+    expect(pickPrimaryAuthor(editorsOnly).preferred_name).toBe('Sole Editor');
+    expect(pickPrimaryAuthor([])).toBe(null);
+  });
+
+  test('the same person in two roles counts once and is named once', () => {
+    expect(countDistinctContributors(interleaved)).toBe(2);
+    expect(contributorNames(interleaved)).toEqual(['Jon Rokne', 'Reda Alhajj']);
+  });
+
+  test('dedupe keeps both roles instead of hiding the dual role', () => {
+    const merged = dedupeContributorsByPerson(interleaved);
+    expect(merged).toHaveLength(2);
+    expect(merged[0].preferred_name).toBe('Jon Rokne');
+    expect(merged[0].roles).toEqual(['AUTHOR', 'EDITOR']);
+    expect(merged[1].roles).toEqual(['AUTHOR', 'EDITOR']);
+  });
+
+  test('distinct persons sharing a name are not collapsed', () => {
+    const namesakes = [
+      { person_id: 10, preferred_name: 'Gyan Prakash', role: 'AUTHOR', position: 1 },
+      { person_id: 11, preferred_name: 'Cyan Prakash', role: 'AUTHOR', position: 2 }
+    ];
+    expect(countDistinctContributors(namesakes)).toBe(2);
+  });
+
+  test('unknown roles sort last without being dropped', () => {
+    const ordered = sortContributors([
+      { person_id: 2, preferred_name: 'Odd', role: 'ILLUSTRATOR', position: 1 },
+      { person_id: 1, preferred_name: 'Real', role: 'AUTHOR', position: 9 }
+    ]);
+    expect(ordered.map(c => c.preferred_name)).toEqual(['Real', 'Odd']);
+  });
+
+  test('role ordering SQL pushes unmatched roles behind the known enum', () => {
+    const sql = authorshipRoleOrderSql('a');
+    expect(sql).toContain("FIELD(a.role, 'AUTHOR', 'EDITOR', 'TRANSLATOR', 'REVIEWER')");
+    expect(sql).toContain('NULLIF');
+  });
+
+  test('work list item exposes roles and never fronts a translator', () => {
+    const { formatWorkListItem } = require('../src/dto/work.dto');
+    const out = formatWorkListItem({
+      id: 2096820,
+      title: 'Le rang',
+      contributors_preview: [
+        { person_id: 124382, preferred_name: 'Lise Garond', role: 'TRANSLATOR', position: 1 },
+        { person_id: 291446, preferred_name: 'Giora Sternberg', role: 'AUTHOR', position: 1 }
+      ]
+    });
+    expect(out.first_author).toEqual({ person_id: 291446, name: 'Giora Sternberg' });
+    expect(out.authors_preview).toEqual(['Giora Sternberg', 'Lise Garond']);
+    expect(out.contributors_preview.map(c => c.role)).toEqual(['AUTHOR', 'TRANSLATOR']);
+  });
+
+  test('work details keep every authorship row but count people once', () => {
+    const { formatWorkDetails } = require('../src/dto/work.dto');
+    const out = formatWorkDetails({ id: 19894551, title: 'Cities', authors: interleaved });
+    expect(out.authors).toHaveLength(4);
+    expect(out.authors.map(a => a.role)).toEqual(['AUTHOR', 'AUTHOR', 'EDITOR', 'EDITOR']);
+    expect(out.authors_count).toBe(2);
+    expect(out.contributor_roles).toEqual({ AUTHOR: 2, EDITOR: 2 });
+    expect(out.contributors).toHaveLength(2);
+    expect(out.contributors[0].roles).toEqual(['AUTHOR', 'EDITOR']);
+  });
+
+  test('publication list item counts distinct people, not authorship rows', () => {
+    const { formatPublicationListItem } = require('../src/dto/publication.dto');
+    const out = formatPublicationListItem({
+      publication_id: 5,
+      work_id: 19894551,
+      authors_json: JSON.stringify(interleaved.map(c => ({
+        person_id: c.person_id,
+        name: c.preferred_name,
+        role: c.role,
+        position: c.position
+      })))
+    });
+    expect(out.author_count).toBe(2);
+    expect(out.first_author.name).toBe('Jon Rokne');
+  });
+});

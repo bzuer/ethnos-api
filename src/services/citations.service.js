@@ -17,7 +17,7 @@ const fetchWorkSummaryByIds = async (workIds) => {
        p.doi,
        v.name AS venue_name,
        v.abbreviated_name AS venue_abbrev,
-       (SELECT COUNT(*) FROM authorships a WHERE a.work_id = w.id) AS authors_count
+       (SELECT COUNT(DISTINCT a.person_id) FROM authorships a WHERE a.work_id = w.id) AS authors_count
      FROM works w
      ${latestPublicationJoin('p', 'LEFT')}
      LEFT JOIN venues v ON v.id = p.venue_id

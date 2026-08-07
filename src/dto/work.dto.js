@@ -2,12 +2,58 @@ const {
   toOptionalBoolean,
   toOptionalInteger,
   normalizeType,
-  normalizeVenue
+  normalizeVenue,
+  sortContributors,
+  dedupeContributorsByPerson,
+  countDistinctContributors,
+  contributorNames,
+  pickPrimaryAuthor,
+  summarizeContributorRoles
 } = require('./helpers');
+
+function buildContributorsPreview(row = {}, limit = 3) {
+  const source = Array.isArray(row.contributors_preview)
+    ? row.contributors_preview
+    : Array.isArray(row.authors)
+      ? row.authors
+      : [];
+  return dedupeContributorsByPerson(source)
+    .slice(0, limit)
+    .map(contributor => ({
+      person_id: toOptionalInteger(contributor.person_id),
+      name: contributor.preferred_name || contributor.name || null,
+      role: normalizeType(contributor.role) || 'AUTHOR',
+      roles: Array.isArray(contributor.roles) ? contributor.roles : [normalizeType(contributor.role) || 'AUTHOR'],
+      position: toOptionalInteger(contributor.position)
+    }))
+    .filter(contributor => contributor.name);
+}
+
+function dedupeNames(names) {
+  const seen = new Set();
+  const out = [];
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
 
 function ensureAuthorsPreview(row = {}) {
   if (Array.isArray(row.authors_preview)) {
-    return row.authors_preview.map(author => (author ? String(author).trim() : '')).filter(Boolean);
+    return dedupeNames(
+      row.authors_preview.map(author => (author ? String(author).trim() : '')).filter(Boolean)
+    );
+  }
+
+  if (Array.isArray(row.contributors_preview)) {
+    return contributorNames(row.contributors_preview, 3);
+  }
+
+  if (Array.isArray(row.authors)) {
+    return contributorNames(row.authors, 3);
   }
 
   if (typeof row.author_string === 'string' && row.author_string.trim()) {
@@ -22,13 +68,27 @@ function ensureAuthorsPreview(row = {}) {
 }
 
 function formatWorkListItem(row = {}) {
+  const contributorsPreview = buildContributorsPreview(row);
   const authorsPreview = ensureAuthorsPreview(row);
   const authorCountSource =
     row.author_count !== undefined && row.author_count !== null
       ? toOptionalInteger(row.author_count)
       : Array.isArray(row.authors)
-        ? row.authors.length
+        ? countDistinctContributors(row.authors)
         : authorsPreview.length;
+
+  const fallbackAuthor = pickPrimaryAuthor(contributorsPreview);
+  const firstAuthorName =
+    row.first_author ||
+    (fallbackAuthor ? fallbackAuthor.name : null) ||
+    authorsPreview[0] ||
+    null;
+  const firstAuthorId =
+    row.first_author_id !== undefined && row.first_author_id !== null
+      ? toOptionalInteger(row.first_author_id)
+      : fallbackAuthor
+        ? toOptionalInteger(fallbackAuthor.person_id)
+        : null;
 
   const publicationYear = toOptionalInteger(row.publication_year);
   const venue = normalizeVenue(row.venue || {
@@ -61,11 +121,12 @@ function formatWorkListItem(row = {}) {
     peer_reviewed: toOptionalBoolean(row.peer_reviewed),
     venue,
     authors_preview: authorsPreview,
+    contributors_preview: contributorsPreview,
     author_count: authorCountSource,
-    first_author: (row.first_author || authorsPreview[0])
-      ? { person_id: toOptionalInteger(row.first_author_id), name: row.first_author || authorsPreview[0] }
+    first_author: firstAuthorName
+      ? { person_id: firstAuthorId, name: firstAuthorName }
       : null,
-    first_author_id: toOptionalInteger(row.first_author_id),
+    first_author_id: firstAuthorId,
     first_author_identifiers: row.first_author_identifiers || null,
     cited_by_count: citedByCount !== null ? citedByCount : 0,
     references_count: referencesCount !== null ? referencesCount : 0,
@@ -81,7 +142,7 @@ function formatWorkDetails(work = {}) {
     ? work.publications
     : [];
 
-  const authors = Array.isArray(work.authors)
+  const rawAuthors = Array.isArray(work.authors)
     ? work.authors.map(author => {
         const preferredName =
           author.preferred_name ||
@@ -125,6 +186,19 @@ function formatWorkDetails(work = {}) {
         };
       })
     : [];
+
+  const authors = sortContributors(rawAuthors);
+  const contributors = dedupeContributorsByPerson(authors).map(contributor => ({
+    person_id: contributor.person_id,
+    preferred_name: contributor.preferred_name,
+    given_names: contributor.given_names,
+    family_name: contributor.family_name,
+    identifiers: contributor.identifiers,
+    roles: contributor.roles,
+    position: contributor.position,
+    is_corresponding: contributor.is_corresponding,
+    affiliation: contributor.affiliation
+  }));
 
   const subjects = Array.isArray(work.subjects)
     ? work.subjects.map(subject => ({
@@ -324,6 +398,9 @@ function formatWorkDetails(work = {}) {
     publications_has_more: publicationsHasMore,
     identifiers,
     authors,
+    authors_count: countDistinctContributors(authors),
+    contributors,
+    contributor_roles: summarizeContributorRoles(authors),
     subjects,
     citations: processedCitations,
     metrics,

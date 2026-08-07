@@ -2,6 +2,7 @@ const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
 const { latestPublicationJoin } = require('../utils/db');
+const { authorshipRoleOrderSql, contributorNames } = require('../dto/helpers');
 const {
   formatCourseListItem,
   formatCourseDetails,
@@ -379,16 +380,20 @@ class CoursesService {
     if (workIds.length > 0) {
       const placeholders = workIds.map(() => '?').join(',');
       const [authorRows] = await pool.execute(
-        `SELECT a.work_id, p.preferred_name
+        `SELECT a.work_id, a.person_id, a.role, a.position, p.preferred_name
            FROM authorships a
            INNER JOIN persons p ON p.id = a.person_id
            WHERE a.work_id IN (${placeholders})
-           ORDER BY a.work_id, a.position`,
+           ORDER BY a.work_id, ${authorshipRoleOrderSql('a')}, a.position, a.person_id`,
         workIds
       );
+      const contributorsByWork = {};
       for (const row of authorRows) {
-        if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
-        authorsByWork[row.work_id].push(row.preferred_name);
+        if (!contributorsByWork[row.work_id]) contributorsByWork[row.work_id] = [];
+        contributorsByWork[row.work_id].push(row);
+      }
+      for (const [workId, contributors] of Object.entries(contributorsByWork)) {
+        authorsByWork[workId] = contributorNames(contributors);
       }
     }
 

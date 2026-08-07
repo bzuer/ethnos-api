@@ -2,6 +2,7 @@ const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
 const { latestPublicationJoin } = require('../utils/db');
+const { authorshipRoleOrderSql, contributorNames } = require('../dto/helpers');
 const {
   formatInstructorListItem,
   formatInstructorDetails,
@@ -373,7 +374,7 @@ class InstructorsService {
         pub.type as document_type,
         pub.open_access,
         cb.reading_type,
-        (SELECT COUNT(*) FROM authorships a WHERE a.work_id = w.id) AS author_count,
+        (SELECT COUNT(DISTINCT a.person_id) FROM authorships a WHERE a.work_id = w.id) AS author_count,
         COUNT(DISTINCT cb.course_id) as used_in_courses
       FROM works w
       JOIN course_bibliography cb ON w.id = cb.work_id
@@ -413,16 +414,20 @@ class InstructorsService {
     if (bibWorkIds.length > 0) {
       const placeholders = bibWorkIds.map(() => '?').join(',');
       const [authorRows] = await pool.execute(
-        `SELECT a.work_id, p.preferred_name
+        `SELECT a.work_id, a.person_id, a.role, a.position, p.preferred_name
            FROM authorships a
            INNER JOIN persons p ON p.id = a.person_id
            WHERE a.work_id IN (${placeholders})
-           ORDER BY a.work_id, a.position`,
+           ORDER BY a.work_id, ${authorshipRoleOrderSql('a')}, a.position, a.person_id`,
         bibWorkIds
       );
+      const bibContributorsByWork = {};
       for (const row of authorRows) {
-        if (!bibAuthorsByWork[row.work_id]) bibAuthorsByWork[row.work_id] = [];
-        bibAuthorsByWork[row.work_id].push(row.preferred_name);
+        if (!bibContributorsByWork[row.work_id]) bibContributorsByWork[row.work_id] = [];
+        bibContributorsByWork[row.work_id].push(row);
+      }
+      for (const [workId, contributors] of Object.entries(bibContributorsByWork)) {
+        bibAuthorsByWork[workId] = contributorNames(contributors);
       }
     }
 

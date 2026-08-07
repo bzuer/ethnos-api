@@ -3,6 +3,12 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatVenueListItem, formatVenueDetails } = require('../dto/venue.dto');
+const {
+  normalizeType,
+  authorshipRoleOrderSql,
+  sortContributors,
+  countDistinctContributors
+} = require('../dto/helpers');
 const { withTimeout } = require('../utils/db');
 
 const toInt = (value, fallback = 0) => {
@@ -381,6 +387,7 @@ class VenuesService {
         SELECT
           a.work_id,
           a.person_id,
+          a.role,
           a.position,
           a.is_corresponding,
           COALESCE(
@@ -390,7 +397,7 @@ class VenuesService {
         FROM authorships a
         LEFT JOIN persons pr ON pr.id = a.person_id
         WHERE a.work_id IN (:workIds)
-        ORDER BY a.work_id, a.position
+        ORDER BY a.work_id, ${authorshipRoleOrderSql('a')}, a.position, a.person_id
       `), {
         replacements: { workIds },
         type: sequelize.QueryTypes.SELECT
@@ -400,6 +407,7 @@ class VenuesService {
         authorsByWork[row.work_id].push({
           person_id: row.person_id ?? null,
           name: (row.name || '').trim() || 'Unknown Author',
+          role: normalizeType(row.role) || 'AUTHOR',
           position: toInt(row.position, 0),
           is_corresponding: toNullableBoolean(row.is_corresponding)
         });
@@ -407,7 +415,7 @@ class VenuesService {
     }
 
     return works.map((w) => {
-      const authors = (authorsByWork[w.id] || []).sort((a, b) => a.position - b.position);
+      const authors = sortContributors(authorsByWork[w.id] || []);
       return {
         id: w.id,
         title: w.title,
@@ -423,7 +431,7 @@ class VenuesService {
         open_access: toNullableBoolean(w.open_access),
         peer_reviewed: toNullableBoolean(w.peer_reviewed),
         publication_date: w.publication_date ?? null,
-        author_count: authors.length,
+        author_count: countDistinctContributors(authors),
         authors
       };
     });
@@ -831,6 +839,7 @@ class VenuesService {
           SELECT
             a.work_id,
             a.person_id,
+            a.role,
             a.position,
             a.is_corresponding,
             COALESCE(
@@ -840,7 +849,7 @@ class VenuesService {
           FROM authorships a
           LEFT JOIN persons pr ON pr.id = a.person_id
           WHERE a.work_id IN (:workIds)
-          ORDER BY a.work_id, a.position
+          ORDER BY a.work_id, ${authorshipRoleOrderSql('a')}, a.position, a.person_id
           LIMIT 1000
         `), {
           replacements: { workIds },
@@ -852,6 +861,7 @@ class VenuesService {
           authorsByWork[author.work_id].push({
             person_id: author.person_id,
             name: (author.name || '').trim() || 'Unknown Author',
+            role: normalizeType(author.role) || 'AUTHOR',
             position: toInt(author.position, 0),
             is_corresponding: toNullableBoolean(author.is_corresponding)
           });
@@ -862,7 +872,7 @@ class VenuesService {
     }
 
     const data = works.map((w) => {
-      const authors = (authorsByWork[w.id] || []).sort((a, b) => a.position - b.position);
+      const authors = sortContributors(authorsByWork[w.id] || []);
       return {
         id: w.id,
         title: w.title,
@@ -880,7 +890,7 @@ class VenuesService {
         publication_date: w.publication_date,
         cited_by_count: toInt(w.work_citation_count, 0),
         references_count: toInt(w.work_reference_count, 0),
-        author_count: authors.length,
+        author_count: countDistinctContributors(authors),
         authors
       };
     });

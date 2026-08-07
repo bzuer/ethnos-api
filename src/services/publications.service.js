@@ -6,7 +6,12 @@ const {
   formatPublicationListItem,
   formatPublicationDetails
 } = require('../dto/publication.dto');
-const { normalizeType, toOptionalInteger } = require('../dto/helpers');
+const {
+  normalizeType,
+  toOptionalInteger,
+  contributorNames,
+  countDistinctContributors
+} = require('../dto/helpers');
 const { withTimeout, latestPublicationJoin, isStatementTimeout } = require('../utils/db');
 const { hydrateAuthorsForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
@@ -719,8 +724,8 @@ class PublicationsService {
         const authors = authorsMap.get(row.work_id) || [];
         workMap[row.work_id] = {
           ...row,
-          authors_count: authors.length,
-          authors_string: authors.map(a => a.preferred_name).filter(Boolean).join('; ') || null
+          authors_count: countDistinctContributors(authors),
+          authors_string: contributorNames(authors).join('; ') || null
         };
       }
     }

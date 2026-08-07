@@ -125,6 +125,114 @@ function subjectsFromJson(value) {
     .filter(Boolean);
 }
 
+const CONTRIBUTOR_ROLES = ['AUTHOR', 'EDITOR', 'TRANSLATOR', 'REVIEWER'];
+const CONTRIBUTOR_ROLE_RANK = new Map(CONTRIBUTOR_ROLES.map((role, index) => [role, index]));
+const UNKNOWN_ROLE_RANK = CONTRIBUTOR_ROLES.length;
+
+function authorshipRoleOrderSql(alias = 'a') {
+  const list = CONTRIBUTOR_ROLES.map(role => `'${role}'`).join(', ');
+  return `COALESCE(NULLIF(FIELD(${alias}.role, ${list}), 0), ${UNKNOWN_ROLE_RANK + 1})`;
+}
+
+function contributorRoleRank(role) {
+  const normalized = normalizeType(role);
+  if (normalized !== null && CONTRIBUTOR_ROLE_RANK.has(normalized)) {
+    return CONTRIBUTOR_ROLE_RANK.get(normalized);
+  }
+  return UNKNOWN_ROLE_RANK;
+}
+
+function contributorKey(contributor = {}) {
+  const personId = toOptionalInteger(contributor.person_id);
+  if (personId !== null) return `id:${personId}`;
+  const name = contributor.preferred_name || contributor.name || '';
+  const normalized = String(name).trim().toLowerCase();
+  return normalized ? `name:${normalized}` : null;
+}
+
+function compareContributors(left = {}, right = {}) {
+  const roleDelta = contributorRoleRank(left.role) - contributorRoleRank(right.role);
+  if (roleDelta !== 0) return roleDelta;
+
+  const leftPosition = toOptionalInteger(left.position);
+  const rightPosition = toOptionalInteger(right.position);
+  if (leftPosition !== rightPosition) {
+    if (leftPosition === null) return 1;
+    if (rightPosition === null) return -1;
+    return leftPosition - rightPosition;
+  }
+
+  const leftId = toOptionalInteger(left.person_id);
+  const rightId = toOptionalInteger(right.person_id);
+  if (leftId === rightId) return 0;
+  if (leftId === null) return 1;
+  if (rightId === null) return -1;
+  return leftId - rightId;
+}
+
+function sortContributors(contributors) {
+  if (!Array.isArray(contributors)) return [];
+  return contributors.slice().sort(compareContributors);
+}
+
+function dedupeContributorsByPerson(contributors) {
+  if (!Array.isArray(contributors)) return [];
+  const merged = new Map();
+  for (const contributor of sortContributors(contributors)) {
+    const key = contributorKey(contributor);
+    if (key === null) continue;
+    const existing = merged.get(key);
+    const role = normalizeType(contributor.role) || 'AUTHOR';
+    if (existing) {
+      if (!existing.roles.includes(role)) existing.roles.push(role);
+      existing.is_corresponding = existing.is_corresponding || contributor.is_corresponding === true;
+      continue;
+    }
+    merged.set(key, {
+      ...contributor,
+      role,
+      roles: [role],
+      is_corresponding: contributor.is_corresponding === true
+    });
+  }
+  return Array.from(merged.values());
+}
+
+function countDistinctContributors(contributors) {
+  if (!Array.isArray(contributors)) return 0;
+  const keys = new Set();
+  for (const contributor of contributors) {
+    const key = contributorKey(contributor);
+    if (key !== null) keys.add(key);
+  }
+  return keys.size;
+}
+
+function contributorNames(contributors, limit = Infinity) {
+  const names = dedupeContributorsByPerson(contributors)
+    .map(contributor => {
+      const name = contributor.preferred_name || contributor.name || '';
+      return String(name).trim();
+    })
+    .filter(Boolean);
+  return Number.isFinite(limit) ? names.slice(0, limit) : names;
+}
+
+function pickPrimaryAuthor(contributors) {
+  const ordered = sortContributors(contributors);
+  if (ordered.length === 0) return null;
+  return ordered.find(contributor => contributorRoleRank(contributor.role) === 0) || ordered[0];
+}
+
+function summarizeContributorRoles(contributors) {
+  const summary = Object.create(null);
+  for (const contributor of Array.isArray(contributors) ? contributors : []) {
+    const role = normalizeType(contributor.role) || 'AUTHOR';
+    summary[role] = (summary[role] || 0) + 1;
+  }
+  return summary;
+}
+
 module.exports = {
   toOptionalBoolean,
   toOptionalInteger,
@@ -132,5 +240,15 @@ module.exports = {
   normalizeVenue,
   parseJsonColumn,
   authorsFromJson,
-  subjectsFromJson
+  subjectsFromJson,
+  CONTRIBUTOR_ROLES,
+  authorshipRoleOrderSql,
+  contributorRoleRank,
+  compareContributors,
+  sortContributors,
+  dedupeContributorsByPerson,
+  countDistinctContributors,
+  contributorNames,
+  pickPrimaryAuthor,
+  summarizeContributorRoles
 };

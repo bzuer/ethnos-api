@@ -2,6 +2,7 @@ const { pool } = require('../config/database');
 const cache = require('./cache.service');
 const { createPagination } = require('../utils/pagination');
 const { formatBibliographyItem } = require('../dto/bibliography.dto');
+const { authorshipRoleOrderSql, contributorNames } = require('../dto/helpers');
 
 const LATEST_PUBLICATION_BY_YEAR = `(
       SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
@@ -91,7 +92,7 @@ class BibliographyService {
           latest.publication_year,
           latest.open_access,
           MAX(latest.document_type) AS document_type,
-          (SELECT COUNT(*) FROM authorships a WHERE a.work_id = cb.work_id) AS author_count,
+          (SELECT COUNT(DISTINCT a.person_id) FROM authorships a WHERE a.work_id = cb.work_id) AS author_count,
           GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') AS instructors
         FROM course_bibliography cb
         LEFT JOIN ${LATEST_PUBLICATION_BY_YEAR} latest ON cb.work_id = latest.work_id
@@ -174,16 +175,20 @@ class BibliographyService {
       if (workIds.length > 0) {
         const placeholders = workIds.map(() => '?').join(',');
         const [authorRows] = await pool.execute(
-          `SELECT a.work_id, p.preferred_name
+          `SELECT a.work_id, a.person_id, a.role, a.position, p.preferred_name
              FROM authorships a
              INNER JOIN persons p ON p.id = a.person_id
              WHERE a.work_id IN (${placeholders})
-             ORDER BY a.work_id, a.position`,
+             ORDER BY a.work_id, ${authorshipRoleOrderSql('a')}, a.position, a.person_id`,
           workIds
         );
+        const contributorsByWork = {};
         for (const row of authorRows) {
-          if (!authorsByWork[row.work_id]) authorsByWork[row.work_id] = [];
-          authorsByWork[row.work_id].push(row.preferred_name);
+          if (!contributorsByWork[row.work_id]) contributorsByWork[row.work_id] = [];
+          contributorsByWork[row.work_id].push(row);
+        }
+        for (const [workId, contributors] of Object.entries(contributorsByWork)) {
+          authorsByWork[workId] = contributorNames(contributors);
         }
       }
       bibliography.forEach(item => {

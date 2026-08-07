@@ -3,7 +3,10 @@ const {
   toOptionalInteger,
   normalizeType,
   normalizeVenue,
-  parseJsonColumn
+  parseJsonColumn,
+  sortContributors,
+  countDistinctContributors,
+  pickPrimaryAuthor
 } = require('./helpers');
 
 function mapAuthors(value) {
@@ -11,13 +14,13 @@ function mapAuthors(value) {
   if (!Array.isArray(authors)) {
     return [];
   }
-  return authors.map(author => ({
+  return sortContributors(authors.map(author => ({
     person_id: toOptionalInteger(author.id || author.person_id),
     preferred_name: author.name || author.preferred_name || null,
     role: normalizeType(author.role) || 'AUTHOR',
     position: toOptionalInteger(author.position),
     is_corresponding: toOptionalBoolean(author.is_corresponding)
-  }));
+  })));
 }
 
 function mapSubjects(value) {
@@ -113,10 +116,7 @@ function pickPublisher(row) {
 }
 
 function buildFirstAuthor(authors) {
-  if (!Array.isArray(authors) || authors.length === 0) {
-    return null;
-  }
-  const first = authors[0];
+  const first = pickPrimaryAuthor(authors);
   if (!first || !first.preferred_name) {
     return null;
   }
@@ -172,7 +172,7 @@ function formatPublicationListItem(row = {}) {
     publisher: pickPublisher(row),
     identifiers: publicationIdentifiers(row),
     first_author: buildFirstAuthor(authors),
-    author_count: authors.length,
+    author_count: countDistinctContributors(authors),
     citation_count: toOptionalInteger(row.work_citation_count || row.citation_count) || 0,
     reference_count: toOptionalInteger(row.work_reference_count || row.reference_count) || 0,
     download_count: toOptionalInteger(row.publication_download_count || row.download_count) || 0

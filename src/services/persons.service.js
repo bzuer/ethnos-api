@@ -4,6 +4,7 @@ const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
+const { authorshipRoleOrderSql, toOptionalInteger } = require('../dto/helpers');
 const { withTimeout, latestPublicationJoin } = require('../utils/db');
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
@@ -406,7 +407,7 @@ class PersonsService {
         orderClause = 'COALESCE(pub.year, 2024) DESC, w.id DESC';
     }
 
-    const cacheKey = `person:${personId}:works:v2:${JSON.stringify({ page, limit, offset, role, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
+    const cacheKey = `person:${personId}:works:v3:${JSON.stringify({ page, limit, offset, role, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -454,9 +455,10 @@ class PersonsService {
             w.created_at,
             w.citation_count AS work_citation_count,
             w.reference_count AS work_reference_count,
-            a.role,
-            a.position,
-            a.is_corresponding,
+            SUBSTRING_INDEX(GROUP_CONCAT(a.role ORDER BY ${authorshipRoleOrderSql('a')}, a.position), ',', 1) AS role,
+            GROUP_CONCAT(DISTINCT a.role ORDER BY ${authorshipRoleOrderSql('a')}) AS roles,
+            SUBSTRING_INDEX(GROUP_CONCAT(a.position ORDER BY ${authorshipRoleOrderSql('a')}, a.position), ',', 1) AS position,
+            MAX(a.is_corresponding) AS is_corresponding,
             pub.year,
             pub.doi,
             v.name as journal,
@@ -464,12 +466,13 @@ class PersonsService {
             pub.issue,
             pub.pages,
             pub.open_access,
-            (SELECT COUNT(*) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
+            (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
           FROM authorships a
           INNER JOIN works w ON a.work_id = w.id
           ${latestPublicationJoin('pub', 'LEFT')}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE ${whereClause}
+          GROUP BY w.id
           ORDER BY ${orderClause}
           LIMIT :limit OFFSET :offset
         `, {
@@ -478,7 +481,7 @@ class PersonsService {
         }),
 
         sequelize.query(`
-          SELECT COUNT(*) as total
+          SELECT COUNT(DISTINCT w.id) as total
           FROM authorships a
           INNER JOIN works w ON a.work_id = w.id
           ${latestPublicationJoin('pub', 'LEFT')}
@@ -529,7 +532,8 @@ class PersonsService {
             references_count: parseInt(work.work_reference_count, 10) || 0,
             authorship: {
               role: work.role,
-              position: work.position,
+              roles: typeof work.roles === 'string' && work.roles ? work.roles.split(',') : [work.role].filter(Boolean),
+              position: toOptionalInteger(work.position),
               is_corresponding: work.is_corresponding === 1
             },
             publication: {
