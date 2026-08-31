@@ -7,8 +7,14 @@ cd "$ROOT_DIR"
 
 SERVICE_NAME="${SERVICE_NAME:-ethnos-api.service}"
 ENV_FILE="/etc/node-backend.env"
+NGINX_RENDER="$ROOT_DIR/scripts/nginx/render-config.sh"
 
-API_PORT=1211
+# nginx owns every port a client reaches; the API process listens on loopback
+# only. PUBLIC_PORT is what consumers call, UPSTREAM_PORT is what node binds.
+PUBLIC_PORT=1211
+UPSTREAM_PORT=1212
+UPSTREAM_HOST=127.0.0.1
+NGINX_CONF_TARGET=/etc/nginx/conf.d/ethnos-api.conf
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -30,7 +36,15 @@ load_env() {
     return 1
   fi
   set -a; source "$ENV_FILE"; set +a
-  API_PORT="${PORT:-1211}"
+  UPSTREAM_PORT="${PORT:-1212}"
+  UPSTREAM_HOST="${API_BIND_HOST:-127.0.0.1}"
+  PUBLIC_PORT="${NGINX_PUBLIC_PORT:-1211}"
+  NGINX_CONF_TARGET="${NGINX_API_CONF:-/etc/nginx/conf.d/ethnos-api.conf}"
+
+  if [ "$UPSTREAM_PORT" = "$PUBLIC_PORT" ]; then
+    err "PORT ($UPSTREAM_PORT) equals NGINX_PUBLIC_PORT ($PUBLIC_PORT) in $ENV_FILE — nginx must own the public port and proxy to a separate application port"
+    return 1
+  fi
 }
 
 # ─── Infrastructure checks ───────────────────────────────────────────────────
@@ -129,8 +143,9 @@ check_api() {
 
   local retries=0
   while [ $retries -lt 5 ]; do
-    if curl -sf "http://localhost:${API_PORT}/health/liveness" >/dev/null 2>&1; then
-      log "API health OK (http://localhost:${API_PORT})"
+    if curl -sf "http://${UPSTREAM_HOST}:${UPSTREAM_PORT}/health/liveness" >/dev/null 2>&1; then
+      log "API health OK (upstream http://${UPSTREAM_HOST}:${UPSTREAM_PORT})"
+      assert_upstream_is_private
       return 0
     fi
     retries=$((retries + 1))
@@ -138,6 +153,146 @@ check_api() {
   done
 
   warn "API is running but /health/liveness not responding yet"
+  assert_upstream_is_private
+}
+
+# The whole point of the proxy is defeated if the application also answers on a
+# routable address, so a public bind is an error, not a note.
+assert_upstream_is_private() {
+  local public_binds
+  public_binds=$(ss -lnt 2>/dev/null \
+    | awk -v port=":${UPSTREAM_PORT}" '$4 ~ port"$" {print $4}' \
+    | grep -vE '^(127\.|\[::1\]|\[::ffff:127\.)' || true)
+
+  if [ -n "$public_binds" ]; then
+    err "API port ${UPSTREAM_PORT} is bound outside loopback ($(echo $public_binds | tr '\n' ' ')) — set API_BIND_HOST=127.0.0.1 in $ENV_FILE so nginx stays the only public listener"
+    return 1
+  fi
+}
+
+# ─── Nginx front door ────────────────────────────────────────────────────────
+
+render_nginx_conf() {
+  ENV_FILE="$ENV_FILE" "$NGINX_RENDER" --print
+}
+
+nginx_conf_is_current() {
+  [ -r "$NGINX_CONF_TARGET" ] || return 1
+  local rendered
+  rendered="$(render_nginx_conf 2>/dev/null)" || return 1
+  [ "$rendered" = "$(cat "$NGINX_CONF_TARGET")" ]
+}
+
+# Installing into /etc/nginx needs root. In a terminal sudo may prompt; in a
+# non-interactive run it must already be granted, and the operator is told the
+# exact command rather than left with a half-applied deploy.
+install_nginx_conf() {
+  if [ ! -x "$NGINX_RENDER" ]; then
+    err "Renderer not found or not executable: $NGINX_RENDER"
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    ENV_FILE="$ENV_FILE" "$NGINX_RENDER"
+    return
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    err "sudo is required to install $NGINX_CONF_TARGET"
+    return 1
+  fi
+
+  if sudo -n true 2>/dev/null || [ -t 0 ]; then
+    sudo ENV_FILE="$ENV_FILE" "$NGINX_RENDER"
+    return
+  fi
+
+  err "Cannot install $NGINX_CONF_TARGET without an interactive sudo — run: sudo scripts/nginx/render-config.sh"
+  return 1
+}
+
+# Verification only: never touches /etc, so start/status stay safe to run
+# unattended. ensure_nginx is what repairs the config.
+check_nginx() {
+  step "Nginx"
+
+  if ! command -v nginx >/dev/null 2>&1; then
+    err "nginx is not installed — the API must not be published without it"
+    return 1
+  fi
+
+  if [ "${ENABLE_HTTPS:-false}" = "true" ]; then
+    err "ENABLE_HTTPS=true in $ENV_FILE — TLS terminates at nginx (NGINX_SSL_CERT/NGINX_SSL_KEY), the application must not open its own public listener"
+  fi
+
+  if ! systemctl is-active --quiet nginx 2>/dev/null; then
+    err "nginx service is not active — run: sudo systemctl start nginx"
+    return 1
+  fi
+
+  if [ ! -r "$NGINX_CONF_TARGET" ]; then
+    err "$NGINX_CONF_TARGET is missing — run: scripts/manage.sh nginx"
+    return 1
+  fi
+
+  if nginx_conf_is_current; then
+    log "nginx vhost current ($NGINX_CONF_TARGET)"
+  else
+    err "$NGINX_CONF_TARGET differs from the rendered config — run: scripts/manage.sh nginx"
+  fi
+
+  if ! ss -lnt 2>/dev/null | grep -q ":${PUBLIC_PORT} "; then
+    err "Nothing is listening on the public API port ${PUBLIC_PORT}"
+    return 1
+  fi
+
+  # nginx keeps a Server header even with server_tokens off, so this is what
+  # distinguishes the proxy from the application having taken the port back.
+  local server_header
+  server_header=$(curl -sfI "http://127.0.0.1:${PUBLIC_PORT}/health/liveness" 2>/dev/null \
+    | awk 'tolower($1) == "server:" {print tolower($2)}' | tr -d '\r')
+
+  case "$server_header" in
+    nginx*) log "Public port ${PUBLIC_PORT} served by nginx → ${UPSTREAM_HOST}:${UPSTREAM_PORT}" ;;
+    "")     warn "Public port ${PUBLIC_PORT} did not answer /health/liveness (is the API up?)" ;;
+    *)      err "Public port ${PUBLIC_PORT} is answered by '${server_header}', not nginx" ;;
+  esac
+}
+
+ensure_nginx() {
+  step "Nginx"
+
+  if ! command -v nginx >/dev/null 2>&1; then
+    err "nginx is not installed — the API must not be published without it"
+    return 1
+  fi
+
+  if [ "${ENABLE_HTTPS:-false}" = "true" ]; then
+    err "ENABLE_HTTPS=true in $ENV_FILE — TLS terminates at nginx (NGINX_SSL_CERT/NGINX_SSL_KEY), the application must not open its own public listener"
+  fi
+
+  if nginx_conf_is_current; then
+    log "nginx vhost already current ($NGINX_CONF_TARGET)"
+  else
+    log "Installing nginx vhost → $NGINX_CONF_TARGET"
+    install_nginx_conf || return 1
+  fi
+
+  if ! systemctl is-active --quiet nginx 2>/dev/null; then
+    warn "nginx is not active — attempting start"
+    if [ "$(id -u)" -eq 0 ]; then
+      systemctl start nginx || true
+    elif command -v sudo >/dev/null 2>&1 && { sudo -n true 2>/dev/null || [ -t 0 ]; }; then
+      sudo systemctl start nginx || true
+    fi
+  fi
+
+  if systemctl is-active --quiet nginx 2>/dev/null; then
+    log "nginx active on ${PUBLIC_PORT} → ${UPSTREAM_HOST}:${UPSTREAM_PORT}"
+  else
+    err "nginx failed to start — run: sudo systemctl start nginx"
+    return 1
+  fi
 }
 
 # ─── Process cleanup ─────────────────────────────────────────────────────────
@@ -145,7 +300,7 @@ check_api() {
 kill_rogue_api_processes() {
   local rogue_pids
   rogue_pids=$(ss -lntp 2>/dev/null \
-    | awk "/:${API_PORT} / {if (match(\$0, /pid=([0-9]+)/, m)) print m[1]}" \
+    | awk "/:${UPSTREAM_PORT} / {if (match(\$0, /pid=([0-9]+)/, m)) print m[1]}" \
     | sort -u) || true
 
   if [ -z "$rogue_pids" ]; then
@@ -163,7 +318,7 @@ kill_rogue_api_processes() {
     if [ -n "$service_pid" ] && [ "$pid" = "$service_pid" ]; then
       continue
     fi
-    warn "Killing rogue process on port $API_PORT (PID: $pid)"
+    warn "Killing rogue process on port $UPSTREAM_PORT (PID: $pid)"
     kill "$pid" 2>/dev/null || true
     sleep 1
     if kill -0 "$pid" 2>/dev/null; then
@@ -207,7 +362,8 @@ validate_all() {
   local checks=(
     "MariaDB:${DB_PORT:-3306}"
     "Redis:${REDIS_PORT:-6379}"
-    "API:${API_PORT}"
+    "API upstream:${UPSTREAM_PORT}"
+    "Nginx public:${PUBLIC_PORT}"
   )
 
   for entry in "${checks[@]}"; do
@@ -236,13 +392,41 @@ validate_all() {
     fail=$((fail + 1))
   fi
 
-  local health_status
-  health_status=$(curl -sf "http://localhost:${API_PORT}/health/liveness" 2>/dev/null | grep -o '"alive":true' || true)
-  if [ -n "$health_status" ]; then
-    echo -e "  [OK] API health check (/health/liveness)"
+  if systemctl is-active --quiet nginx 2>/dev/null; then
+    echo -e "  [OK] nginx service"
     ok=$((ok + 1))
   else
-    echo -e "  [FAIL] API health check (/health/liveness)"
+    echo -e "  [FAIL] nginx service"
+    fail=$((fail + 1))
+  fi
+
+  if nginx_conf_is_current; then
+    echo -e "  [OK] nginx vhost current ($NGINX_CONF_TARGET)"
+    ok=$((ok + 1))
+  else
+    echo -e "  [FAIL] nginx vhost missing or stale ($NGINX_CONF_TARGET) — run: scripts/manage.sh nginx"
+    fail=$((fail + 1))
+  fi
+
+  local exposed
+  exposed=$(ss -lnt 2>/dev/null \
+    | awk -v port=":${UPSTREAM_PORT}" '$4 ~ port"$" {print $4}' \
+    | grep -vE '^(127\.|\[::1\]|\[::ffff:127\.)' || true)
+  if [ -z "$exposed" ]; then
+    echo -e "  [OK] API port ${UPSTREAM_PORT} bound to loopback only"
+    ok=$((ok + 1))
+  else
+    echo -e "  [FAIL] API port ${UPSTREAM_PORT} reachable outside nginx ($(echo $exposed | tr '\n' ' '))"
+    fail=$((fail + 1))
+  fi
+
+  local health_status
+  health_status=$(curl -sf "http://127.0.0.1:${PUBLIC_PORT}/health/liveness" 2>/dev/null | grep -o '"alive":true' || true)
+  if [ -n "$health_status" ]; then
+    echo -e "  [OK] API health check through nginx (:${PUBLIC_PORT}/health/liveness)"
+    ok=$((ok + 1))
+  else
+    echo -e "  [FAIL] API health check through nginx (:${PUBLIC_PORT}/health/liveness)"
     fail=$((fail + 1))
   fi
 
@@ -260,6 +444,8 @@ validate_all() {
 cmd_restart() {
   step "Restart"
   load_env
+
+  ensure_nginx
 
   log "Stopping API"
   systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
@@ -280,6 +466,8 @@ cmd_restart() {
 cmd_deploy() {
   step "Deploy"
   load_env
+
+  ensure_nginx
 
   log "Stopping API"
   systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
@@ -305,6 +493,7 @@ cmd_start() {
   load_env
   check_mariadb
   check_redis
+  ensure_nginx
   check_api
   validate_all
 }
@@ -319,7 +508,18 @@ cmd_stop() {
 
 cmd_status() {
   load_env
+  check_nginx || true
   validate_all
+}
+
+cmd_nginx() {
+  load_env
+  if [ "${1:-}" = "--print" ]; then
+    render_nginx_conf
+    return
+  fi
+  step "Nginx"
+  install_nginx_conf
 }
 
 cmd_systemd_install() {
@@ -383,6 +583,21 @@ cmd_uninstall() {
   step "Clearing caches and logs"
   clear_caches
   clean_repo_logs
+
+  step "Removing nginx vhost"
+  if [ -e "$NGINX_CONF_TARGET" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      rm -f "$NGINX_CONF_TARGET" && systemctl reload nginx 2>/dev/null || true
+      log "Removed $NGINX_CONF_TARGET"
+    elif command -v sudo >/dev/null 2>&1 && { sudo -n true 2>/dev/null || [ -t 0 ]; }; then
+      sudo rm -f "$NGINX_CONF_TARGET" && sudo systemctl reload nginx 2>/dev/null || true
+      log "Removed $NGINX_CONF_TARGET"
+    else
+      warn "Could not remove $NGINX_CONF_TARGET without sudo — run: sudo rm $NGINX_CONF_TARGET && sudo systemctl reload nginx"
+    fi
+  else
+    warn "nginx vhost not found: $NGINX_CONF_TARGET"
+  fi
 
   step "Removing generated documentation"
   rm -f "$ROOT_DIR/docs/swagger.json" "$ROOT_DIR/docs/swagger.yaml" 2>/dev/null || true
@@ -449,15 +664,19 @@ Ethnos API — unified control script
 Usage: manage.sh <command> [options]
 
 Lifecycle (with automatic infrastructure verification):
-  deploy              Full deploy: stop API → clean → deps → docs → test → start + validate
-  restart             Restart: stop API → clean → deps → docs → verify infra → start + validate
-  start               Verify all infrastructure, start API if needed, validate
-  stop                Stop API service and kill rogue processes
-  status              Validate all infrastructure and report
+  deploy              Full deploy: stop API → clean → deps → docs → test → nginx → start + validate
+  restart             Restart: stop API → clean → deps → docs → verify infra → nginx → start + validate
+  start               Verify all infrastructure, install/repair the nginx vhost, start API, validate
+  stop                Stop API service and kill rogue processes (nginx keeps the public port)
+  status              Validate all infrastructure and report (never writes to /etc)
+
+Nginx (the API is only ever published through it):
+  nginx               Render and install the vhost, nginx -t, reload (needs sudo)
+  nginx --print       Print the rendered vhost without installing it
 
 Systemd:
   systemd:install     Generate and install user service (no sudo)
-  uninstall           Stop all processes, remove service, deps, caches, and generated files
+  uninstall           Stop all processes, remove service, vhost, deps, caches, and generated files
 
 Test:
   test --endpoints    Run endpoint test suite
@@ -477,6 +696,7 @@ main() {
     stop)             cmd_stop ;;
     status)           cmd_status ;;
     systemd:install)  cmd_systemd_install ;;
+    nginx|nginx:install) cmd_nginx "${1:-}" ;;
     uninstall)        cmd_uninstall ;;
     test)
       case "${1:-}" in

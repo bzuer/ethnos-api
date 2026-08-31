@@ -32,6 +32,8 @@ A **work** is a *multi-manifestation* record: its type lives per-publication on 
 
 All examples in this guide use relative paths; prefix them with a base URL. OpenAPI `info.version` is `2.0.0`.
 
+Both base URLs are served by nginx, which reverse-proxies to the application on loopback. Nothing changes for a client — the port, the envelope and every header are the same — but the API is never reachable except through that proxy, and the rate limiter counts the real client IP forwarded by it.
+
 ---
 
 ## 2. Response envelope

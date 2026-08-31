@@ -116,13 +116,16 @@ load_env() {
 }
 
 load_env
+# API_PORT is the application's own loopback port, not the port clients call:
+# nginx owns PUBLIC_PORT and proxies to this one. See scripts/nginx/render-config.sh.
 if [ -n "${PORT:-}" ]; then
     API_PORT="${PORT}"
 elif [ "${NODE_ENV:-}" = "test" ]; then
     API_PORT="3000"
 else
-    API_PORT="1211"
+    API_PORT="1212"
 fi
+PUBLIC_PORT="${NGINX_PUBLIC_PORT:-1211}"
 
 is_running() {
     if pm2_is_online; then
@@ -444,9 +447,10 @@ EOF
     sleep 3
     if is_running; then
         log "Server started successfully (PID: $pid)"
-        log "API available at: http://localhost:$API_PORT"
-        log "Health check: http://localhost:$API_PORT/health"
-        log "Documentation: http://localhost:$API_PORT/docs"
+        log "API upstream: http://127.0.0.1:$API_PORT (loopback only)"
+        log "API available at: http://localhost:$PUBLIC_PORT (via nginx)"
+        log "Health check: http://localhost:$PUBLIC_PORT/health"
+        log "Documentation: http://localhost:$PUBLIC_PORT/docs"
         return 0
     else
         error "Failed to start server"

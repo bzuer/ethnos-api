@@ -452,7 +452,8 @@ app.use(notFoundHandler);
 app.use(errorMonitoring);
 app.use(globalErrorHandler);
 
-const PORT = parseInt(process.env.PORT, 10) || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1211);
+const PORT = parseInt(process.env.PORT, 10) || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1212);
+const BIND_HOST = process.env.API_BIND_HOST || '127.0.0.1';
 
 let server = null;
 
@@ -469,10 +470,10 @@ const startServer = async () => {
       logger.warn('Redis connection failed - caching disabled');
     }
 
-    server = app.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
+    server = app.listen(PORT, BIND_HOST, () => {
+      logger.info(`Server running on ${BIND_HOST}:${PORT} (public entry point is nginx)`);
       logger.info(`API Bibliografica ${process.env.NODE_ENV || 'development'} mode`);
-      logger.info(`Health check: http://localhost:${PORT}/health`);
+      logger.info(`Health check: http://${BIND_HOST}:${PORT}/health`);
       logger.info('Search engine: Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search');
     });
 

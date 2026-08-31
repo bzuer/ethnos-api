@@ -34,6 +34,24 @@ run_docs_cache() {
   npm run docs:generate >/dev/null 2>&1 || true
 }
 
+# The dev server binds the same loopback port the vhost proxies to, so a running
+# nginx fronts it exactly as it fronts production. Missing config is reported,
+# never installed here: writing to /etc is a deliberate step, not a side effect
+# of starting a dev server.
+report_public_entry() {
+  local public_port upstream_port conf
+  public_port="${NGINX_PUBLIC_PORT:-1211}"
+  upstream_port="${PORT:-1212}"
+  conf="${NGINX_API_CONF:-/etc/nginx/conf.d/ethnos-api.conf}"
+
+  if [ -r "$conf" ] && systemctl is-active --quiet nginx 2>/dev/null; then
+    echo "API published at http://localhost:${public_port} (nginx → 127.0.0.1:${upstream_port})"
+  else
+    echo "nginx vhost not active (${conf}); the API answers only on 127.0.0.1:${upstream_port}" >&2
+    echo "Publish it with: scripts/manage.sh nginx" >&2
+  fi
+}
+
 case "$ACTION" in
   build)
     require_env_file
@@ -44,9 +62,11 @@ case "$ACTION" in
     ;;
   dev)
     require_env_file
+    set -a; . "$ENV_FILE"; set +a
     clean_workspace
     install_dependencies
     run_docs_cache
+    report_public_entry
     exec npm run dev:server
     ;;
   deploy)

@@ -88,10 +88,11 @@ Deploy sequence:
 
 ## API Documentation
 
-- Base URL: `http://localhost:1211`
+- Base URL: `http://localhost:1211` (served by nginx, which proxies to the API on `127.0.0.1:1212`)
 - Swagger UI: `http://localhost:1211/docs`
 - OpenAPI JSON: `http://localhost:1211/docs.json`
 - OpenAPI YAML: `http://localhost:1211/docs.yaml`
+- Application listen port: `1212` on loopback (`PORT` / `API_BIND_HOST`); the API is only ever published through nginx — install the vhost with `scripts/manage.sh nginx`
 - Test-only fallback port: `3000` (`NODE_ENV=test` without explicit `PORT`)
 - Regenerate docs: `npm run docs:generate` (JSON + YAML) or `npm run docs:generate:yaml` (YAML only)
 

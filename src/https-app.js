@@ -25,23 +25,24 @@ if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
 }
 
 const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
-const HTTP_PORT = process.env.PORT || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1211);
+const HTTP_PORT = process.env.PORT || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1212);
+const BIND_HOST = process.env.API_BIND_HOST || '127.0.0.1';
 
 let httpsServer = null;
 
 if (process.env.ENABLE_HTTPS === 'true' && sslOptions) {
   httpsServer = https.createServer(sslOptions, app);
 
-  app.listen(HTTP_PORT, () => {
-    logger.info(`HTTP server running on port ${HTTP_PORT}`);
+  app.listen(HTTP_PORT, BIND_HOST, () => {
+    logger.info(`HTTP server running on ${BIND_HOST}:${HTTP_PORT}`);
   });
 
-  httpsServer.listen(HTTPS_PORT, () => {
-    logger.info(`HTTPS server running on port ${HTTPS_PORT}`);
+  httpsServer.listen(HTTPS_PORT, BIND_HOST, () => {
+    logger.info(`HTTPS server running on ${BIND_HOST}:${HTTPS_PORT}`);
   });
 } else {
-  app.listen(HTTP_PORT, () => {
-    logger.info(`HTTP server running on port ${HTTP_PORT}`);
+  app.listen(HTTP_PORT, BIND_HOST, () => {
+    logger.info(`HTTP server running on ${BIND_HOST}:${HTTP_PORT}`);
   });
 }
 
