@@ -41,7 +41,7 @@ run_docs_cache() {
 report_public_entry() {
   local public_port upstream_port conf
   public_port="${NGINX_PUBLIC_PORT:-1211}"
-  upstream_port="${PORT:-1212}"
+  upstream_port="${PORT:-1201}"
   conf="${NGINX_API_CONF:-/etc/nginx/conf.d/ethnos-api.conf}"
 
   if [ -r "$conf" ] && systemctl is-active --quiet nginx 2>/dev/null; then

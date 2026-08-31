@@ -25,7 +25,7 @@ if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
 }
 
 const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
-const HTTP_PORT = process.env.PORT || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1212);
+const HTTP_PORT = process.env.PORT || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1201);
 const BIND_HOST = process.env.API_BIND_HOST || '127.0.0.1';
 
 let httpsServer = null;

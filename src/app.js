@@ -452,7 +452,7 @@ app.use(notFoundHandler);
 app.use(errorMonitoring);
 app.use(globalErrorHandler);
 
-const PORT = parseInt(process.env.PORT, 10) || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1212);
+const PORT = parseInt(process.env.PORT, 10) || ((process.env.NODE_ENV || '').toLowerCase() === 'test' ? 3000 : 1201);
 const BIND_HOST = process.env.API_BIND_HOST || '127.0.0.1';
 
 let server = null;

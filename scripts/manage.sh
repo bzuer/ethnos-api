@@ -12,7 +12,7 @@ NGINX_RENDER="$ROOT_DIR/scripts/nginx/render-config.sh"
 # nginx owns every port a client reaches; the API process listens on loopback
 # only. PUBLIC_PORT is what consumers call, UPSTREAM_PORT is what node binds.
 PUBLIC_PORT=1211
-UPSTREAM_PORT=1212
+UPSTREAM_PORT=1201
 UPSTREAM_HOST=127.0.0.1
 NGINX_CONF_TARGET=/etc/nginx/conf.d/ethnos-api.conf
 
@@ -36,7 +36,7 @@ load_env() {
     return 1
   fi
   set -a; source "$ENV_FILE"; set +a
-  UPSTREAM_PORT="${PORT:-1212}"
+  UPSTREAM_PORT="${PORT:-1201}"
   UPSTREAM_HOST="${API_BIND_HOST:-127.0.0.1}"
   PUBLIC_PORT="${NGINX_PUBLIC_PORT:-1211}"
   NGINX_CONF_TARGET="${NGINX_API_CONF:-/etc/nginx/conf.d/ethnos-api.conf}"

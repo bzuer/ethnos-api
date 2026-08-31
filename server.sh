@@ -123,7 +123,7 @@ if [ -n "${PORT:-}" ]; then
 elif [ "${NODE_ENV:-}" = "test" ]; then
     API_PORT="3000"
 else
-    API_PORT="1212"
+    API_PORT="1201"
 fi
 PUBLIC_PORT="${NGINX_PUBLIC_PORT:-1211}"
 
