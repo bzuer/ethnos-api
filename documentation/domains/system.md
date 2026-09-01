@@ -12,11 +12,11 @@ Route files: `src/app.js` (root `/`, catch-all 404), `src/routes/health.js` (the
 
 ## Serving topology and ports
 
-The API is never its own public listener. **nginx** owns the public port and reverse-proxies to the application, which is bound to loopback and is not routable — not from the internet, and not from the LAN.
+The API is never its own public listener. **nginx** owns the API port and reverse-proxies to the application, which is bound to loopback and is not routable — not from the internet, and not from the LAN. Whether nginx's own listener is scoped to loopback (with an upstream edge terminating TLS in front of it) or bound on the host's interfaces is a per-deployment setting (`NGINX_LISTEN_ADDRESS`); it changes nothing a client sees.
 
 | Port | Owner | Role |
 |---|---|---|
-| `1211` | nginx | The public API. The only port a client calls. |
+| `1211` | nginx | The API's front door. The only port a client calls, directly on the host or via the edge. |
 | `1201` | the API process | Application listener, `127.0.0.1` only. Not exposed. |
 | `1210` | temporary test instance | Integration-test runs (`INTEGRATION_BASE_URL`). Ephemeral. |
 | `1212` | the frontend | Reserved for the frontend app; never an API port. |

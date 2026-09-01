@@ -36,12 +36,14 @@ All examples in this guide use relative paths; prefix them with a base URL. Open
 
 Both base URLs are served by **nginx**, which reverse-proxies to the application on loopback. The API is not reachable except through that proxy, so `1211` is the only port a client ever calls.
 
-| Port | Owner | Reachable from a client |
+| Port | Owner | What a client calls |
 |---|---|---|
-| `1211` | nginx — the public API | **Yes.** This is the base URL above. |
-| `1201` | the API process (`127.0.0.1` only) | No. Loopback-bound; not routable even on the LAN. |
-| `1210` | temporary instance for integration tests | No. Only exists while a test run is up. |
+| `1211` | nginx — the API's front door | **This one.** On the API host itself it is `http://localhost:1211`; from outside, the production base URL above. |
+| `1201` | the API process (`127.0.0.1` only) | Never. Loopback-bound, not routable even on the LAN. |
+| `1210` | temporary instance for integration tests | Never. Only exists while a test run is up. |
 | `1212` | **the frontend** | Reserved for the frontend app; never an API port. |
+
+The application port `1201` is always loopback-bound and never reachable. How far `1211` itself reaches depends on the deployment: it may be scoped to loopback with an upstream edge terminating TLS in front of it, or bound on the host's interfaces. Either way a client on another machine uses the production base URL, not `host:1211`.
 
 Nothing about the API surface changes because of the proxy — the path, the envelope, the headers and the status codes are the same — with one exception, described under [Gateway errors](#gateway-errors) below. The rate limiter counts the **real client IP**, which nginx forwards as `X-Forwarded-For`; requests are not exempted just because the proxy itself is on loopback.
 
