@@ -1042,3 +1042,43 @@ describe('Contributor roles and positions', () => {
     expect(out.first_author.name).toBe('Jon Rokne');
   });
 });
+
+describe('Manticore match expression', () => {
+  const { buildWorksMatch } = require('../src/services/searchEngine.service');
+  const STEMMED = '@(title,subtitle,abstract,subjects)';
+  const VERBATIM = '@(authors,venue)';
+
+  test('free text asks each term of both morphology regimes', () => {
+    expect(buildWorksMatch({ q: 'movimentos' }))
+      .toBe(`((${STEMMED} movimentos) | (${VERBATIM} movimentos))`);
+  });
+
+  test('every term of a multi-word query gets its own regime pair', () => {
+    expect(buildWorksMatch({ q: 'movimentos sociais' }))
+      .toBe(`((${STEMMED} movimentos) | (${VERBATIM} movimentos)) `
+        + `((${STEMMED} sociais) | (${VERBATIM} sociais))`);
+  });
+
+  test('explicit metadata filters keep their single mask', () => {
+    expect(buildWorksMatch({ author: 'silva' })).toBe('@authors silva');
+    expect(buildWorksMatch({ subject: 'anthropology' })).toBe('@subjects anthropology');
+    expect(buildWorksMatch({ venue_name: 'mana' })).toBe('@venue mana');
+  });
+
+  test('free text and metadata filters combine without losing either', () => {
+    expect(buildWorksMatch({ q: 'ritual', author: 'silva' }))
+      .toBe(`((${STEMMED} ritual) | (${VERBATIM} ritual)) @authors silva`);
+  });
+
+  test('operators in user input are stripped before the expression is built', () => {
+    expect(buildWorksMatch({ q: 'ritual | @authors silva' }))
+      .toBe(`((${STEMMED} ritual) | (${VERBATIM} ritual)) `
+        + `((${STEMMED} authors) | (${VERBATIM} authors)) `
+        + `((${STEMMED} silva) | (${VERBATIM} silva))`);
+  });
+
+  test('an empty query yields no expression', () => {
+    expect(buildWorksMatch({})).toBe('');
+    expect(buildWorksMatch({ q: '   ' })).toBe('');
+  });
+});

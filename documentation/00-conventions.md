@@ -223,6 +223,7 @@ With `sort_by` omitted: DB-backed listings default to `publication_year DESC, id
 
 - **Manticore Search** (SphinxQL) powers free-text `q` and the `author` / `subject` metadata filters for **works** and **persons**. `q` spans `title, subtitle, abstract, authors, subjects, venue`; `author` → the authors field, `subject` → the subjects field (AND semantics). Matching ids are hydrated from MariaDB. Manticore `COUNT(*)` totals are **exact**.
 - **MariaDB FULLTEXT** powers `venues` (`ft_venues_search` — also the `venue` / `venue_name` filter on works/publications), `subjects` (`ft_subjects_term`), and `organizations` (`ft_organizations_name`, plus exact acronym match).
+- **Word forms.** Each `q` term matches inflected variants in the content fields (`title`, `subtitle`, `abstract`, `subjects`) through Portuguese and English stemming — `movimentos` also finds *movimento*, `ethnographies` also finds *ethnography* and *ethnographic* — while matching `authors` and `venue` verbatim, so proper names are never stemmed into something else. A term is satisfied by either side, and multi-word queries require every term (AND). The `author` / `subject` / `venue` filters keep the behaviour of the field they target: names verbatim, subjects stemmed.
 - `meta.engine` tells you which engine served a given response.
 
 > Historical note: earlier docs described a MariaDB works FULLTEXT (`ft_works_content` / `ft_works_metadata`). Those indexes **no longer exist**; works/persons full-text is Manticore-only. Any lingering mention elsewhere is stale.
