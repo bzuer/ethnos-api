@@ -185,7 +185,8 @@ Venue sub-object (`venue`, and every venue block in this domain):
 **Notes / caveats**
 
 - `meta.match_mode` is always `"any_publication"`.
-- `pagination_total_exact`: `false` on the default unfiltered browse (`total` is the fixed estimate **7698445**) and on any count-budget timeout; `true` on Manticore full-text (exact `COUNT`) and on filtered MariaDB counts (e.g. `type=BOOK` → exact 386127). Do not display the estimate as a precise count.
+- `pagination_total_exact`: `false` on the default unfiltered browse (`total` is the fixed estimate **7698445**) and on any count-budget timeout; `true` on Manticore full-text (exact `COUNT`) and on filtered MariaDB counts that finish inside the 2 s budget (e.g. `type=THESIS` → exact 11059, `language=pt` → exact 289838). Do not display the estimate as a precise count.
+- **A filtered count that times out reports the whole-corpus estimate, not a filtered one.** `type=BOOK` exceeds the budget (386,127 works behind the filter), so `/works?type=BOOK` answers `total: 7698445` with `pagination_total_exact: false` — the rows are correctly filtered, only the total is the unfiltered fallback, ~20× the real figure. Treat `pagination_total_exact: false` as "no usable total" rather than as an approximation of the filtered set, and page with `hasNext` / `data.length`.
 - **Possible page under-fill on Manticore filters.** `subject` / `author` can return fewer rows than `limit` because some matched work ids do not hydrate through the publications join (e.g. `subject=anthropology&limit=3` → 2 rows). Never treat `data.length < limit` as "last page" when a full-text/metadata filter is active — rely on `pagination.hasNext` / `pagination.total`.
 - `sort_by=publication_year` can surface out-of-range future years (2028 observed); the listing does not clamp years the way `/metrics/annual` does. See `../API_ISSUES.md`.
 - `has_files` is a no-op here (`../API_ISSUES.md`).
@@ -257,10 +258,10 @@ GET /works/showcase?year_from=2020&year_to=2023&sort_by=cited_by_count
       "_links": { "self": "/works/22438549" }
     }
   ],
-  "pagination": { "page": 1, "limit": 1, "total": 386127, "totalPages": 386127, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 1, "total": 7698445, "totalPages": 7698445, "hasNext": true, "hasPrev": false },
   "meta": {
     "match_mode": "any_publication",
-    "pagination_total_exact": true,
+    "pagination_total_exact": false,
     "performance": { "engine": "MariaDB", "query_type": "showcase_optimized", "primary_query_ms": 2, "total_rows_examined": 1 },
     "request": { "method": "GET", "path": "/works/showcase?limit=1&type=BOOK" },
     "pagination_extras": { "offset": 0 }
@@ -268,7 +269,7 @@ GET /works/showcase?year_from=2020&year_to=2023&sort_by=cited_by_count
 }
 ```
 
-**Notes / caveats** — same `pagination_total_exact` behaviour as `/works` (unfiltered browse → estimate 7698445, `false`; a `type` filter → exact count, `true`). Because there is no Manticore path here, no full-text under-fill occurs, but publication-less works are still excluded by the join.
+**Notes / caveats** — same `pagination_total_exact` behaviour as `/works`: unfiltered browse → estimate 7698445 with `false`; a cheap filter (`type=THESIS`) → exact count with `true`; a filter too broad to count inside the 2 s budget (`type=BOOK`) → the unfiltered estimate with `false`, not a filtered total. Because there is no Manticore path here, no full-text under-fill occurs, but publication-less works are still excluded by the join.
 
 ---
 
