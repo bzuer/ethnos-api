@@ -1,0 +1,11 @@
+[Unit]
+Description=Rebuild every Manticore ethnos table nightly
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+AccuracySec=1min
+Unit=manticore-ethnos-reindex@all.service
+
+[Install]
+WantedBy=timers.target

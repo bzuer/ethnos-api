@@ -1,0 +1,10 @@
+[Unit]
+Description=Rebuild the Manticore ethnos delta tables every 10 minutes
+
+[Timer]
+OnCalendar=*:0/10
+AccuracySec=1min
+Unit=manticore-ethnos-reindex@delta.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Rebuild and rotate the Manticore ethnos tables (%i)
+After=manticore.service mariadb.service
+Wants=manticore.service mariadb.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n -E 0 /run/lock/manticore-ethnos-reindex.lock /usr/local/bin/manticore-ethnos-reindex %i
+TimeoutStartSec=7200
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=manticore-ethnos-reindex
