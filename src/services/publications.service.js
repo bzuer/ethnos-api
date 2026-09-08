@@ -507,7 +507,7 @@ class PublicationsService {
     }
 
     const COUNT_BUDGET_MS = 2000;
-    const ESTIMATED_PUBLICATIONS_TOTAL = 7786681;
+    const ESTIMATED_PUBLICATIONS_TOTAL = 7790312;
 
     const useFilesFastPath = requireHasFiles
       && !searchTerm && !authorFilter && !subjectFilter
