@@ -1,9 +1,12 @@
 [Unit]
 Description=Ethnos API
-After=network.target
+After=network-online.target mariadb.service redis-server.service
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=__RUN_USER__
+Group=__RUN_GROUP__
 WorkingDirectory=__WORKDIR__
 EnvironmentFile=/etc/node-backend.env
 ExecStart=__NODE_BIN__ __WORKDIR__/src/app.js
@@ -16,4 +19,4 @@ StandardError=journal
 SyslogIdentifier=ethnos-api
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

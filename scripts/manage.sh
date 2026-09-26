@@ -6,6 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 SERVICE_NAME="${SERVICE_NAME:-ethnos-api.service}"
+SYSTEM_UNIT_DIR=/etc/systemd/system
+SYSTEM_UNIT="$SYSTEM_UNIT_DIR/$SERVICE_NAME"
+STRAY_USER_UNIT="$HOME/.config/systemd/user/$SERVICE_NAME"
 ENV_FILE="/etc/node-backend.env"
 NGINX_RENDER="$ROOT_DIR/scripts/nginx/render-config.sh"
 
@@ -45,6 +48,34 @@ load_env() {
     err "PORT ($UPSTREAM_PORT) equals NGINX_PUBLIC_PORT ($PUBLIC_PORT) in $ENV_FILE — nginx must own the public port and proxy to a separate application port"
     return 1
   fi
+}
+
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1 && { sudo -n true 2>/dev/null || [ -t 0 ]; }; then
+    sudo "$@"
+  else
+    err "root required for: $* — rerun with sudo"
+    return 1
+  fi
+}
+
+# The API runs as exactly one unit, and it is the system unit. A second
+# ethnos-api.service in the user scope races it for the application port.
+stray_user_unit_present() {
+  [ -f "$STRAY_USER_UNIT" ] \
+    || systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null \
+    || systemctl --user is-enabled --quiet "$SERVICE_NAME" 2>/dev/null
+}
+
+remove_stray_user_unit() {
+  stray_user_unit_present || return 0
+  warn "Removing user-scope $SERVICE_NAME (the API runs only as the system unit)"
+  systemctl --user disable --now "$SERVICE_NAME" 2>/dev/null || true
+  rm -f "$STRAY_USER_UNIT"
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user reset-failed "$SERVICE_NAME" 2>/dev/null || true
 }
 
 # ─── Infrastructure checks ───────────────────────────────────────────────────
@@ -113,13 +144,13 @@ check_api() {
   step "API Service"
   local needs_start=false
 
+  remove_stray_user_unit
   kill_rogue_api_processes
 
-  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    log "systemd user service $SERVICE_NAME is active"
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    log "systemd service $SERVICE_NAME is active"
   else
-    if systemctl --user list-unit-files --type=service --no-legend 2>/dev/null \
-       | awk '{print $1}' | grep -Fxq "$SERVICE_NAME"; then
+    if [ -f "$SYSTEM_UNIT" ]; then
       warn "$SERVICE_NAME is installed but not active — will start"
     else
       warn "$SERVICE_NAME not installed — running systemd:install"
@@ -129,15 +160,15 @@ check_api() {
   fi
 
   if $needs_start; then
-    systemctl --user restart "$SERVICE_NAME" 2>/dev/null || true
+    as_root systemctl restart "$SERVICE_NAME" || true
     sleep 3
   fi
 
-  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     log "API service running"
   else
     err "API service failed to start"
-    journalctl --user -u "$SERVICE_NAME" --no-pager -n 10 2>/dev/null || true
+    journalctl -u "$SERVICE_NAME" --no-pager -n 10 2>/dev/null || true
     return 1
   fi
 
@@ -308,8 +339,8 @@ kill_rogue_api_processes() {
   fi
 
   local service_pid=""
-  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    service_pid=$(systemctl --user show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null || true)
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    service_pid=$(systemctl show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null || true)
   fi
 
   local pid
@@ -384,12 +415,32 @@ validate_all() {
     fi
   done
 
-  if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
-    echo -e "  [OK] systemd user service ($SERVICE_NAME)"
+  local main_pid listener_pids
+  main_pid=$(systemctl show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null || echo 0)
+  listener_pids=$(ss -lntp 2>/dev/null \
+    | awk "/:${UPSTREAM_PORT} / {if (match(\$0, /pid=([0-9]+)/, m)) print m[1]}" \
+    | sort -u | tr '\n' ' ')
+  if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null \
+     && [ "${main_pid:-0}" != "0" ] && [ "${listener_pids% }" = "$main_pid" ]; then
+    echo -e "  [OK] systemd service ($SERVICE_NAME, PID $main_pid owns port ${UPSTREAM_PORT})"
     ok=$((ok + 1))
   else
-    echo -e "  [FAIL] systemd user service ($SERVICE_NAME)"
+    echo -e "  [FAIL] systemd service ($SERVICE_NAME) does not own port ${UPSTREAM_PORT} (unit PID ${main_pid:-0}, listener PID(s) ${listener_pids:-none})"
     fail=$((fail + 1))
+  fi
+
+  if stray_user_unit_present; then
+    echo -e "  [FAIL] user-scope $SERVICE_NAME present — it races the system unit for port ${UPSTREAM_PORT}; run: scripts/manage.sh start"
+    fail=$((fail + 1))
+  else
+    echo -e "  [OK] single API unit (system scope only)"
+    ok=$((ok + 1))
+  fi
+
+  local restarts
+  restarts=$(systemctl show "$SERVICE_NAME" --property=NRestarts --value 2>/dev/null || echo 0)
+  if [ "${restarts:-0}" -gt 0 ] 2>/dev/null; then
+    warn "$SERVICE_NAME has restarted ${restarts} time(s) since it was last started — check: journalctl -u $SERVICE_NAME"
   fi
 
   if systemctl is-active --quiet nginx 2>/dev/null; then
@@ -448,7 +499,7 @@ cmd_restart() {
   ensure_nginx
 
   log "Stopping API"
-  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  as_root systemctl stop "$SERVICE_NAME" || true
   kill_rogue_api_processes
 
   clean_repo_logs
@@ -470,7 +521,7 @@ cmd_deploy() {
   ensure_nginx
 
   log "Stopping API"
-  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  as_root systemctl stop "$SERVICE_NAME" || true
   kill_rogue_api_processes
 
   clean_repo_logs
@@ -501,7 +552,7 @@ cmd_start() {
 cmd_stop() {
   load_env
   step "Stopping API"
-  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  as_root systemctl stop "$SERVICE_NAME" || true
   kill_rogue_api_processes
   log "API stopped"
 }
@@ -524,8 +575,6 @@ cmd_nginx() {
 
 cmd_systemd_install() {
   local template="$ROOT_DIR/scripts/systemd/ethnos-api.service"
-  local user_unit_dir="$HOME/.config/systemd/user"
-  local target="$user_unit_dir/$SERVICE_NAME"
 
   if [ ! -f "$template" ]; then
     err "Service template not found: $template"
@@ -539,17 +588,26 @@ cmd_systemd_install() {
     return 1
   fi
 
-  mkdir -p "$user_unit_dir"
+  local run_user run_group rendered
+  run_user="$(stat -c %U "$ROOT_DIR")"
+  run_group="$(stat -c %G "$ROOT_DIR")"
+  rendered="$(mktemp)"
 
   sed \
     -e "s|__NODE_BIN__|${node_bin}|g" \
     -e "s|__WORKDIR__|${ROOT_DIR}|g" \
-    "$template" > "$target"
+    -e "s|__RUN_USER__|${run_user}|g" \
+    -e "s|__RUN_GROUP__|${run_group}|g" \
+    "$template" > "$rendered"
 
-  systemctl --user daemon-reload
-  systemctl --user enable "$SERVICE_NAME" 2>/dev/null
+  remove_stray_user_unit
 
-  log "Installed $SERVICE_NAME → $target"
+  as_root install -m 0644 -o root -g root "$rendered" "$SYSTEM_UNIT" || { rm -f "$rendered"; return 1; }
+  rm -f "$rendered"
+  as_root systemctl daemon-reload
+  as_root systemctl enable "$SERVICE_NAME"
+
+  log "Installed $SERVICE_NAME → $SYSTEM_UNIT (runs as $run_user)"
 }
 
 cmd_uninstall() {
@@ -557,19 +615,18 @@ cmd_uninstall() {
   load_env
 
   step "Stopping API"
-  systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+  as_root systemctl stop "$SERVICE_NAME" || true
   kill_rogue_api_processes
 
   step "Removing systemd service"
-  local user_unit_dir="$HOME/.config/systemd/user"
-  local target="$user_unit_dir/$SERVICE_NAME"
-  if [ -f "$target" ]; then
-    systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
-    rm -f "$target"
-    systemctl --user daemon-reload
-    log "Removed $SERVICE_NAME from $user_unit_dir"
+  remove_stray_user_unit
+  if [ -f "$SYSTEM_UNIT" ]; then
+    as_root systemctl disable "$SERVICE_NAME" || true
+    as_root rm -f "$SYSTEM_UNIT"
+    as_root systemctl daemon-reload
+    log "Removed $SYSTEM_UNIT"
   else
-    warn "Service file not found: $target"
+    warn "Service file not found: $SYSTEM_UNIT"
   fi
 
   step "Removing dependencies"
@@ -675,7 +732,8 @@ Nginx (the API is only ever published through it):
   nginx --print       Print the rendered vhost without installing it
 
 Systemd:
-  systemd:install     Generate and install user service (no sudo)
+  systemd:install     Install the system unit /etc/systemd/system/ethnos-api.service (needs sudo;
+                      removes any user-scope copy — the API runs as exactly one system unit)
   uninstall           Stop all processes, remove service, vhost, deps, caches, and generated files
 
 Test:

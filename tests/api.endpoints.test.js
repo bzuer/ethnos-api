@@ -1077,6 +1077,13 @@ describe('Manticore match expression', () => {
         + `((${STEMMED} silva) | (${VERBATIM} silva))`);
   });
 
+  test('quotes in user input cannot close the MATCH string literal', () => {
+    expect(buildWorksMatch({ subject: "Childhood Cancer Survivors' Quality of Life" }))
+      .toBe('@subjects Childhood Cancer Survivors Quality of Life');
+    expect(buildWorksMatch({ author: "O'Brien') OR 1=1 -- `x`" }))
+      .toBe('@authors O Brien OR 1 1 x');
+  });
+
   test('an empty query yields no expression', () => {
     expect(buildWorksMatch({})).toBe('');
     expect(buildWorksMatch({ q: '   ' })).toBe('');
