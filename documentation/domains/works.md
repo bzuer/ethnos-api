@@ -357,12 +357,17 @@ GET /works/22519667?include_citations=false&include_references=false
         "files": [ /* same file entry shape as top-level files[] */ ],
         "created_at": null, "updated_at": null,
         "_links": { "self": "/publications/1112638398" },
-        "is_primary": true
+        "is_primary": true,
+        "reviewed_work_id": null
       }
       // ... (1 total)
     ],
     "publications_total": 1,
     "publications_has_more": false,
+    "review_relations": {
+      "is_review": false, "reviews_of": [],
+      "is_reviewed": false, "reviewed_by": [], "reviewed_by_total": 0, "reviewed_by_has_more": false
+    },
     "identifiers": { "doi": ["10.1191/1478088706qp063oa"], "openalex_id": ["W1979290264"] },
     "authors": [
       {
@@ -439,6 +444,7 @@ GET /works/22519667?include_citations=false&include_references=false
 | `publications` | object[] | full per-publication entries (capped 50), see sub-table. |
 | `publications_total` | int | true total (queried when >50). |
 | `publications_has_more` | bool | true when >50 publications. |
+| `review_relations` | object | review links in both directions (always present) — see the `review_relations` block below. |
 | `identifiers` | object | aggregated union of every publication's identifiers; a key appears only when non-empty, each value a string array. Possible keys: `doi, pmid, pmcid, arxiv, wos_id, handle, wikidata_id, openalex_id, isbn, openlibrary_id, scielo_pid, google_book_id`. |
 | `authors` | object[] | see sub-table. |
 | `subjects` | object[] | see sub-table. |
@@ -517,6 +523,7 @@ GET /works/22519667?include_citations=false&include_references=false
 | `created_at` / `updated_at` | string(date-time) \| null | often null on publications. |
 | `_links.self` | string | `/publications/{id}`. |
 | `is_primary` | bool | true for the primary publication. |
+| `reviewed_work_id` | int \| null | when this publication is a review, the id of the work it reviews (`publications.reviewed_id`); null otherwise. Equals the parent work id when the review was collapsed into the reviewed work itself. |
 
 `authors[]` entry:
 
@@ -586,12 +593,86 @@ GET /works/22519667?include_citations=false&include_references=false
 | `total_files_download_count` | int | |
 | `metrics_last_updated` | string(date-time) \| null | |
 
+`review_relations` block — review links read from `publications.reviewed_id` (a review publication points at the work it reviews). About 25k publications carry one (almost all of type `REVIEW`), covering ~20k reviewed works — mostly books — with at most 10 reviews each.
+
+| field | type | notes |
+|---|---|---|
+| `is_review` | bool | true when at least one publication of this work reviews **another** work. |
+| `reviews_of` | object[] | distinct works this work reviews (capped 50), in order of the first reviewing publication; never the work itself. |
+| `reviews_of[].work_id` | int | the reviewed work. |
+| `reviews_of[].title` / `subtitle` | string \| null | |
+| `reviews_of[].publication_year` | int \| null | latest publication year of the reviewed work. |
+| `reviews_of[].authors_preview` | string[] | up to 3 distinct names of the reviewed work's contributors (the reviewed authors). |
+| `reviews_of[].contributors_preview` | object[] | same people as `{ person_id, name, role, roles[], position }`. |
+| `reviews_of[].via_publication_ids` | int[] | which of this work's publications review it (each also carries `reviewed_work_id`). |
+| `reviews_of[]._links.self` | string | `/works/{work_id}`. |
+| `is_reviewed` | bool | true when at least one publication reviews this work. |
+| `reviewed_by` | object[] | the review publications of this work, newest first (capped 50). |
+| `reviewed_by[].publication_id` | int | the review publication. |
+| `reviewed_by[].work_id` | int | the work the review belongs to. |
+| `reviewed_by[].title` / `subtitle` | string \| null | the review's own title (often repeats the reviewed book's title). |
+| `reviewed_by[].type` | string \| null | publication type, normally `REVIEW`. |
+| `reviewed_by[].publication_year` / `publication_date` | int / string \| null | when the review appeared. |
+| `reviewed_by[].doi` | string \| null | DOI of the review. |
+| `reviewed_by[].venue` | object \| null | `{ id, name, abbreviated_name, _links.self }` — the journal that published the review. |
+| `reviewed_by[].authors_preview` | string[] | up to 3 distinct names of the review's contributors (the reviewers). |
+| `reviewed_by[].contributors_preview` | object[] | same people as `{ person_id, name, role, roles[], position }`. |
+| `reviewed_by[].same_work` | bool | true when the review publication belongs to this very work (the review was collapsed into the book's work; it also appears in `publications[]` with `reviewed_work_id` = this id). |
+| `reviewed_by[]._links` | object | `self` → `/publications/{publication_id}`, `work` → `/works/{work_id}`. |
+| `reviewed_by_total` | int | true number of review publications. |
+| `reviewed_by_has_more` | bool | true when `reviewed_by` was truncated at 50. |
+
+Real pair — the book `GET /works/23400326` (*Environmental Magnetism*, Thompson & Oldfield, 1986) and its review `GET /works/23384268`:
+
+```json
+// GET /works/23400326 → data.review_relations
+{
+  "is_review": false,
+  "reviews_of": [],
+  "is_reviewed": true,
+  "reviewed_by": [
+    {
+      "publication_id": 1128473948,
+      "work_id": 23384268,
+      "title": "Environmental magnetism",
+      "subtitle": null,
+      "type": "REVIEW",
+      "publication_year": 1987,
+      "publication_date": "1987-01-01T00:00:00.000Z",
+      "doi": "10.1016/0277-3791(87)90024-2",
+      "venue": { "id": 1342750, "name": "Quaternary Science Reviews", "abbreviated_name": "Quat. Sci. Rev.", "_links": { "self": "/venues/1342750" } },
+      "authors_preview": ["J Dearing", "Joel B Dearing"],
+      "contributors_preview": [ { "person_id": 10748880, "name": "J Dearing", "role": "AUTHOR", "roles": ["AUTHOR"], "position": 1 } /* … */ ],
+      "same_work": false,
+      "_links": { "self": "/publications/1128473948", "work": "/works/23384268" }
+    }
+  ],
+  "reviewed_by_total": 1,
+  "reviewed_by_has_more": false
+}
+
+// GET /works/23384268 → data.review_relations.reviews_of
+[
+  {
+    "work_id": 23400326,
+    "title": "Environmental Magnetism",
+    "subtitle": null,
+    "publication_year": 1986,
+    "authors_preview": ["Roy Thompson", "Frank Oldfield"],
+    "contributors_preview": [ { "person_id": 3604520, "name": "Roy Thompson", "role": "AUTHOR", "roles": ["AUTHOR"], "position": 1 } /* … */ ],
+    "via_publication_ids": [1128473948],
+    "_links": { "self": "/works/23400326" }
+  }
+]
+```
+
 **Notes / caveats**
 
 - 404 with `code: "NOT_FOUND"` and message `"Work with ID {id} not found"` for unknown ids; 400 `VALIDATION_ERROR` for non-integer ids.
 - `publications`, `files`, `citations.cited_by`, `citations.references` are each capped (50 / 50 / 100 / 100). Use `publications_has_more` / `file_summary.files_truncated` and the dedicated `/publications` and `/works/{id}/citations|references` endpoints (see `../publications.md`, `../citations.md`) for the full lists.
 - Set `include_citations=false` / `include_references=false` to shrink the payload when the UI does not render those blocks.
 - `unresolved_references` and `unsolved` are the same data (alias); read either, not both.
+- **Reviews.** `review_relations` is always present. A review collapsed into the reviewed book's own work (~140 cases) shows up only in `reviewed_by` with `same_work: true`; such a book work can then display `type: "REVIEW"` when the review is its latest publication (the primary-publication rule picks the latest year). Reviewer lists come from the source metadata and sometimes also credit the reviewed author, or the same reviewer under two person records.
 
 ---
 

@@ -137,6 +137,72 @@ function formatWorkListItem(row = {}) {
   };
 }
 
+function formatReviewRelations(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const reviewsOf = (Array.isArray(source.reviews_of) ? source.reviews_of : [])
+    .map(row => {
+      const workId = toOptionalInteger(row.work_id);
+      return {
+        work_id: workId,
+        title: row.title || null,
+        subtitle: row.subtitle || null,
+        publication_year: toOptionalInteger(row.publication_year),
+        authors_preview: ensureAuthorsPreview(row),
+        contributors_preview: buildContributorsPreview(row),
+        via_publication_ids: String(row.via_publication_ids ?? '')
+          .split(',')
+          .map(value => toOptionalInteger(value))
+          .filter(value => value !== null),
+        _links: { self: workId === null ? null : `/works/${workId}` }
+      };
+    })
+    .filter(entry => entry.work_id !== null);
+
+  const reviewedBy = (Array.isArray(source.reviewed_by) ? source.reviewed_by : [])
+    .map(row => {
+      const publicationId = toOptionalInteger(row.publication_id);
+      const workId = toOptionalInteger(row.work_id);
+      const venueName = row.venue_name || row.venue_abbreviated_name || null;
+      return {
+        publication_id: publicationId,
+        work_id: workId,
+        title: row.title || null,
+        subtitle: row.subtitle || null,
+        type: normalizeType(row.type),
+        publication_year: toOptionalInteger(row.publication_year),
+        publication_date: row.publication_date || null,
+        doi: row.doi || null,
+        venue: venueName
+          ? {
+              id: toOptionalInteger(row.venue_id),
+              name: venueName,
+              abbreviated_name: row.venue_abbreviated_name || null,
+              _links: { self: toOptionalInteger(row.venue_id) === null ? null : `/venues/${toOptionalInteger(row.venue_id)}` }
+            }
+          : null,
+        authors_preview: ensureAuthorsPreview(row),
+        contributors_preview: buildContributorsPreview(row),
+        same_work: row.same_work === true,
+        _links: {
+          self: publicationId === null ? null : `/publications/${publicationId}`,
+          work: workId === null ? null : `/works/${workId}`
+        }
+      };
+    })
+    .filter(entry => entry.publication_id !== null);
+
+  const reviewedByTotal = Math.max(toOptionalInteger(source.reviewed_by_total) || 0, reviewedBy.length);
+
+  return {
+    is_review: reviewsOf.length > 0,
+    reviews_of: reviewsOf,
+    is_reviewed: reviewedByTotal > 0,
+    reviewed_by: reviewedBy,
+    reviewed_by_total: reviewedByTotal,
+    reviewed_by_has_more: source.reviewed_by_has_more === true
+  };
+}
+
 function formatWorkDetails(work = {}) {
   const publications = Array.isArray(work.publications)
     ? work.publications
@@ -396,6 +462,7 @@ function formatWorkDetails(work = {}) {
     publications,
     publications_total: publicationsTotal,
     publications_has_more: publicationsHasMore,
+    review_relations: formatReviewRelations(work.review_relations),
     identifiers,
     authors,
     authors_count: countDistinctContributors(authors),
@@ -413,6 +480,7 @@ function formatWorkDetails(work = {}) {
 module.exports = {
   formatWorkListItem,
   formatWorkDetails,
+  formatReviewRelations,
   toOptionalBoolean,
   toOptionalInteger,
   normalizeType,

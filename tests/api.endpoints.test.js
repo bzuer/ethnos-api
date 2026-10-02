@@ -1166,3 +1166,95 @@ describe('Manticore query options', () => {
     expect(statements[0]).not.toContain('ranker=expr');
   });
 });
+
+describe('Work review relations', () => {
+  const { formatWorkDetails, formatReviewRelations } = require('../src/dto/work.dto');
+
+  test('a work without review links gets an empty, explicit block', () => {
+    const details = formatWorkDetails({ id: 9, title: 'Plain work' });
+    expect(details.review_relations).toEqual({
+      is_review: false,
+      reviews_of: [],
+      is_reviewed: false,
+      reviewed_by: [],
+      reviewed_by_total: 0,
+      reviewed_by_has_more: false
+    });
+  });
+
+  test('a review lists the works it reviews with their authors and the reviewing publications', () => {
+    const out = formatReviewRelations({
+      reviews_of: [{
+        work_id: 24203129,
+        title: 'The social psychology of protest',
+        subtitle: null,
+        publication_year: 1997,
+        via_publication_ids: '1082976,1116184277',
+        authors: [
+          { person_id: 7, preferred_name: 'Bert Klandermans', role: 'AUTHOR', position: 1 },
+          { person_id: 7, preferred_name: 'Bert Klandermans', role: 'EDITOR', position: 1 }
+        ]
+      }]
+    });
+    expect(out.is_review).toBe(true);
+    expect(out.is_reviewed).toBe(false);
+    expect(out.reviews_of[0]).toMatchObject({
+      work_id: 24203129,
+      publication_year: 1997,
+      authors_preview: ['Bert Klandermans'],
+      via_publication_ids: [1082976, 1116184277],
+      _links: { self: '/works/24203129' }
+    });
+    expect(out.reviews_of[0].contributors_preview.length).toBe(1);
+  });
+
+  test('a reviewed work lists its reviews with venue, reviewers and links', () => {
+    const out = formatReviewRelations({
+      reviewed_by: [
+        {
+          publication_id: 1128473948,
+          work_id: 23384268,
+          type: 'REVIEW',
+          publication_year: 1987,
+          publication_date: '1987-01-01',
+          doi: '10.1016/0277-3791(87)90024-2',
+          venue_id: 51,
+          venue_name: 'Quaternary Science Reviews',
+          venue_abbreviated_name: 'Quat. Sci. Rev.',
+          title: 'Environmental magnetism',
+          same_work: false,
+          authors: [{ person_id: 3, preferred_name: 'Joel B Dearing', role: 'AUTHOR', position: 1 }]
+        },
+        {
+          publication_id: 1022378,
+          work_id: 2515627,
+          type: 'REVIEW',
+          publication_year: 1999,
+          same_work: true,
+          authors: []
+        }
+      ],
+      reviewed_by_total: 2,
+      reviewed_by_has_more: false
+    });
+    expect(out.is_reviewed).toBe(true);
+    expect(out.reviewed_by_total).toBe(2);
+    expect(out.reviewed_by[0]).toMatchObject({
+      publication_id: 1128473948,
+      work_id: 23384268,
+      type: 'REVIEW',
+      venue: { id: 51, name: 'Quaternary Science Reviews', abbreviated_name: 'Quat. Sci. Rev.' },
+      authors_preview: ['Joel B Dearing'],
+      same_work: false,
+      _links: { self: '/publications/1128473948', work: '/works/23384268' }
+    });
+    expect(out.reviewed_by[1].same_work).toBe(true);
+    expect(out.reviewed_by[1].venue).toBeNull();
+  });
+
+  test('the reviewed-by total never under-reports the rows it carries', () => {
+    const out = formatReviewRelations({ reviewed_by: [{ publication_id: 1, work_id: 2 }], reviewed_by_total: 0 });
+    expect(out.reviewed_by_total).toBe(1);
+    expect(out.is_reviewed).toBe(true);
+  });
+});

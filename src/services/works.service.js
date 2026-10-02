@@ -17,6 +17,7 @@ const { hydrateAuthorsForWorks, hydrateAuthorCountsByWork } = require('../utils/
 const searchEngine = require('./searchEngine.service');
 
 const WORK_LEVEL_FILE_CAP = 50;
+const REVIEW_RELATIONS_CAP = 50;
 const FILE_ROLE_PRIORITY = { MAIN: 0, SUPPLEMENT: 1, COVER: 2, PREVIEW: 3 };
 const FILE_VERIFICATION_PRIORITY = { VERIFIED: 0, PENDING: 1, FAILED: 2, CORRUPTED: 3 };
 
@@ -729,7 +730,7 @@ class WorksService {
   async getWorkById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
-    const cacheKey = `work:v5:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `work:v6:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -779,7 +780,8 @@ class WorksService {
       authorsData,
       subjectsData,
       fundingData,
-      publicationRows
+      publicationRows,
+      reviewRelations
     ] = await Promise.all([
       sequelize.query(`
         SELECT
@@ -831,7 +833,8 @@ class WorksService {
 
       sequelize.query(`
         SELECT
-          ${PUBLICATION_LIST_COLUMNS}
+          ${PUBLICATION_LIST_COLUMNS},
+          p.reviewed_id
         FROM publications p
         INNER JOIN works w ON w.id = p.work_id
         LEFT JOIN venues v ON v.id = p.venue_id
@@ -839,7 +842,9 @@ class WorksService {
         WHERE p.work_id = ?
         ORDER BY p.year DESC, p.id DESC
         LIMIT 51
-      `, { replacements: [id], type: sequelize.QueryTypes.SELECT })
+      `, { replacements: [id], type: sequelize.QueryTypes.SELECT }),
+
+      this._fetchReviewRelations(id)
     ]);
 
     const publicationsHasMore = publicationRows.length > 50;
@@ -884,6 +889,7 @@ class WorksService {
     const publicationEntries = cappedPublicationRows.map(row => {
       const entry = formatPublicationEntry(row);
       entry.is_primary = primaryPublicationId !== null && entry.id === primaryPublicationId;
+      entry.reviewed_work_id = toOptionalInteger(row.reviewed_id);
       return entry;
     });
 
@@ -1106,6 +1112,7 @@ class WorksService {
       publications: publicationEntries,
       publications_total: publicationsTotal,
       publications_has_more: publicationsHasMore,
+      review_relations: reviewRelations,
 
       authors: authorsData.map(author => ({
         person_id: author.person_id,
@@ -1144,6 +1151,87 @@ class WorksService {
     };
 
     return formatWorkDetails(completeWork);
+  }
+
+  async _fetchReviewRelations(workId) {
+    const empty = { reviews_of: [], reviewed_by: [], reviewed_by_total: 0, reviewed_by_has_more: false };
+    try {
+      const [reviewsOfRows, reviewedByRows] = await Promise.all([
+        sequelize.query(`
+          SELECT
+            p.reviewed_id AS work_id,
+            GROUP_CONCAT(p.id ORDER BY p.id) AS via_publication_ids,
+            rw.title,
+            rw.subtitle,
+            rw.latest_publication_year AS publication_year
+          FROM publications p
+          INNER JOIN works rw ON rw.id = p.reviewed_id
+          WHERE p.work_id = ?
+            AND p.reviewed_id IS NOT NULL
+            AND p.reviewed_id <> p.work_id
+          GROUP BY p.reviewed_id, rw.title, rw.subtitle, rw.latest_publication_year
+          ORDER BY MIN(p.id) ASC
+          LIMIT ${REVIEW_RELATIONS_CAP}
+        `, { replacements: [workId], type: sequelize.QueryTypes.SELECT }),
+        sequelize.query(`
+          SELECT
+            p.id AS publication_id,
+            p.work_id,
+            p.type,
+            p.year AS publication_year,
+            p.publication_date,
+            p.doi,
+            v.id AS venue_id,
+            v.name AS venue_name,
+            v.abbreviated_name AS venue_abbreviated_name,
+            w.title,
+            w.subtitle
+          FROM publications p
+          INNER JOIN works w ON w.id = p.work_id
+          LEFT JOIN venues v ON v.id = p.venue_id
+          WHERE p.reviewed_id = ?
+          ORDER BY p.year DESC, p.id DESC
+          LIMIT ${REVIEW_RELATIONS_CAP + 1}
+        `, { replacements: [workId], type: sequelize.QueryTypes.SELECT })
+      ]);
+
+      const reviewedByHasMore = reviewedByRows.length > REVIEW_RELATIONS_CAP;
+      const reviewedBy = reviewedByHasMore ? reviewedByRows.slice(0, REVIEW_RELATIONS_CAP) : reviewedByRows;
+      let reviewedByTotal = reviewedBy.length;
+      if (reviewedByHasMore) {
+        const [countRow] = await sequelize.query(
+          'SELECT COUNT(*) AS total FROM publications WHERE reviewed_id = ?',
+          { replacements: [workId], type: sequelize.QueryTypes.SELECT }
+        );
+        reviewedByTotal = parseInt(countRow?.total, 10) || reviewedBy.length;
+      }
+
+      const relatedWorkIds = Array.from(new Set([
+        ...reviewsOfRows.map(row => row.work_id),
+        ...reviewedBy.map(row => row.work_id)
+      ].map(value => parseInt(value, 10)).filter(Number.isFinite)));
+      const authorsByWork = await hydrateAuthorsForWorks(relatedWorkIds, 5);
+
+      return {
+        reviews_of: reviewsOfRows.map(row => ({
+          ...row,
+          authors: authorsByWork.get(row.work_id) || []
+        })),
+        reviewed_by: reviewedBy.map(row => ({
+          ...row,
+          same_work: Number(row.work_id) === Number(workId),
+          authors: authorsByWork.get(row.work_id) || []
+        })),
+        reviewed_by_total: reviewedByTotal,
+        reviewed_by_has_more: reviewedByHasMore
+      };
+    } catch (error) {
+      logger.warn('Work review relations fetch failed; continuing without them', {
+        work_id: workId,
+        error: error.message
+      });
+      return empty;
+    }
   }
 
   async _fetchCitationsForWork(workId, primaryDois, options = {}) {

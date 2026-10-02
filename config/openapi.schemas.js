@@ -424,6 +424,9 @@ module.exports = {
       "publications_has_more": {
         "type": "boolean"
       },
+      "review_relations": {
+        "$ref": "#/components/schemas/WorkReviewRelations"
+      },
       "identifiers": {
         "type": "object",
         "description": "Aggregated union of every publication's identifier set; each present key maps to an array of string values.",
@@ -1024,6 +1027,11 @@ module.exports = {
       "is_primary": {
         "type": "boolean",
         "description": "True for the work's primary publication."
+      },
+      "reviewed_work_id": {
+        "type": "integer",
+        "nullable": true,
+        "description": "When this publication is a review, the id of the work it reviews (publications.reviewed_id); null otherwise. Equals the parent work id when the review was collapsed into the reviewed work itself."
       }
     }
   },
@@ -1102,6 +1110,188 @@ module.exports = {
                 "example": "/institutions/4379367"
               }
             }
+          }
+        }
+      }
+    }
+  },
+  "WorkReviewRelations": {
+    "type": "object",
+    "description": "Review links of the work, in both directions, from publications.reviewed_id. Always present; empty arrays when the work neither reviews nor is reviewed.",
+    "properties": {
+      "is_review": {
+        "type": "boolean",
+        "description": "True when at least one publication of this work reviews another work."
+      },
+      "reviews_of": {
+        "type": "array",
+        "description": "Distinct works reviewed by this work's publications (capped at 50), in order of the first reviewing publication. Never contains the work itself.",
+        "items": {
+          "$ref": "#/components/schemas/ReviewedWorkRef"
+        }
+      },
+      "is_reviewed": {
+        "type": "boolean",
+        "description": "True when at least one publication reviews this work."
+      },
+      "reviewed_by": {
+        "type": "array",
+        "description": "Review publications of this work, newest first (capped at 50).",
+        "items": {
+          "$ref": "#/components/schemas/WorkReviewEntry"
+        }
+      },
+      "reviewed_by_total": {
+        "type": "integer",
+        "description": "Total review publications of this work."
+      },
+      "reviewed_by_has_more": {
+        "type": "boolean",
+        "description": "True when reviewed_by was truncated at 50."
+      }
+    }
+  },
+  "ReviewedWorkRef": {
+    "type": "object",
+    "description": "A work reviewed by the current work.",
+    "properties": {
+      "work_id": {
+        "type": "integer"
+      },
+      "title": {
+        "type": "string",
+        "nullable": true
+      },
+      "subtitle": {
+        "type": "string",
+        "nullable": true
+      },
+      "publication_year": {
+        "type": "integer",
+        "nullable": true,
+        "description": "Latest publication year of the reviewed work."
+      },
+      "authors_preview": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Up to 3 distinct contributor names of the reviewed work."
+      },
+      "contributors_preview": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/ContributorPreview"
+        }
+      },
+      "via_publication_ids": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        },
+        "description": "Publications of the current work that review this work."
+      },
+      "_links": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "type": "string",
+            "example": "/works/23400326"
+          }
+        }
+      }
+    }
+  },
+  "WorkReviewEntry": {
+    "type": "object",
+    "description": "A publication that reviews the current work.",
+    "properties": {
+      "publication_id": {
+        "type": "integer"
+      },
+      "work_id": {
+        "type": "integer",
+        "description": "The work the review publication belongs to."
+      },
+      "title": {
+        "type": "string",
+        "nullable": true
+      },
+      "subtitle": {
+        "type": "string",
+        "nullable": true
+      },
+      "type": {
+        "type": "string",
+        "nullable": true,
+        "example": "REVIEW"
+      },
+      "publication_year": {
+        "type": "integer",
+        "nullable": true
+      },
+      "publication_date": {
+        "type": "string",
+        "nullable": true
+      },
+      "doi": {
+        "type": "string",
+        "nullable": true
+      },
+      "venue": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "abbreviated_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "_links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string",
+                "nullable": true,
+                "example": "/venues/51"
+              }
+            }
+          }
+        }
+      },
+      "authors_preview": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Up to 3 distinct contributor names of the review (the reviewers)."
+      },
+      "contributors_preview": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/ContributorPreview"
+        }
+      },
+      "same_work": {
+        "type": "boolean",
+        "description": "True when the review publication belongs to the reviewed work itself (a review collapsed into the book's work)."
+      },
+      "_links": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "type": "string",
+            "example": "/publications/1128473948"
+          },
+          "work": {
+            "type": "string",
+            "example": "/works/23384268"
           }
         }
       }

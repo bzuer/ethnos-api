@@ -180,6 +180,32 @@ describe('Integration smoke (real DB)', () => {
       assert.ok(names.some((n) => n.toLowerCase().includes('malinowski')), `the prefix must complete to longer names: ${JSON.stringify(names)}`);
     });
 
+    test('GET /works/:id exposes review relations in both directions', async () => {
+      const list = assertSuccess(await fetchJson('/works?type=REVIEW&limit=20'), 'GET /works?type=REVIEW');
+      let checked = false;
+      for (const item of list.data || []) {
+        const review = assertSuccess(await fetchJson(`/works/${item.id}`), `GET /works/${item.id}`);
+        const relations = review.data?.review_relations;
+        assert.ok(relations && Array.isArray(relations.reviews_of) && Array.isArray(relations.reviewed_by), 'review_relations must be present');
+        const target = relations.reviews_of[0];
+        if (!target) continue;
+        const viaId = target.via_publication_ids[0];
+        assert.ok(
+          review.data.publications.some((pub) => pub.id === viaId && pub.reviewed_work_id === target.work_id),
+          'the reviewing publication must carry reviewed_work_id'
+        );
+        const reviewed = assertSuccess(await fetchJson(`/works/${target.work_id}`), `GET /works/${target.work_id}`);
+        assert.equal(reviewed.data.review_relations.is_reviewed, true, 'the reviewed work must report is_reviewed');
+        assert.ok(
+          reviewed.data.review_relations.reviewed_by.some((r) => r.publication_id === viaId && r.work_id === item.id),
+          'the reviewed work must list the review back'
+        );
+        checked = true;
+        break;
+      }
+      assert.ok(checked, 'at least one REVIEW work in the first page must link to a reviewed work');
+    });
+
     test('GET /works/:id embeds publications[]', async () => {
       const list = assertSuccess(await fetchJson('/works?limit=1'), 'GET /works for /works/:id probe');
       const workId = list.data?.[0]?.id;
