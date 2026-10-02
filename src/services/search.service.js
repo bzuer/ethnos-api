@@ -16,7 +16,7 @@ class SearchService {
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
     const trimmedQuery = (query || '').trim();
 
-    const cacheKey = `search:works:v3:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}`;
+    const cacheKey = `search:works:v4:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -130,7 +130,7 @@ class SearchService {
     const { limit = 5 } = filters;
     const trimmedQuery = (query || '').trim();
 
-    const cacheKey = `search:global:${trimmedQuery}:${limit}`;
+    const cacheKey = `search:global:v2:${trimmedQuery}:${limit}`;
 
     try {
       const cached = await cacheService.get(cacheKey);

@@ -1079,13 +1079,90 @@ describe('Manticore match expression', () => {
 
   test('quotes in user input cannot close the MATCH string literal', () => {
     expect(buildWorksMatch({ subject: "Childhood Cancer Survivors' Quality of Life" }))
-      .toBe('@subjects Childhood Cancer Survivors Quality of Life');
+      .toBe('@subjects childhood cancer survivors quality of life');
     expect(buildWorksMatch({ author: "O'Brien') OR 1=1 -- `x`" }))
-      .toBe('@authors O Brien OR 1 1 x');
+      .toBe('@authors o brien or 1 1 x');
+  });
+
+  test('upper-case Manticore operator words reach the engine as plain terms', () => {
+    const pairOf = term => `((${STEMMED} ${term}) | (${VERBATIM} ${term}))`;
+    expect(buildWorksMatch({ q: 'Ritual MAYBE SENTENCE PARAGRAPH ZONESPAN' }))
+      .toBe(['ritual', 'maybe', 'sentence', 'paragraph', 'zonespan'].map(pairOf).join(' '));
+    expect(buildWorksMatch({ author: 'NEAR NOTNEAR' })).toBe('@authors near notnear');
   });
 
   test('an empty query yields no expression', () => {
     expect(buildWorksMatch({})).toBe('');
     expect(buildWorksMatch({ q: '   ' })).toBe('');
+  });
+});
+
+describe('Manticore prefix expression (autocomplete)', () => {
+  const { buildPrefixMatch } = require('../src/services/searchEngine.service');
+
+  test('the last term becomes a prefix inside a single-regime field mask', () => {
+    expect(buildPrefixMatch('antropol', 'title')).toBe('@title antropol*');
+    expect(buildPrefixMatch('Bronislaw Mal', 'authors')).toBe('@authors bronislaw mal*');
+    expect(buildPrefixMatch('revista de antrop', 'venue')).toBe('@venue revista de antrop*');
+  });
+
+  test('a trailing fragment below min_prefix_len is dropped, a lone short term stays whole', () => {
+    expect(buildPrefixMatch('antropologia ur', 'title')).toBe('@title antropologia');
+    expect(buildPrefixMatch('ab', 'title')).toBe('@title ab');
+  });
+
+  test('operators in user input are stripped and only title/authors/venue are accepted', () => {
+    expect(buildPrefixMatch("mal*') | @venue x", 'authors')).toBe('@authors mal venue');
+    expect(buildPrefixMatch('ritual', 'abstract')).toBe('');
+    expect(buildPrefixMatch('   ', 'title')).toBe('');
+  });
+});
+
+describe('Manticore query options', () => {
+  const manticore = require('../src/config/manticore');
+  const searchEngine = require('../src/services/searchEngine.service');
+
+  const captureSql = () => {
+    const statements = [];
+    stubMethod(manticore, 'query', async (sql) => {
+      statements.push(sql);
+      return sql.startsWith('SELECT COUNT') ? [{ total: 0 }] : [];
+    });
+    return statements;
+  };
+
+  test('relevance ranks works on matched-word coverage and contiguity, never on lcs', async () => {
+    const statements = captureSql();
+    await searchEngine.searchWorkIds({ q: 'cultural nationalism' }, 20, 0);
+    const [page, count] = statements;
+    expect(page).toContain("ranker=expr('sum((word_count + if(min_gaps == 0, word_count, 0))*user_weight)*500");
+    expect(page).not.toContain('lcs');
+    expect(count).toContain('OPTION ranker=none');
+  });
+
+  test('attribute sorts skip ranking entirely', async () => {
+    for (const sortBy of ['cited_by_count', 'references_count', 'publication_year', 'id']) {
+      const statements = captureSql();
+      await searchEngine.searchWorkIds({ q: 'ritual', sort_by: sortBy }, 20, 0);
+      expect(statements[0]).toContain('ranker=none');
+      expect(statements[0]).not.toContain('ranker=expr');
+      restoreStubs();
+    }
+  });
+
+  test('persons counts skip ranking', async () => {
+    const statements = captureSql();
+    await searchEngine.searchPersonIds('malinowski', { limit: 5, offset: 0 });
+    expect(statements[1]).toContain('OPTION ranker=none');
+  });
+
+  test('autocomplete prefix lookups never run the expression ranker', async () => {
+    const statements = captureSql();
+    await searchEngine.fetchWorkIdsForPrefix('movimentos soc', 'title', 50);
+    expect(statements[0]).toContain("MATCH('@title movimentos soc*')");
+    expect(statements[0]).toContain('ORDER BY citation_count DESC, id DESC');
+    expect(statements[0]).toContain('ranker=none');
+    expect(statements[0]).toContain('expansion_limit=128');
+    expect(statements[0]).not.toContain('ranker=expr');
   });
 });

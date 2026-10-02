@@ -153,6 +153,33 @@ describe('Integration smoke (real DB)', () => {
       }
     });
 
+    test('GET /search/works ranks an exact-title known item first', async () => {
+      const title = 'Cultural Nationalism in Contemporary Japan';
+      const body = assertSuccess(
+        await fetchJson(`/search/works?q=${encodeURIComponent(title)}&limit=3`),
+        'GET /search/works known item'
+      );
+      assert.equal(
+        (body.data[0]?.title || '').toLowerCase(),
+        title.toLowerCase(),
+        `exact-title match must rank first, got ${JSON.stringify(body.data.map((w) => w.title))}`
+      );
+    });
+
+    test('GET /search/works treats upper-case Manticore operator words as plain terms', async () => {
+      for (const q of ['MAYBE', 'ritual PARAGRAPH myth', 'ZONE:h1 ritual']) {
+        assertSuccess(await fetchJson(`/search/works?q=${encodeURIComponent(q)}&limit=1`), `GET /search/works?q=${q}`);
+      }
+    });
+
+    test('GET /search/autocomplete completes the last term as a prefix', async () => {
+      const body = assertSuccess(await fetchJson('/search/autocomplete?q=malinow&type=authors&limit=5'), 'GET /search/autocomplete');
+      const names = (body.data?.suggestions || []).map((s) => s.text);
+      assert.ok(names.length > 0, 'a partial surname must yield author suggestions');
+      assert.ok(names.every((n) => n.toLowerCase().includes('malinow')), `every author suggestion must contain the prefix: ${JSON.stringify(names)}`);
+      assert.ok(names.some((n) => n.toLowerCase().includes('malinowski')), `the prefix must complete to longer names: ${JSON.stringify(names)}`);
+    });
+
     test('GET /works/:id embeds publications[]', async () => {
       const list = assertSuccess(await fetchJson('/works?limit=1'), 'GET /works for /works/:id probe');
       const workId = list.data?.[0]?.id;

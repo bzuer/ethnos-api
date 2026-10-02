@@ -352,7 +352,7 @@ class WorksService {
     const sortBy = filters.sort_by ?? filters.sortBy ?? null;
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
     const effectiveLimit = Math.min(limit, 100);
-    const cacheKey = `works:list:v6:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
+    const cacheKey = `works:list:v7:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -461,7 +461,7 @@ class WorksService {
     const innerWhereClause = innerWhere.length ? `WHERE ${innerWhere.join(' AND ')}` : '';
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000', 10);
     const COUNT_BUDGET_MS = 2000;
-    const ESTIMATED_WORKS_TOTAL = 7702076;
+    const ESTIMATED_WORKS_TOTAL = 7650021;
 
     let totalItems;
     let totalIsExact = true;

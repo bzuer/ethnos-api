@@ -714,7 +714,10 @@ const autocompleteService = require('../services/autocomplete.service');
  *     tags: [Search]
  *     description: >-
  *       Typeahead suggestions blending work titles, author names, and venue names.
- *       Candidate work ids are discovered via Manticore then hydrated from MariaDB.
+ *       Each kind is searched in its own Manticore field (titles, author names, venue
+ *       names) with the last term matched as a prefix (from 3 characters) and earlier
+ *       terms as whole words; the most-cited matching works are hydrated from MariaDB.
+ *       Author and venue suggestions contain every typed term.
  *       For a query shorter than 2 characters the endpoint still returns HTTP 200 but
  *       with the reduced shape `data: { suggestions: [], message: "Query too short" }`
  *       (no `query`/`type`/`count`/`generated_at`, and `meta.engine` absent).

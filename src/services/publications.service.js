@@ -395,7 +395,7 @@ class PublicationsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
 
-    const cacheKey = `publications:list:v3:p${page}:l${limit}:o${offset}:${JSON.stringify(filters)}`;
+    const cacheKey = `publications:list:v4:p${page}:l${limit}:o${offset}:${JSON.stringify(filters)}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -507,7 +507,7 @@ class PublicationsService {
     }
 
     const COUNT_BUDGET_MS = 2000;
-    const ESTIMATED_PUBLICATIONS_TOTAL = 7790312;
+    const ESTIMATED_PUBLICATIONS_TOTAL = 7737413;
 
     const useFilesFastPath = requireHasFiles
       && !searchTerm && !authorFilter && !subjectFilter

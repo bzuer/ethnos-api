@@ -146,4 +146,52 @@ Origem: reporte do frontend sobre duas anomalias em `/works/{id}`. A investigaç
 
 ---
 
+## Bloco F — Funcionamento real do Manticore — RESOLVIDO 2026-10-02
+
+Origem: verificação do estado e do funcionamento efetivo do Manticore em produção (`192.168.18.175`) e continuação no servidor de desenvolvimento (`192.168.18.80`, que hoje também roda `searchd` 29.9.0). Toda medição de engine foi feita por SphinxQL direto no `searchd` do dev; toda correção foi validada numa instância temporária em `:1210` contra o mesmo `searchd` e o MariaDB do dev.
+
+### P23 · 🟢 Relevância: título exato não chegava ao topo
+- **Problema:** `q=Cultural Nationalism in Contemporary Japan` devolvia "Gender, Culture, and Disaster in Post–3.11 Japan" em #1 e nenhum dos 9 works com esse título no top 10 (produção e dev, mesmo comportamento).
+- **Causa raiz:** a correção de morfologia de 2026-09-01 passou a pedir cada termo em par — `((@(title,subtitle,abstract,subjects) t) | (@(authors,venue) t))`. Cada termo ocupa então **duas posições de consulta**, e o fator `lcs` do ranker (que exige posições de consulta consecutivas) caiu para 1 em todo campo: `packedfactors()` mostra o título exato com `lcs=1` no par contra `lcs=5` na consulta simples. A expressão `sum(lcs*user_weight)*1000 + …` perdeu o sinal de proximidade.
+- **Solução** (`src/services/searchEngine.service.js`): o ranker de works passa a `sum((word_count + if(min_gaps == 0, word_count, 0))*user_weight)*500 + bm25 + min(citation_count,1000)*50` — palavras distintas casadas por campo, em dobro quando contíguas. Ambos os fatores usam posições no **documento**, não na consulta, então o par de regimes não os afeta; uma frase exata pontua exatamente o que `lcs` pontuava (mesmo equilíbrio com o bônus de citações) e consultas de uma palavra ficam idênticas. O conjunto de resultados não muda (mesma expressão `MATCH`).
+- **Validação:** benchmark de 25 títulos conhecidos — título exato em #1 em **19/25** (ranker anterior: 14/25; referência com `lcs` íntegro: 17/25); 6 consultas que estavam fora do top 50 voltam ao top 4, exceto "Writing Culture" (#15, preso por um work muito citado). Custo idêntico (±5 %). Via API (`:1210`): "Cultural Nationalism in Contemporary Japan", "The Religious Orders in England" e "A invenção da cultura" → #1 (antes fora do top 10).
+
+### P24 · 🟢 Palavras-operador em maiúsculas derrubavam a busca (HTTP 500)
+- **Problema:** `q=MAYBE`, `SENTENCE`, `ritual PARAGRAPH myth`, `ZONE:h1 ritual`, `ZONESPAN:…` → `500 INTERNAL_ERROR` em `/search/works` (e em todo caminho que usa `buildWorksMatch`/persons).
+- **Causa raiz:** os operadores do Manticore são palavras em maiúsculas; `sanitizeMatchValue` removia os caracteres de sintaxe mas preservava a caixa.
+- **Solução:** `sanitizeMatchValue` passa a minusculizar (o índice já dobra caixa via `charset_table`, então nenhum match muda).
+- **Validação (1210):** as seis consultas → 200 (`MAYBE` → 4 342 works). Teste unitário + asserção de smoke novos.
+
+### P25 · 🟢 Autocomplete não completava prefixos
+- **Problema:** `/search/autocomplete?q=antropol` devolvia títulos sem relação ("A produção simultânea de masculinidades…", "Nota dos editores"); `q=malinow` sugeria "Primates" e "Blood lipids in the free-ranging howler…".
+- **Causa raiz:** o termo digitado ia ao Manticore como palavra inteira (sem `*`), em todos os campos; os títulos/venues dos works casados eram agregados sem relação com o texto digitado.
+- **Solução** (`fetchWorkIdsForPrefix` + `autocomplete.service.js`): cada tipo busca no seu campo (`@title`, `@authors`, `@venue`), o último termo vira prefixo (`termo*`, a partir de 3 caracteres — `min_prefix_len`), `ranker=none` com ordem por `citation_count`, `expansion_limit=128`. Sugestões de autor e venue precisam conter todos os termos digitados (sem acento/caixa). Cache `autocomplete:` → `autocomplete:v2:`.
+- **Validação (1210):** `malinow` → "Bronislaw Malinowski", "Tenting with Malinowski"; `revista de antrop` → "Revista de Antropologia"; 6–80 ms.
+
+### P26 · 🟢 Ordenações por atributo pagavam o ranking inteiro (503 em produção)
+- **Problema:** em produção, `/search/works?q=the&sort_by=id&sort_order=desc&limit=1` (a checagem de frescor documentada) → **503** após 5 s; o `ORDER BY id DESC` sobre 5,25 M matches levou 2,16 s no `searchd`.
+- **Causa raiz:** ordenações por atributo e todos os `COUNT(*)` usavam o ranker padrão, calculando proximidade/BM25 para milhões de documentos cujo peso é descartado.
+- **Solução:** `ranker=none` nas ordenações `cited_by_count|references_count|publication_year|id` e em todo `COUNT(*)` (works e persons). Contagens idênticas com e sem ranker (verificado).
+- **Validação (dev):** `q=the` — `COUNT(*)` 0,167 → 0,054 s; `id DESC` 0,299 → 0,182 s; `cited DESC` 0,183 → 0,071 s. API `:1210`: 0,26 s.
+
+### P27 · 🟢 `works_delta` relia o corpus inteiro (~14 min para 16 mil works)
+- **Problema:** em produção, o `init` de 2026-10-01 gastou ~14 min só em `works_delta` (16 295 docs).
+- **Causa raiz:** os ids atualizados na janela de 48 h se espalham por quase todo o intervalo (2,16 M … 24,21 M = 441 passos de 50 000); as queries de MVA e `sql_joined_field` filtravam só por `work_id BETWEEN $start AND $end`, logo liam autorias, assuntos e publicações de todos os works de cada passo.
+- **Solução** (`config/manticore.conf`): cada query de MVA/campo unido do delta faz `JOIN works … AND updated_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)`. A janela fica inline: uma tentativa com variável de sessão (`SET @delta_since` em `sql_query_pre`) foi **rejeitada** porque o indexer roda essas queries em conexões que não executam `sql_query_pre` — a variável lê `NULL` e esvazia em silêncio autores, assuntos, venue e MVAs (o build "funciona" e reporta o mesmo número de docs).
+- **Validação (dev, build em scratch, sem tocar o `searchd`):** antigo **193,9 s** → novo **20,8 s**; mesmos 16 295 docs e 14 555 530 bytes; dicionário idêntico (230 426 entradas: keyword, docs, hits), atributos e MVAs idênticos para todos os docs, kill-list idêntica (16 295 ids).
+
+### P28 · 📋 Bug do Manticore 29.9.0: corrupção de heap no ranker de expressão
+- **Achado:** `searchd` aborta (`free(): invalid size` em `~RankerState_Expr_fn<false,true>`) quando, sob `ranker=expr(…)`, **duas palavras-chave da consulta acertam a mesma posição do documento** com ≥ 2 átomos na consulta. Reproduzido 4 vezes no dev: `(social) | (<par>)`, `(social | =social)` e `<par> soc*` — nos campos com stem cada posição guarda o stem **e** a forma exata (`index_exact_words=1`). O formato em produção (par com máscaras disjuntas) nunca coloca dois átomos na mesma posição e passou em todos os testes, inclusive palavras repetidas; nenhum crash em produção.
+- **Consequência para a API:** nunca combinar sob o ranker de expressão um ramo sem máscara ou um curinga sobre os campos com stem com outro átomo do mesmo termo (`t | =t`, ramo de frase, `MAYBE`, união com a consulta simples). O autocomplete usa curingas apenas com `ranker=none`.
+- **Operador:** reportar upstream (o dump fica no journal de `manticore.service` do dev, 2026-10-02 15:08–15:24).
+
+**Cobertura de testes:** 8 testes unitários novos (minúsculas/operadores, construtor de prefixo, ranker por caminho, `ranker=none` em contagens e ordenações, autocomplete sem ranker de expressão) — **64/64 verdes**; 3 asserções de smoke novas (título exato em #1, palavras-operador, prefixo no autocomplete) — **41/41 verdes** em `:1210`; as 3 falham contra o código anterior em `:1201`. Caches com ordem alterada: `search:works v3→v4`, `search:global →v2`, `works:list v6→v7`, `publications:list v3→v4`.
+
+**Notas de operação (📋):**
+- O índice do dev está defasado: último `init` em 2026-09-27 23:13; tem 36 159 works a mais que o MariaDB e não tem os ids > 24 203 721. As atualizações de 2026-09-28 já saíram da janela de 48 h, e as de 2026-09-30 saem por volta de 22:45–23:20 de 2026-10-02. Precisa de `reindex.sh all` (sudo).
+- Nenhum host tem os timers de reindexação instalados (decisão do operador); sem eles, o prazo de 48 h é inteiramente manual.
+- Dados: há pessoas cujo `preferred_name` é nome de organização/periódico ("Centro de Investigaciones y Estudios S…", "Antípoda Revista de Antropología…") e nomes com mojibake (`Comit� Antropol�tica`); aparecem como sugestões de autor.
+
+---
+
 _As divergências puramente de documentação (schemas swagger obsoletos, params não-documentados, enums faltantes, descrições estale) são tratadas na fase de reconstrução do swagger; inventário completo em `scratchpad/reports/verification.json`._

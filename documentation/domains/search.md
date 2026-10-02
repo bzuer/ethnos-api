@@ -185,6 +185,8 @@ GET /search/works?author=silva&subject=anthropology&limit=10                    
 - Real cardinalities for calibration: `q=kinship` → 14 580 works; `venue=mana` → 959 works.
 - Validation failures return the standard 400 envelope with `errors[]` (`{ type, value, msg, path, location }`) — e.g. `q=a` → `"Search query must be between 2 and 200 characters"`; `sort_by=bogus` → the sort_by enum message.
 - To search authors or subjects specifically, prefer the `author`/`subject` filters (scoped Manticore fields) over stuffing names into `q` (which also matches title/abstract text).
+- **Relevance order** (the default sort): per field, the query words a work matches count once each and twice when they sit contiguously, weighted by field (`title` 10, `authors` 6, `subtitle`/`subjects`/`venue` 4, `abstract` 2), plus a BM25 term and a citation boost (`min(citation_count, 1000)`). An exact-title query therefore ranks that title first (`q=Cultural Nationalism in Contemporary Japan` → the book itself at #1); a very highly cited work matching only part of the query can still outrank an uncited exact title. Word order inside a field is not scored. Attribute sorts (`cited_by_count`, `references_count`, `publication_year`, `id`) skip relevance scoring entirely.
+- **Query text is literal.** Manticore syntax characters (`@ ( ) ~ / " ^ $ < = > | ! * ' \` `` ` `` `-`) are stripped and the query is lower-cased, so words such as `MAYBE`, `SENTENCE`, `PARAGRAPH`, `NEAR` or `ZONE:` are ordinary search terms, never operators.
 
 ---
 
@@ -529,7 +531,7 @@ GET /search/persons?q=silva&limit=20&offset=40
 
 ## `GET /search/autocomplete`
 
-Typeahead suggestions blending work **titles**, **author** names, and **venue** names. Candidate work ids are discovered via Manticore, then hydrated from MariaDB. Not paginated; returns a single flat `suggestions[]` list.
+Typeahead suggestions blending work **titles**, **author** names, and **venue** names. Each kind is searched in its own Manticore field — titles in work titles, authors in author names, venues in venue names — with the **last typed term matched as a prefix** (`kins` → `kinship`, `Kinsella`) and earlier terms as whole words; the matching works (most-cited first) are then hydrated from MariaDB. Not paginated; returns a single flat `suggestions[]` list.
 
 ### Query parameters
 
@@ -556,21 +558,22 @@ GET /search/autocomplete?q=a          # short-query branch → suggestions:[], m
   "data": {
     "query": "kins",
     "suggestions": [
-      { "text": "‘Who Deserves a Chair?’", "type": "title", "relevance": 1, "preview": "‘Who Deserves a Chair?’" },
-      { "text": "Evie Kins", "type": "author", "work_count": 4, "preview": "Evie Kins (4 works)" },
+      { "text": "American Kinship", "type": "title", "relevance": 1, "preview": "American Kinship" },
+      { "text": "The Elementary Structures of Kinship", "type": "title", "relevance": 1, "preview": "The Elementary Structures of Kinship" },
+      { "text": "Bill Kinsey", "type": "author", "work_count": 3, "preview": "Bill Kinsey (3 works)" },
       {
-        "text": "Journal of Adolescent Research",
-        "name": "Journal of Adolescent Research",
-        "abbreviated_name": "J. Adolesc. Res.",
+        "text": "Gender and Kinship",
+        "name": "Gender and Kinship",
+        "abbreviated_name": null,
         "type": "venue",
-        "work_count": 2,
-        "preview": "Journal of Adolescent Research [J. Adolesc. Res.] (2 works)"
+        "work_count": 1,
+        "preview": "Gender and Kinship (1 works)"
       }
       // ... (10 total; mixed title/author/venue items)
     ],
     "type": "all",
     "count": 10,
-    "generated_at": "2026-07-23T18:51:40.114Z"
+    "generated_at": "2026-10-02T18:52:10.114Z"
   },
   "meta": {
     "query": "kins",
@@ -600,8 +603,8 @@ GET /search/autocomplete?q=a          # short-query branch → suggestions:[], m
 | `data.suggestions[]` | array | Mixed items; each has a discriminating `type`. |
 | `suggestions[].text` | string | Display text (all item types). |
 | `suggestions[].type` | enum string | `"title"` \| `"author"` \| `"venue"`. |
-| `suggestions[].relevance` | int | **title items only** — count of works sharing that exact title. |
-| `suggestions[].work_count` | int | **author + venue items only** — number of works for that author/venue. |
+| `suggestions[].relevance` | int | **title items only** — count of works sharing that exact title among the matched works. Titles are ordered by this count, then by the citations of their most-cited work. |
+| `suggestions[].work_count` | int | **author + venue items only** — number of matched works for that author/venue (ordering key). |
 | `suggestions[].name` | string | **venue items only** — equals `text`. |
 | `suggestions[].abbreviated_name` | string \| null | **venue items only.** |
 | `suggestions[].preview` | string | Pre-formatted display string for all types (e.g. `"Evie Kins (4 works)"`, `"Journal … [J. Adolesc. Res.] (2 works)"`). |
@@ -620,6 +623,8 @@ GET /search/autocomplete?q=a          # short-query branch → suggestions:[], m
 - **Two response shapes**: the frontend must handle both. The normal shape carries `data.{query,type,count,generated_at}` and `meta.engine`; the short-query shape (`q` shorter than 2 characters) returns HTTP 200 with `data: { suggestions: [], message }` and no `engine`/`count`/`generated_at`. Key off `Array.isArray(data.suggestions)` plus the presence of `data.count`.
 - Suggestion items are heterogeneous — switch on `suggestions[].type` to render each (title vs author-with-work-count vs venue-with-abbreviation). The `preview` string is safe to display verbatim if you don't want to compose your own.
 - On an internal full-text failure the endpoint returns an empty `suggestions` list rather than an error inside a success envelope.
+- **Prefix rule.** The last term completes as a prefix only from 3 characters on (the index's `min_prefix_len`); a shorter trailing fragment is ignored while earlier terms exist (`antropologia ur` suggests for `antropologia`), and a lone 2-character query matches that exact word. Prefix expansion is capped at the 128 most frequent completions, so very rare spellings of a short prefix may not surface.
+- **Author and venue items always contain every typed term** (case- and accent-insensitive) — names that only matched through a co-author or a sibling publication's venue are dropped. Title items match on stems (`movimentos` also finds `movimento`), so they are not filtered that way.
 
 ---
 

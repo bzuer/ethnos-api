@@ -33,8 +33,13 @@ function workTypeCode(value) {
   return WORK_TYPE_CODES[String(value).trim().toUpperCase()] ?? null;
 }
 
-const WORKS_RELEVANCE_RANKER = "ranker=expr('sum(lcs*user_weight)*1000 + bm25 + min(citation_count,1000)*50')";
+const WORKS_RELEVANCE_RANKER = "ranker=expr('sum((word_count + if(min_gaps == 0, word_count, 0))*user_weight)*500 + bm25 + min(citation_count,1000)*50')";
 const PERSONS_RELEVANCE_RANKER = "ranker=expr('sum(lcs*user_weight)*1000 + bm25 + min(total_works,500)*20')";
+const UNRANKED = 'ranker=none';
+
+const PREFIX_FIELDS = new Set(['title', 'authors', 'venue']);
+const MIN_PREFIX_LENGTH = 3;
+const PREFIX_EXPANSION_LIMIT = 128;
 
 const MAX_MATCHES_CEILING = 100000;
 const YEAR_ENUM_MAX_SPAN = 150;
@@ -63,7 +68,8 @@ function sanitizeMatchValue(value) {
   const cleaned = value
     .replace(/[@()~/"^$<=>|!*'`\\-]/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    .toLowerCase();
   return cleaned;
 }
 
@@ -160,12 +166,12 @@ async function searchWorkIds(filters = {}, limit, offset) {
   const order = buildWorksOrder(filters);
   const maxMatches = Math.min(MAX_MATCHES_CEILING, Math.max(1000, offset + limit));
   const options = [`max_matches=${maxMatches}`, `field_weights=(${WORKS_FIELD_WEIGHTS})`];
-  if (order.relevance) options.push(WORKS_RELEVANCE_RANKER);
+  options.push(order.relevance ? WORKS_RELEVANCE_RANKER : UNRANKED);
 
   const pageSql = `SELECT id, weight() AS w FROM ${WORKS_TABLE} WHERE ${whereClause} `
     + `ORDER BY ${order.clause} LIMIT ${offset}, ${limit} `
     + `OPTION ${options.join(', ')}`;
-  const countSql = `SELECT COUNT(*) AS total FROM ${WORKS_TABLE} WHERE ${whereClause}`;
+  const countSql = `SELECT COUNT(*) AS total FROM ${WORKS_TABLE} WHERE ${whereClause} OPTION ${UNRANKED}`;
 
   const [pageRows, countRows] = await Promise.all([
     manticore.query(pageSql),
@@ -195,7 +201,7 @@ async function searchPersonIds(query, { verified, limit, offset } = {}) {
   const pageSql = `SELECT id, weight() AS w FROM ${PERSONS_TABLE} WHERE ${whereClause} `
     + `ORDER BY weight() DESC, total_works DESC, id DESC LIMIT ${off}, ${lim} `
     + `OPTION max_matches=${maxMatches}, field_weights=(${PERSONS_FIELD_WEIGHTS}), ${PERSONS_RELEVANCE_RANKER}`;
-  const countSql = `SELECT COUNT(*) AS total FROM ${PERSONS_TABLE} WHERE ${whereClause}`;
+  const countSql = `SELECT COUNT(*) AS total FROM ${PERSONS_TABLE} WHERE ${whereClause} OPTION ${UNRANKED}`;
 
   const [pageRows, countRows] = await Promise.all([
     manticore.query(pageSql),
@@ -218,19 +224,33 @@ async function runRelevanceWorkIdQuery(matchExpr, lim, maxMatches) {
   return rows.map(r => Number(r.id));
 }
 
-async function fetchWorkIdsForMatch(query, limit) {
-  const matchExpr = buildWorksMatch({ q: query });
-  if (!matchExpr) return [];
-  const lim = toInt(limit) ?? 50;
-  return runRelevanceWorkIdQuery(matchExpr, lim, Math.max(1000, lim));
-}
-
 async function fetchWorkIdsForFilters(filters, cap = 5000) {
   const matchExpr = buildWorksMatch(filters);
   if (!matchExpr) return { ids: [], capped: false };
   const lim = Math.min(Math.max(cap, 1), MAX_MATCHES_CEILING);
   const ids = await runRelevanceWorkIdQuery(matchExpr, lim, lim);
   return { ids, capped: ids.length >= lim };
+}
+
+function buildPrefixMatch(query, field) {
+  if (!PREFIX_FIELDS.has(field)) return '';
+  const terms = sanitizeMatchValue(query).split(' ').filter(Boolean);
+  if (terms.length === 0) return '';
+  const last = terms.pop();
+  if ([...last].length >= MIN_PREFIX_LENGTH) terms.push(`${last}*`);
+  else if (terms.length === 0) terms.push(last);
+  return `@${field} ${terms.join(' ')}`;
+}
+
+async function fetchWorkIdsForPrefix(query, field, limit) {
+  const matchExpr = buildPrefixMatch(query, field);
+  if (!matchExpr) return [];
+  const lim = Math.min(Math.max(toInt(limit) ?? 50, 1), 1000);
+  const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
+    + `ORDER BY citation_count DESC, id DESC LIMIT 0, ${lim} `
+    + `OPTION max_matches=${Math.max(1000, lim)}, ${UNRANKED}, expansion_limit=${PREFIX_EXPANSION_LIMIT}`;
+  const rows = await manticore.query(sql);
+  return rows.map(r => Number(r.id));
 }
 
 async function healthcheck() {
@@ -252,10 +272,11 @@ async function healthcheck() {
 module.exports = {
   isEnabled,
   buildWorksMatch,
+  buildPrefixMatch,
   searchWorkIds,
   searchPersonIds,
-  fetchWorkIdsForMatch,
   fetchWorkIdsForFilters,
+  fetchWorkIdsForPrefix,
   healthcheck,
   BACKEND
 };

@@ -5,7 +5,7 @@ const searchEngine = require('./searchEngine.service');
 
 class AutocompleteService {
     constructor() {
-        this.cachePrefix = 'autocomplete:';
+        this.cachePrefix = 'autocomplete:v2:';
         this.cacheTTL = 3600;
         this.minQueryLength = 2;
         this.maxSuggestions = 10;
@@ -94,11 +94,27 @@ class AutocompleteService {
     }
 
 
-    async _fetchWorkIdsByMatch(query, fetchLimit) {
+    _normalizeForMatch(value) {
+        return String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase();
+    }
+
+    _queryTerms(query) {
+        return this._normalizeForMatch(query).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    }
+
+    _containsAllTerms(text, terms) {
+        const haystack = this._normalizeForMatch(text);
+        return terms.every(term => haystack.includes(term));
+    }
+
+    async _fetchWorkIdsByPrefix(query, field, fetchLimit) {
         const cappedLimit = Math.max(1, Math.min(parseInt(fetchLimit, 10) || 50, 500));
 
         try {
-            return await searchEngine.fetchWorkIdsForMatch(query, cappedLimit);
+            return await searchEngine.fetchWorkIdsForPrefix(query, field, cappedLimit);
         } catch (error) {
             logger.warn('Autocomplete Manticore lookup failed; returning empty match set', {
                 error: error.message
@@ -109,16 +125,16 @@ class AutocompleteService {
 
     async getTitleSuggestions(query, limit) {
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
-        const ids = await this._fetchWorkIdsByMatch(query, sanitizedLimit * 5);
+        const ids = await this._fetchWorkIdsByPrefix(query, 'title', sanitizedLimit * 5);
         if (ids.length === 0) return [];
 
         const rows = await sequelize.query(
-            `SELECT title, COUNT(*) AS relevance
+            `SELECT title, COUNT(*) AS relevance, MIN(FIELD(id, :ids)) AS first_rank
              FROM works
              WHERE id IN (:ids)
                AND title != ''
              GROUP BY title
-             ORDER BY relevance DESC, title ASC
+             ORDER BY relevance DESC, first_rank ASC
              LIMIT :limit`,
             {
                 replacements: { ids, limit: sanitizedLimit },
@@ -136,7 +152,7 @@ class AutocompleteService {
 
     async getAuthorSuggestions(query, limit) {
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
-        const ids = await this._fetchWorkIdsByMatch(query, sanitizedLimit * 5);
+        const ids = await this._fetchWorkIdsByPrefix(query, 'authors', sanitizedLimit * 5);
         if (ids.length === 0) return [];
 
         const rows = await sequelize.query(
@@ -156,12 +172,12 @@ class AutocompleteService {
             }
         );
 
-        const queryLower = query.toLowerCase();
+        const terms = this._queryTerms(query);
         const suggestions = [];
         for (const row of rows) {
             const author = (row.author_name || '').trim();
             if (!author) continue;
-            if (!author.toLowerCase().includes(queryLower)) continue;
+            if (!this._containsAllTerms(author, terms)) continue;
             if (suggestions.find(s => s.text === author)) continue;
             suggestions.push({
                 text: author,
@@ -178,7 +194,7 @@ class AutocompleteService {
 
     async getVenueSuggestions(query, limit) {
         const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 50));
-        const ids = await this._fetchWorkIdsByMatch(query, sanitizedLimit * 5);
+        const ids = await this._fetchWorkIdsByPrefix(query, 'venue', sanitizedLimit * 5);
         if (ids.length === 0) return [];
 
         const rows = await sequelize.query(
@@ -193,13 +209,16 @@ class AutocompleteService {
              ORDER BY work_count DESC
              LIMIT :limit`,
             {
-                replacements: { ids, limit: sanitizedLimit },
+                replacements: { ids, limit: sanitizedLimit * 3 },
                 type: sequelize.QueryTypes.SELECT
             }
         );
 
+        const terms = this._queryTerms(query);
         return rows
             .filter(row => row.venue_name)
+            .filter(row => this._containsAllTerms(`${row.venue_name} ${row.venue_abbrev || ''}`, terms))
+            .slice(0, sanitizedLimit)
             .map(row => ({
                 text: row.venue_name,
                 name: row.venue_name,
