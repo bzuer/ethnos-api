@@ -180,7 +180,7 @@ describe('Integration smoke (real DB)', () => {
       assert.ok(names.some((n) => n.toLowerCase().includes('malinowski')), `the prefix must complete to longer names: ${JSON.stringify(names)}`);
     });
 
-    test('GET /works/:id exposes review relations in both directions', async () => {
+    test('GET /works/:id and /publications/:id expose review relations in both directions', async () => {
       const list = assertSuccess(await fetchJson('/works?type=REVIEW&limit=20'), 'GET /works?type=REVIEW');
       let checked = false;
       for (const item of list.data || []) {
@@ -200,6 +200,20 @@ describe('Integration smoke (real DB)', () => {
           reviewed.data.review_relations.reviewed_by.some((r) => r.publication_id === viaId && r.work_id === item.id),
           'the reviewed work must list the review back'
         );
+        const reviewPub = assertSuccess(await fetchJson(`/publications/${viaId}`), `GET /publications/${viaId}`);
+        assert.equal(reviewPub.data.reviewed_work_id, target.work_id, 'the review publication must carry reviewed_work_id');
+        assert.ok(
+          reviewPub.data.review_relations.reviews_of.some((r) => r.work_id === target.work_id),
+          'the review publication must list the reviewed work'
+        );
+        const bookPubId = reviewed.data.primary_publication_id;
+        if (bookPubId) {
+          const bookPub = assertSuccess(await fetchJson(`/publications/${bookPubId}`), `GET /publications/${bookPubId}`);
+          assert.ok(
+            bookPub.data.review_relations.reviewed_by.some((r) => r.publication_id === viaId),
+            "a publication of the reviewed work must list the review among its work's reviews"
+          );
+        }
         checked = true;
         break;
       }

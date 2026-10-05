@@ -1258,3 +1258,56 @@ describe('Work review relations', () => {
     expect(out.is_reviewed).toBe(true);
   });
 });
+
+describe('Publication review relations', () => {
+  const { formatPublicationDetails, formatPublicationEntry } = require('../src/dto/publication.dto');
+
+  test('a review publication carries reviewed_work_id and the reviewed work', () => {
+    const details = formatPublicationDetails(
+      { publication_id: 1128473948, work_id: 23384268, reviewed_id: 23400326 },
+      {
+        review_relations: {
+          reviews_of: [{
+            work_id: 23400326,
+            title: 'Environmental Magnetism',
+            publication_year: 1986,
+            via_publication_ids: '1128473948',
+            same_work: false,
+            authors: [{ person_id: 1, preferred_name: 'Roy Thompson', role: 'AUTHOR', position: 1 }]
+          }]
+        }
+      }
+    );
+    expect(details.reviewed_work_id).toBe(23400326);
+    expect(details.review_relations.is_review).toBe(true);
+    expect(details.review_relations.reviews_of[0]).toMatchObject({
+      work_id: 23400326,
+      via_publication_ids: [1128473948],
+      same_work: false,
+      authors_preview: ['Roy Thompson'],
+      _links: { self: '/works/23400326' }
+    });
+  });
+
+  test('a review collapsed into its own book is a review of its parent work', () => {
+    const details = formatPublicationDetails(
+      { publication_id: 1022378, work_id: 2515627, reviewed_id: 2515627 },
+      { review_relations: { reviews_of: [{ work_id: 2515627, via_publication_ids: '1022378', same_work: true }] } }
+    );
+    expect(details.reviewed_work_id).toBe(2515627);
+    expect(details.review_relations.reviews_of[0].same_work).toBe(true);
+  });
+
+  test('a publication without review links still carries the empty block', () => {
+    const details = formatPublicationDetails({ publication_id: 606327, work_id: 2052052 }, {});
+    expect(details.reviewed_work_id).toBeNull();
+    expect(details.review_relations.is_review).toBe(false);
+    expect(details.review_relations.reviewed_by).toEqual([]);
+  });
+
+  test('work-level publication entries keep reviewed_work_id but not the per-publication block', () => {
+    const entry = formatPublicationEntry({ publication_id: 1128473948, work_id: 23384268, reviewed_id: 23400326 });
+    expect(entry.reviewed_work_id).toBe(23400326);
+    expect(Object.prototype.hasOwnProperty.call(entry, 'review_relations')).toBe(false);
+  });
+});

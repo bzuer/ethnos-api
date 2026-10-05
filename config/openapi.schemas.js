@@ -1191,6 +1191,10 @@ module.exports = {
         },
         "description": "Publications of the current work that review this work."
       },
+      "same_work": {
+        "type": "boolean",
+        "description": "True when the reviewed work is the current publication's own parent work (only on /publications/{id}; always false on /works/{id}, which never lists the work itself)."
+      },
       "_links": {
         "type": "object",
         "properties": {
@@ -2629,6 +2633,19 @@ module.exports = {
       },
       "work": {
         "$ref": "#/components/schemas/PublicationWorkBlock"
+      },
+      "reviewed_work_id": {
+        "type": "integer",
+        "nullable": true,
+        "description": "When this publication is a review, the id of the work it reviews (publications.reviewed_id); null otherwise. Equals work.id when the review was collapsed into the reviewed work itself."
+      },
+      "review_relations": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WorkReviewRelations"
+          }
+        ],
+        "description": "Same shape as on /works/{id}: reviews_of holds the work this publication reviews (0..1 entries, including its own parent work with same_work=true), reviewed_by the reviews of the parent work (which may include this publication itself)."
       },
       "siblings": {
         "type": "array",

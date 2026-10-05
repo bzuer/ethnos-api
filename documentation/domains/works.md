@@ -605,6 +605,7 @@ GET /works/22519667?include_citations=false&include_references=false
 | `reviews_of[].authors_preview` | string[] | up to 3 distinct names of the reviewed work's contributors (the reviewed authors). |
 | `reviews_of[].contributors_preview` | object[] | same people as `{ person_id, name, role, roles[], position }`. |
 | `reviews_of[].via_publication_ids` | int[] | which of this work's publications review it (each also carries `reviewed_work_id`). |
+| `reviews_of[].same_work` | bool | always `false` here (the work never lists itself); `true` only on [`GET /publications/{id}`](./publications.md) for a review collapsed into its book's work. |
 | `reviews_of[]._links.self` | string | `/works/{work_id}`. |
 | `is_reviewed` | bool | true when at least one publication reviews this work. |
 | `reviewed_by` | object[] | the review publications of this work, newest first (capped 50). |

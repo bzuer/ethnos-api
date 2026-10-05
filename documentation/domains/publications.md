@@ -336,6 +336,11 @@ GET /publications/1127609346?include_citations=false&include_references=false
       ],
       "subjects": []
     },
+    "reviewed_work_id": null,
+    "review_relations": {
+      "is_review": false, "reviews_of": [],
+      "is_reviewed": false, "reviewed_by": [], "reviewed_by_total": 0, "reviewed_by_has_more": false
+    },
     "siblings": [
       {
         "id": 1125243905,
@@ -434,6 +439,8 @@ GET /publications/1127609346?include_citations=false&include_references=false
 | `publisher` | object \| null | 8-key block (see list). |
 | `files[]` | array | live from `files`, cap 200, ordered role `MAIN > SUPPLEMENT > COVER > PREVIEW` then id. |
 | `work` | object | parent work block (see below). |
+| `reviewed_work_id` | int \| null | when this publication is a review, the id of the work it reviews (`publications.reviewed_id`); null otherwise. Equals `work.id` when the review was collapsed into the reviewed work itself. |
+| `review_relations` | object | review links, same shape as on [`GET /works/{id}`](./works.md) — see **`review_relations`** below. |
 | `siblings[]` | array | other publications of the same work; cap 50; usually empty. |
 | `citations` | array \| null | incoming citations (works citing this one); cap 100; `[]` if none; `null` when `include_citations=false`. |
 | `references` | object \| null | outgoing references `{resolved[], unresolved[]}`; `null` when `include_references=false`. |
@@ -515,6 +522,43 @@ GET /publications/1127609346?include_citations=false&include_references=false
 | `created_at` | ISO datetime \| null | |
 | `resolved_at` | ISO datetime \| null | null while unresolved. |
 
+**`review_relations`** — the same block (and field inventory) as on [`GET /works/{id}`](./works.md), read from `publications.reviewed_id`, with publication-level scope:
+
+| field | publication-level meaning |
+|---|---|
+| `is_review` / `reviews_of[]` | the work **this publication** reviews — 0 or 1 entry (`via_publication_ids` = `[this id]`). A review collapsed into the reviewed book's own work lists that parent work with `same_work: true` (on `/works/{id}` the work never lists itself). |
+| `is_reviewed` / `reviewed_by[]` / `reviewed_by_total` / `reviewed_by_has_more` | the reviews of the **parent work** (newest first, cap 50) — identical to the parent work's `reviewed_by`, so every publication of a reviewed book shows its reviews. It can include this publication itself (compare `publication_id`). |
+
+Real example — the review publication `GET /publications/1128473948` (also served by its DOI, `GET /10.1016/0277-3791(87)90024-2`):
+
+```json
+{
+  "reviewed_work_id": 23400326,
+  "review_relations": {
+    "is_review": true,
+    "reviews_of": [
+      {
+        "work_id": 23400326,
+        "title": "Environmental Magnetism",
+        "subtitle": null,
+        "publication_year": 1986,
+        "authors_preview": ["Roy Thompson", "Frank Oldfield"],
+        "contributors_preview": [ { "person_id": 3604520, "name": "Roy Thompson", "role": "AUTHOR", "roles": ["AUTHOR"], "position": 1 } /* … */ ],
+        "via_publication_ids": [1128473948],
+        "same_work": false,
+        "_links": { "self": "/works/23400326" }
+      }
+    ],
+    "is_reviewed": false,
+    "reviewed_by": [],
+    "reviewed_by_total": 0,
+    "reviewed_by_has_more": false
+  }
+}
+```
+
+The reviewed book's own publication (`GET /publications/1128490006`) answers `reviewed_work_id: null`, `is_review: false` and `reviewed_by` = `[{ "publication_id": 1128473948, "venue": { "name": "Quaternary Science Reviews", "abbreviated_name": "Quat. Sci. Rev.", … }, "publication_year": 1987, … }]`.
+
 ### Notes / caveats
 
 - **Shape asymmetry:** `citations` is a bare **array**, but `references` is an **object** `{resolved[], unresolved[]}`. Turning either off via `include_*=false` sets it to `null` (the key stays present), not `[]`/`{}`.
@@ -573,6 +617,8 @@ GET /10.1191/1478088706qp063oa?include_citations=false
     "publisher": { "id": 693664, "name": "Taylor & Francis", "type": "PUBLISHER", "country": "GB", "ror_id": null, "wikidata_id": "Q880582", "openalex_id": "P4310320547", "url": "https://www.taylorfrancis.com" },
     "files": [ /* same shape as detail */ ],
     "work": { "id": 7539537, "title": "Using thematic analysis in psychology", "citation_count": 21493, "reference_count": 11, "authors": [ /* ... */ ], "subjects": [] },
+    "reviewed_work_id": null,
+    "review_relations": { "is_review": false, "reviews_of": [], "is_reviewed": false, "reviewed_by": [], "reviewed_by_total": 0, "reviewed_by_has_more": false },
     "siblings": [],
     "citations": [ /* ... */ ],
     "references": { "resolved": [ /* ... */ ], "unresolved": [ /* ... */ ] },

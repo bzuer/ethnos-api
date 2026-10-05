@@ -8,6 +8,7 @@ const {
   countDistinctContributors,
   pickPrimaryAuthor
 } = require('./helpers');
+const { formatReviewRelations } = require('./work.dto');
 
 function mapAuthors(value) {
   const authors = parseJsonColumn(value);
@@ -238,6 +239,8 @@ function formatPublicationDetails(row = {}, extras = {}) {
     publisher: pickPublisher(row),
     files,
     work,
+    reviewed_work_id: toOptionalInteger(row.reviewed_id),
+    review_relations: formatReviewRelations(extras.review_relations),
     siblings: Array.isArray(extras.siblings)
       ? extras.siblings.map(formatPublicationSibling)
       : [],
@@ -251,6 +254,7 @@ function formatPublicationDetails(row = {}, extras = {}) {
 function formatPublicationEntry(row = {}) {
   const detail = formatPublicationDetails(row, {});
   delete detail.work;
+  delete detail.review_relations;
   delete detail.siblings;
   delete detail.citations;
   delete detail.references;

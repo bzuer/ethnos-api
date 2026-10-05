@@ -14,6 +14,7 @@ const {
 } = require('../dto/helpers');
 const { withTimeout, latestPublicationJoin, isStatementTimeout } = require('../utils/db');
 const { hydrateAuthorsForWorks } = require('../utils/hydration');
+const { fetchReviewRelations } = require('../utils/reviewRelations');
 const searchEngine = require('./searchEngine.service');
 
 const normalizeDoiValue = (value) => {
@@ -231,7 +232,7 @@ class PublicationsService {
   async getPublicationById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
-    const cacheKey = `publication:${id}:v3:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `publication:${id}:v4:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -242,7 +243,8 @@ class PublicationsService {
 
     const [row] = await sequelize.query(`
       SELECT
-        ${PUBLICATION_BASE_COLUMNS}
+        ${PUBLICATION_BASE_COLUMNS},
+        p.reviewed_id
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
       LEFT JOIN venues v ON v.id = p.venue_id
@@ -271,9 +273,10 @@ class PublicationsService {
       row.has_libgen_file = 0;
     }
 
-    const [authorsMap, subjectsMap] = await Promise.all([
+    const [authorsMap, subjectsMap, reviewRelations] = await Promise.all([
       hydrateAuthorsForWorks([row.work_id]),
-      hydrateSubjectsForWorks([row.work_id])
+      hydrateSubjectsForWorks([row.work_id]),
+      fetchReviewRelations({ workId: row.work_id, publicationId: row.publication_id })
     ]);
     row.authors_json = authorsMap.get(row.work_id) || [];
     row.subjects_json = subjectsMap.get(row.work_id) || [];
@@ -307,7 +310,7 @@ class PublicationsService {
       sibling.has_files = files.length > 0 ? 1 : 0;
     }
 
-    const extras = { siblings };
+    const extras = { siblings, review_relations: reviewRelations };
 
     if (includeCitations || includeReferences) {
       try {

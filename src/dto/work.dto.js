@@ -153,6 +153,7 @@ function formatReviewRelations(raw) {
           .split(',')
           .map(value => toOptionalInteger(value))
           .filter(value => value !== null),
+        same_work: row.same_work === true,
         _links: { self: workId === null ? null : `/works/${workId}` }
       };
     })
