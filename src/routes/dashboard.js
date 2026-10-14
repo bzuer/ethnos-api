@@ -89,12 +89,16 @@ const liveHealthStatus = async () => {
  * @swagger
  * /dashboard/overview:
  *   get:
- *     summary: Complete dashboard snapshot (real in-process telemetry)
+ *     summary: Operational snapshot (in-process telemetry plus dependency probes)
  *     description: >-
- *       Returns a live operational snapshot sourced from the in-process monitoring
- *       middleware (same source as /health/metrics), not the database. Numbers are
- *       cumulative since the last process restart and reset on restart. No pagination
- *       and no query parameters. Requires X-Access-Key.
+ *       Live snapshot of the running API process: request telemetry from the in-process
+ *       monitoring middleware (same source as /health/metrics), dependency probes (MariaDB
+ *       `SELECT 1`, Manticore ping, Redis PING or `"disabled"`), the last 7 days of recorded
+ *       search analytics and the current alerts. Request counters are cumulative since the last
+ *       restart; latency figures and requests_last_10_minutes cover the last 10 minutes (up to
+ *       1,000 samples). error_rate is 5xx responses / all responses in percent. top_endpoints
+ *       are keyed by route pattern (e.g. `GET /works/:id`). No pagination and no query
+ *       parameters. Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []
@@ -176,10 +180,12 @@ router.get('/overview', async (req, res) => {
  *   get:
  *     summary: Performance summary, status distribution and (empty) chart series
  *     description: >-
- *       Returns live performance telemetry from the in-process monitoring middleware.
+ *       Live performance telemetry from the in-process monitoring middleware: summary
+ *       (total requests, average and p95 latency over the last 10 minutes, error_rate = 5xx
+ *       responses / all responses in percent, uptime) and the status/endpoint distribution.
  *       data.chart_data is always an empty array (no historical retention). The hours
- *       parameter is validated and echoed to meta.hours_requested but has no functional
- *       effect on the response (the time series stays empty regardless). Requires X-Access-Key.
+ *       parameter is validated and echoed to meta.hours_requested but has no other effect.
+ *       Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []
@@ -266,11 +272,14 @@ router.get('/performance', validatePerformanceParams, async (req, res) => {
  *   get:
  *     summary: Search trend indicators, popular terms and per-day analytics
  *     description: >-
- *       Returns trend indicators (search volume, unique queries, avg results),
- *       popular autocomplete terms (corpus frequency, not user searches), and a
- *       per-day search-analytics series. Note data.analytics_period is hardcoded to
- *       the fixed 7-day analytics window and stays "7 days" even when days is larger;
- *       only meta.days_analyzed reflects the days parameter. Requires X-Access-Key.
+ *       Search-usage analytics built from the queries recorded by /search/works and
+ *       /search/global (Redis lists search_analytics:YYYY-MM-DD): trend indicators (search
+ *       volume, unique queries, average results) comparing the most recent days of the window
+ *       with the oldest ones, the most frequent search terms of the last 7 days
+ *       (popular_terms, user-search counts) and a per-day series over the requested window
+ *       with each day's top terms. change_percent is null when the baseline average is 0.
+ *       When Redis is unavailable the series and popular_terms are empty and the indicators
+ *       are "unknown". data.analytics_period reflects the days parameter. Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []
@@ -278,9 +287,8 @@ router.get('/performance', validatePerformanceParams, async (req, res) => {
  *       - name: days
  *         in: query
  *         description: >-
- *           Number of days of search analytics to consider. Validated (1..365) and
- *           echoed to meta.days_analyzed; does not change the hardcoded
- *           data.analytics_period label.
+ *           Number of days in the analytics window (1..365). Echoed to meta.days_analyzed
+ *           and data.analytics_period; fewer than 2 days yields "unknown" indicators.
  *         schema:
  *           type: integer
  *           minimum: 1
@@ -353,10 +361,11 @@ router.get('/search-trends', validateTrendParams, async (req, res) => {
  *   get:
  *     summary: Current threshold-based system alerts with severity rollup
  *     description: >-
- *       Returns live threshold alerts computed from in-process telemetry: an error
- *       alert when error_rate exceeds 5 percent, a performance alert when average
- *       response time exceeds 50ms, and a volume alert when queries per second exceed
- *       100. Includes a severity rollup. Requires X-Access-Key.
+ *       Live alerts recomputed on every call: a dependency alert for each unreachable
+ *       dependency (critical for the database, high for Manticore or Redis), an error alert
+ *       when error_rate (5xx share, percent) exceeds 5, a performance alert when the average
+ *       response time exceeds 50 ms, and a volume alert when requests per second exceed 100.
+ *       Includes a severity rollup. Requires X-Access-Key.
  *     tags: [Dashboard]
  *     security:
  *       - XAccessKey: []

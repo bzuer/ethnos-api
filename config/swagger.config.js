@@ -14,7 +14,7 @@ const options = {
         '- Unauthenticated requests are limited to 120/min per IP; a valid key removes the limit. Requests over the limit are rejected with 429.',
         '- Read-only by design. The only mutating endpoint is `POST /security/unblock/{ip}`.',
         '- Standard response envelope: `{ status, data, pagination?, meta? }`. Errors: `{ status: "error", message, code, timestamp }`.',
-        '- Pagination accepts `page/limit` and `offset/limit` interchangeably.',
+        '- Pagination accepts `page/limit` or `offset/limit`; an explicit `offset` is served as given and wins over `page`. Default page size 10, `limit` 1..100.',
         '- Supported identifier families: DOI, ORCID, ROR, ISSN / eISSN, Scopus, OpenAlex, Wikidata, Handle, PMID, PMCID, arXiv.'
       ].join('\n'),
       contact: {
@@ -77,6 +77,7 @@ const options = {
             engine: { type: 'string', example: 'MariaDB' },
             query_type: { type: 'string', example: 'search' },
             controller_time_ms: { type: 'integer', example: 42 },
+            primary_query_ms: { type: 'integer', example: 18, description: 'Time spent selecting and hydrating the page (works listings).' },
             elapsed_ms: { type: 'integer', example: 77 }
           }
         },
@@ -1686,13 +1687,13 @@ const options = {
             type: 'integer',
             minimum: 1,
             maximum: 100,
-            default: 20
+            default: 10
           }
         },
         offsetParam: {
           name: 'offset',
           in: 'query',
-          description: 'Number of items to skip. Automatically converts to page format: offset÷limit = page number',
+          description: 'Number of items to skip, served as given (not rounded to a page boundary). Takes precedence over page; the response echoes it in meta.pagination_extras.offset.',
           required: false,
           schema: {
             type: 'integer',
@@ -1875,6 +1876,21 @@ const options = {
             }
           }
         },
+        RequestTimeout: {
+          description: 'A database or search query exceeded its time budget (code REQUEST_TIMEOUT); narrow the filters, request a shallower page or retry',
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/Error'
+              },
+              example: {
+                status: 'error',
+                message: 'The query exceeded its time budget; narrow the filters or request a shallower page',
+                code: 'REQUEST_TIMEOUT'
+              }
+            }
+          }
+        },
         ServiceUnavailable: {
           description: 'Service unavailable - Required dependencies are unavailable',
           content: {
@@ -1915,7 +1931,7 @@ const options = {
       { name: 'System', description: 'API root: service metadata, version, and endpoint catalogue.' },
       { name: 'Health', description: 'Liveness, readiness, and runtime metrics probes.' },
       { name: 'Security', description: 'Security headers, rate-limit stats, and IP management. Requires `x-access-key`.' },
-      { name: 'Search', description: 'Full-text search across works, publications, and persons using MariaDB FULLTEXT indexes, plus autocomplete and popular-terms helpers.' },
+      { name: 'Search', description: 'Full-text search across works, publications and persons served by Manticore Search, plus autocomplete and popular-terms helpers.' },
       { name: 'Works', description: 'Canonical academic works (articles, books, chapters, theses, conferences). Listings surface the latest matching publication per work.' },
       { name: 'Publications', description: 'Per-publication view over the `publications` + `works` + `venues` base tables, including DOI resolution and sibling navigation.' },
       { name: 'Persons', description: 'Researcher profiles: preferred name, identifiers, affiliations, publication history, collaborators.' },

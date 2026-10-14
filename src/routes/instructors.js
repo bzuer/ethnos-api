@@ -100,6 +100,11 @@ const validateInstructorBibliography = [
  * /instructors:
  *   get:
  *     summary: List instructors
+ *     description: >-
+ *       Persons teaching at least one course, ordered by courses_taught DESC then preferred_name ASC
+ *       (no sort parameter). Each row carries _links.self (/instructors/{id}) and _links.person
+ *       (/persons/{id}). page accepts 1..1000; out-of-range values return 400 VALIDATION_ERROR.
+ *       Cached for 30 minutes.
  *     tags: [Instructors]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -111,7 +116,7 @@ const validateInstructorBibliography = [
  *           type: string
  *           minLength: 1
  *           maxLength: 100
- *         description: Exact match on course_instructors.role (e.g. PROFESSOR)
+ *         description: Exact, case-insensitive match on course_instructors.role (PROFESSOR, ASSISTANT, TA, GUEST)
  *       - in: query
  *         name: program_id
  *         schema:
@@ -123,13 +128,13 @@ const validateInstructorBibliography = [
  *         schema:
  *           type: integer
  *           minimum: 1900
- *         description: Keep instructors teaching a course with year >= this
+ *         description: Keep instructors teaching a course with year >= this (1900 up to next year)
  *       - in: query
  *         name: year_to
  *         schema:
  *           type: integer
  *           minimum: 1900
- *         description: Keep instructors teaching a course with year <= this
+ *         description: Keep instructors teaching a course with year <= this (1900 up to next year)
  *       - in: query
  *         name: search
  *         schema:
@@ -169,7 +174,10 @@ router.get('/', validateInstructorList, instructorsController.getInstructors);
  * /instructors/statistics:
  *   get:
  *     summary: Aggregate instructors statistics
- *     description: Corpus-wide totals, role distribution, and a top-instructors leaderboard. No query params, no pagination.
+ *     description: >-
+ *       Corpus-wide totals, role distribution, and a top-instructors leaderboard. avg_courses_per_instructor
+ *       is the mean of each instructor's distinct-course count, returned as a DECIMAL string. No query params,
+ *       no pagination. Cached for 1 hour.
  *     tags: [Instructors]
  *     responses:
  *       200:
@@ -197,7 +205,9 @@ router.get('/statistics', instructorsController.getInstructorsStatistics);
  * /instructors/{id}:
  *   get:
  *     summary: Get instructor by ID
- *     description: Single instructor. Returns 404 when the person id is not present in course_instructors.
+ *     description: >-
+ *       Single instructor, with _links.self and _links.person. Returns 404 INSTRUCTOR_NOT_FOUND when the
+ *       person id is not present in course_instructors. Cached for 1 hour.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -236,7 +246,7 @@ router.get('/:id', validateInstructorId, instructorsController.getInstructorById
  * /instructors/{id}/courses:
  *   get:
  *     summary: List courses taught by an instructor
- *     description: Courses for the instructor, ordered by year DESC, semester, name. Unknown ids yield an empty page (no 404).
+ *     description: Courses for the instructor, ordered by year DESC, semester, name. Unknown ids yield an empty page (no 404). Cached for 30 minutes.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -311,7 +321,11 @@ router.get('/:id', validateInstructorId, instructorsController.getInstructorById
  * /instructors/{id}/statistics:
  *   get:
  *     summary: Rich instructor teaching and authorship profile
- *     description: Combined teaching + authorship analytics for one instructor. Gates on course_instructors membership (404 for non-instructors). No pagination or query params. Sub-arrays are empty when the underlying course_bibliography / authorship data is not yet loaded.
+ *     description: >-
+ *       Combined teaching + authorship analytics for one instructor. Gates on course_instructors membership
+ *       (404 INSTRUCTOR_NOT_FOUND for non-instructors). No pagination or query params. recent_authored_works
+ *       lists up to 10 distinct works (latest publication per work, works without a year last).
+ *       Bibliography-derived sub-arrays are empty while course_bibliography holds no rows. Cached for 30 minutes.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -351,7 +365,7 @@ router.get('/:id/courses', validateInstructorCourses, instructorsController.getI
  * /instructors/{id}/subjects:
  *   get:
  *     summary: List instructor subject expertise
- *     description: Subjects derived from works in the instructor's course bibliographies, ordered by courses_count DESC then works_count DESC. Empty until course_bibliography data is loaded.
+ *     description: Subjects derived from works in the instructor's course bibliographies, ordered by courses_count DESC then works_count DESC. Empty while course_bibliography holds no rows; unknown ids yield an empty page (no 404). Cached for 30 minutes.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -402,7 +416,12 @@ router.get('/:id/subjects', validateInstructorSubjects, instructorsController.ge
  * /instructors/{id}/bibliographies:
  *   get:
  *     summary: List bibliography entries linked to an instructor
- *     description: Works used as bibliography across the instructor's courses, ordered by used_in_courses DESC then publication_year DESC. Empty until course_bibliography data is loaded.
+ *     description: >-
+ *       Works used as bibliography across the instructor's courses, one row per work, ordered by
+ *       used_in_courses DESC, publication_year DESC, work id DESC. publication_year, document_type and
+ *       open_access come from the work's latest publication. reading_type is the highest-priority type
+ *       (REQUIRED > RECOMMENDED > SUPPLEMENTARY) and reading_types lists all of them. Empty while
+ *       course_bibliography holds no rows; unknown ids yield an empty page (no 404). Cached for 30 minutes.
  *     tags: [Instructors]
  *     parameters:
  *       - in: path
@@ -420,7 +439,9 @@ router.get('/:id/subjects', validateInstructorSubjects, instructorsController.ge
  *           type: string
  *           minLength: 1
  *           maxLength: 50
- *         description: Exact match on course_bibliography.reading_type
+ *         description: >-
+ *           Keep only bibliography entries of this type (REQUIRED, RECOMMENDED, SUPPLEMENTARY;
+ *           case-insensitive); reading_types and used_in_courses then count those entries only.
  *       - in: query
  *         name: year_from
  *         schema:

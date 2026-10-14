@@ -28,13 +28,13 @@ const validatePersonsQuery = [
   query('search')
     .optional({ values: 'falsy' })
     .trim()
-    .isLength({ min: 2, max: 255 })
-    .withMessage('Search term must be between 2 and 255 characters'),
+    .isLength({ min: 2, max: 200 })
+    .withMessage('Search term must be between 2 and 200 characters'),
   query('q')
     .optional({ values: 'falsy' })
     .trim()
-    .isLength({ min: 2, max: 255 })
-    .withMessage('q must be between 2 and 255 characters'),
+    .isLength({ min: 2, max: 200 })
+    .withMessage('q must be between 2 and 200 characters'),
 
   query('signature')
     .optional({ values: 'falsy' })
@@ -44,8 +44,8 @@ const validatePersonsQuery = [
 
   query('verified')
     .optional({ values: 'falsy' })
-    .isIn(['true', 'false'])
-    .withMessage('Verified must be true or false')
+    .isIn(['true', 'false', '1', '0'])
+    .withMessage('verified must be boolean-like (1/0/true/false)')
 ];
 
 /**
@@ -54,11 +54,14 @@ const validatePersonsQuery = [
  *   get:
  *     summary: Get list of researchers and authors
  *     description: >-
- *       Paginated list of academic researchers and authors, ordered newest-first
- *       (`id DESC`). The base list has NO metric/name sort — `sort_by`/`sort_order`
- *       are not honoured here. Free-text name search (`search`, alias `q`) resolves
- *       through Manticore; `signature` is a MariaDB LIKE-prefix lookup; `verified`
- *       filters on verification status. There is no affiliation or country filter.
+ *       Paginated list of researchers and authors. Precedence: `search` (alias `q`) runs
+ *       the Manticore name search (honours `verified`, ignores `signature`); otherwise
+ *       `signature` runs a MariaDB prefix lookup combined with `verified`; otherwise the
+ *       plain list, newest first (`id DESC`). There is no `sort_by`/`sort_order` and no
+ *       affiliation or country filter. The plain list selects ids under the statement
+ *       budget: a count over budget sets `meta.pagination_total_exact=false`, and a page
+ *       over budget returns empty `data` with `meta.page_degraded=true` and a `meta.note`.
+ *       The search path pages up to the first 100,000 matches (400 beyond).
  *     tags: [Persons]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -69,18 +72,19 @@ const validatePersonsQuery = [
  *         schema:
  *           type: string
  *           minLength: 2
- *           maxLength: 255
+ *           maxLength: 200
  *         description: >-
- *           Full-text name search via Manticore (min 2 chars). Sets
- *           `meta.engine=Manticore` and `meta.query_type=search`. Alias: `q`.
+ *           Name search via Manticore (2-200 characters after trimming; every term
+ *           required, unstemmed, query text literal). Sets `meta.engine=Manticore` and
+ *           `meta.query_type=search`. Alias: `q`.
  *         example: silva
  *       - in: query
  *         name: q
  *         schema:
  *           type: string
  *           minLength: 2
- *           maxLength: 255
- *         description: Alias of `search` — Manticore full-text name search.
+ *           maxLength: 200
+ *         description: Alias of `search`, validated the same way (2-200 characters).
  *       - in: query
  *         name: signature
  *         schema:
@@ -88,15 +92,16 @@ const validatePersonsQuery = [
  *           minLength: 2
  *           maxLength: 100
  *         description: >-
- *           Filter by normalized name signature (MariaDB LIKE-prefix `{value}%`
- *           over `signatures.signature`). Sets `meta.query_type=signature_lookup`.
- *         example: SILVA
+ *           Prefix match on the stored normalized signature (`signatures.signature`),
+ *           case-insensitive; `%`, `_` and `\` are literal characters. Combines with
+ *           `verified`. Sets `meta.query_type=signature_lookup`.
+ *         example: SILVA J
  *       - in: query
  *         name: verified
  *         schema:
  *           type: string
- *           enum: ['true', 'false']
- *         description: Filter by verification status (`is_verified`).
+ *           enum: ['true', 'false', '1', '0']
+ *         description: Filter by verification status (`is_verified`) on every path.
  *         example: 'true'
  *     responses:
  *       200:
@@ -120,7 +125,10 @@ const validatePersonsQuery = [
  *                         `engine` (`MariaDB` for list/signature paths, `Manticore`
  *                         for search), `query_type` (`list|signature_lookup|search`),
  *                         `elapsed_ms` (absent on the Manticore search path),
- *                         `pagination_extras.offset`. Counts are exact.
+ *                         `pagination_total_exact` (plain list only; false when the
+ *                         count exceeded its 2 s budget and `total` is a lower bound),
+ *                         `page_degraded` and `note` (plain list page over budget),
+ *                         `pagination_extras.offset`.
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -135,7 +143,13 @@ router.get('/', validatePersonsQuery, personsController.getPersons);
  * /persons/{id}:
  *   get:
  *     summary: Get specific researcher by ID
- *     description: Retrieve detailed information about a specific researcher or author by their unique identifier.
+ *     description: >-
+ *       Full researcher profile: stored metrics, identifiers (`wikidata_id`,
+ *       `openalex_id` and `url` have no source column and are always null), primary
+ *       affiliation, authorship profile, top 10 subjects, top 10 collaborators and up to
+ *       10 recent works. `recent_works` has one row per work with the highest-ranked
+ *       `role`, every role in `roles[]` and the position within that role, ordered by
+ *       publication year (newest first, NULL years last).
  *     tags: [Persons]
  *     parameters:
  *       - in: path
@@ -145,7 +159,7 @@ router.get('/', validatePersonsQuery, personsController.getPersons);
  *           type: integer
  *           minimum: 1
  *         description: Unique identifier of the person
- *         example: 5952
+ *         example: 3589585
  *     responses:
  *       200:
  *         description: Person details retrieved successfully
@@ -174,7 +188,10 @@ router.get('/:id', validatePersonId, personsController.getPerson);
  * /persons/{id}/signatures:
  *   get:
  *     summary: Get signatures linked to a person
- *     description: Retrieve all name signatures associated with a specific person
+ *     description: >-
+ *       The name signature linked to the person through `persons.signature_id` (0 or 1
+ *       row), with `persons_count` = persons sharing that signature. 404 when the person
+ *       does not exist.
  *     tags: [Persons]
  *     parameters:
  *       - in: path
@@ -231,8 +248,13 @@ const validateSignaturesQuery = [
  * @swagger
  * /persons/{id}/works:
  *   get:
- *     summary: Get works authored/edited by a person
- *     description: Retrieve all academic works (publications) authored or edited by a specific person
+ *     summary: Get works a person contributed to
+ *     description: >-
+ *       Every work the person contributed to in any role, one row per work.
+ *       `authorship.role` is the highest-ranked role held, `authorship.roles` lists every
+ *       role (complete even under a `role` filter) and `authorship.position` is the
+ *       position within that role. Displayed publication fields come from the latest
+ *       publication. Counts are exact; 404 when the person does not exist.
  *     tags: [Persons]
  *     parameters:
  *       - in: path
@@ -249,20 +271,24 @@ const validateSignaturesQuery = [
  *         name: role
  *         schema:
  *           type: string
- *           enum: [AUTHOR, EDITOR]
- *         description: Filter by authorship role (case-insensitive).
+ *           enum: [AUTHOR, EDITOR, TRANSLATOR, REVIEWER]
+ *         description: Keep works where the person holds this role (case-insensitive).
  *       - in: query
  *         name: year_from
  *         schema:
  *           type: integer
  *           minimum: 1000
- *         description: Inclusive lower bound on publication year.
+ *         description: >-
+ *           Inclusive lower bound on the year of the latest publication; works without a
+ *           year are excluded.
  *       - in: query
  *         name: year_to
  *         schema:
  *           type: integer
  *           minimum: 1000
- *         description: Inclusive upper bound on publication year.
+ *         description: >-
+ *           Inclusive upper bound on the year of the latest publication; works without a
+ *           year count as year 0 and are kept.
  *       - in: query
  *         name: cited_by_min
  *         schema:
@@ -287,7 +313,8 @@ const validateSignaturesQuery = [
  *         description: >-
  *           Primary sort key. `citation_count`/`reference_count`/`year` are accepted
  *           aliases of `cited_by_count`/`references_count`/`publication_year`. With
- *           `sort_by` omitted the order falls back to publication_year DESC.
+ *           `sort_by` omitted the order is publication_year DESC. Works without a year
+ *           sort last on the year sort in both directions; ties break on work id DESC.
  *       - in: query
  *         name: sort_order
  *         schema:

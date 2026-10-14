@@ -132,6 +132,8 @@ router.get('/statistics', subjectsController.getSubjectsStatistics);
  *                   properties:
  *                     data:
  *                       $ref: '#/components/schemas/SubjectDetail'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -150,7 +152,7 @@ router.get('/:id', validateSubjectId, subjectsController.getSubjectById);
  *       Direct children (one level down) of the subject, ordered by
  *       `works_count` DESC then term ASC. On child rows `parent_term` is always
  *       null and `courses_count` is always 0. A non-existent parent id returns an
- *       HTTP 200 empty page (no existence 404 on this endpoint). Cached for 1 hour.
+ *       HTTP 200 empty page (no existence 404 on this endpoint). Cached for 30 minutes.
  *     tags: [Subjects]
  *     parameters:
  *       - in: path
@@ -221,6 +223,8 @@ router.get('/:id/children', [...validateSubjectId, ...validatePagination], subje
  *                       type: array
  *                       items:
  *                         $ref: '#/components/schemas/SubjectHierarchyNode'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -235,10 +239,17 @@ router.get('/:id/hierarchy', validateSubjectId, subjectsController.getSubjectHie
  *   get:
  *     summary: List works for a subject
  *     description: >-
- *       Works tagged with this subject (via `work_subjects`), ordered by
- *       relevance_score DESC then publication_year DESC. `used_in_courses` is
- *       always 0 (course linkage not populated). A non-existent subject id returns
- *       an HTTP 200 empty page (no existence 404 on this endpoint). Cached for 1 hour.
+ *       Works tagged with this subject (via `work_subjects`), ordered by work_id DESC
+ *       (not client-controllable). Every filter is applied while selecting the page of
+ *       work ids, so pages are never emptied by post-pagination filtering. Unfiltered,
+ *       `pagination.total` is the stored `subjects.total_works` (exact). Filtered, it is
+ *       an exact COUNT under a 2 s budget; when that budget is exceeded the stored
+ *       unfiltered total is returned with `meta.pagination_total_exact = false`. When the
+ *       page selection itself exceeds its statement budget the response is an empty page
+ *       with `meta.page_degraded = true` and `meta.note` (the total is never reported as 0).
+ *       `used_in_courses` is always 0 (course linkage not populated). A non-existent
+ *       subject id returns an HTTP 200 empty page (no existence 404 on this endpoint).
+ *       Cached for 30 minutes; degraded pages are not cached.
  *     tags: [Subjects]
  *     parameters:
  *       - in: path
@@ -253,35 +264,39 @@ router.get('/:id/hierarchy', validateSubjectId, subjectsController.getSubjectHie
  *       - $ref: '#/components/parameters/offsetParam'
  *       - in: query
  *         name: min_relevance
- *         description: Keep only rows with work_subjects.relevance_score >= this value.
+ *         description: >-
+ *           Keep only tags with work_subjects.relevance_score >= this value. The score is a
+ *           uniform 1.00 today, so a value <= 1 keeps every work and a value > 1 keeps none.
  *         schema:
  *           type: number
  *           format: float
  *           minimum: 0
  *       - in: query
  *         name: year_from
- *         description: Lower bound (inclusive) on the work's publication year.
+ *         description: >-
+ *           Keep works with at least one publication whose year is >= this value. Combined
+ *           year/document_type filters must hold for the same publication.
  *         schema:
  *           type: integer
  *           minimum: 1900
  *           maximum: 2030
  *       - in: query
  *         name: year_to
- *         description: Upper bound (inclusive) on the work's publication year.
+ *         description: Keep works with at least one publication whose year is <= this value.
  *         schema:
  *           type: integer
  *           minimum: 1900
  *           maximum: 2030
  *       - in: query
  *         name: document_type
- *         description: Exact match against the publication type (e.g. ARTICLE, BOOK).
+ *         description: Keep works with at least one publication of this type (e.g. ARTICLE, BOOK).
  *         schema:
  *           type: string
  *           minLength: 1
  *           maxLength: 50
  *       - in: query
  *         name: language
- *         description: Exact match against the work language (ISO 639-1).
+ *         description: Exact match against works.language (ISO 639-1).
  *         schema:
  *           type: string
  *           minLength: 2
@@ -302,6 +317,18 @@ router.get('/:id/hierarchy', validateSubjectId, subjectsController.getSubjectHie
  *                         $ref: '#/components/schemas/SubjectWork'
  *                     pagination:
  *                       $ref: '#/components/schemas/PaginationMeta'
+ *                     meta:
+ *                       type: object
+ *                       properties:
+ *                         pagination_total_exact:
+ *                           type: boolean
+ *                           description: False when pagination.total is the stored unfiltered total instead of an exact filtered count.
+ *                         page_degraded:
+ *                           type: boolean
+ *                           description: Present (true) when the page selection exceeded its statement budget and data is empty.
+ *                         note:
+ *                           type: string
+ *                           description: Explanation accompanying page_degraded.
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -316,11 +343,13 @@ router.get('/:id/works', [...validateSubjectId, ...validateSubjectWorks], subjec
  *   get:
  *     summary: List courses for a subject
  *     description: >-
- *       Courses whose bibliography includes a work tagged with this subject.
- *       Currently always returns an empty page because the course domain
- *       (`courses` / `course_bibliography`) is not populated; the row shape below
- *       documents the populated response. A non-existent subject id returns an
- *       HTTP 200 empty page (no existence 404 on this endpoint). Cached for 1 hour.
+ *       Courses whose bibliography includes a work tagged with this subject, one row per
+ *       course, ordered by works_with_subject DESC, course year DESC, course id ASC.
+ *       `reading_type` is the highest-priority reading type among the course's matching
+ *       entries (REQUIRED > RECOMMENDED > SUPPLEMENTARY) and `reading_types` lists all of
+ *       them. Currently returns an empty page because `course_bibliography` holds no rows;
+ *       the row shape documents the populated response. A non-existent subject id returns
+ *       an HTTP 200 empty page (no existence 404 on this endpoint). Cached for 30 minutes.
  *     tags: [Subjects]
  *     parameters:
  *       - in: path
@@ -355,14 +384,16 @@ router.get('/:id/works', [...validateSubjectId, ...validateSubjectWorks], subjec
  *           minimum: 1
  *       - in: query
  *         name: reading_type
- *         description: Exact match against course_bibliography.reading_type.
+ *         description: >-
+ *           Keep only bibliography entries of this type (REQUIRED, RECOMMENDED, SUPPLEMENTARY;
+ *           case-insensitive); reading_type and reading_types then reflect those entries only.
  *         schema:
  *           type: string
  *           minLength: 1
  *           maxLength: 50
  *     responses:
  *       200:
- *         description: Paginated list of courses referencing this subject (currently always empty).
+ *         description: Paginated list of courses referencing this subject (empty while course data is not loaded).
  *         content:
  *           application/json:
  *             schema:

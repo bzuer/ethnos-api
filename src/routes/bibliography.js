@@ -93,11 +93,12 @@ const validateBibliographyAnalysis = [
  *     summary: List bibliography entries (course readings)
  *     description: >-
  *       Lists course-reading assignments, one row per (course_id, work_id), joined from the
- *       course_bibliography table across courses, works and their latest publication. Fixed sort:
- *       course year DESC, then semester, week_number, reading_type, title (not client-controllable).
- *       The service auto-enables light mode whenever none of course_id/instructor_id/search is
- *       supplied, so the default bare listing returns author_count and instructors as null; those two
- *       fields are only populated on the filtered (non-light) query path.
+ *       course_bibliography table across courses, works and each work's latest publication (highest
+ *       publications.id). Fixed sort: course year DESC, then semester, week_number, reading_type, title,
+ *       course id, work id (not client-controllable). Light mode is enabled automatically whenever none
+ *       of course_id/instructor_id/search is supplied, so the default bare listing returns author_count
+ *       and instructors as null; those two fields are only populated on the filtered (non-light) path.
+ *       meta.source is "course_bibliography". Cached for 30 minutes.
  *     tags: [Bibliography]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -123,7 +124,7 @@ const validateBibliographyAnalysis = [
  *           minimum: 1
  *       - in: query
  *         name: reading_type
- *         description: Exact match on course_bibliography.reading_type (e.g. required, recommended).
+ *         description: Exact, case-insensitive match on course_bibliography.reading_type (REQUIRED, RECOMMENDED, SUPPLEMENTARY).
  *         schema:
  *           type: string
  *           minLength: 1
@@ -164,13 +165,14 @@ const validateBibliographyAnalysis = [
  *       - in: query
  *         name: light
  *         description: >-
- *           Force the lightweight query, dropping the author_count/instructors subquery (they return
- *           null). Light mode is also auto-enabled when no course_id/instructor_id/search filter is set.
+ *           true or 1 forces the lightweight query, dropping the author_count/instructors subquery (they
+ *           return null). Light mode is also enabled automatically when no course_id/instructor_id/search
+ *           filter is set.
  *         schema:
  *           type: boolean
  *     responses:
  *       200:
- *         description: Paginated list of bibliography entries (empty until course data is loaded operator-side).
+ *         description: Paginated list of bibliography entries (empty while course_bibliography holds no rows).
  *         content:
  *           application/json:
  *             schema:
@@ -203,7 +205,9 @@ router.get('/', validateBibliographyList, bibliographyController.getBibliography
  *     summary: Bibliography analytics
  *     description: >-
  *       Aggregate analytics over course bibliographies: most-reused works, per-year trends, and
- *       reading-type / document-type distributions. Returns a single object (no pagination envelope).
+ *       reading-type / document-type distributions. Publication fields and document types come from
+ *       each work's latest publication (highest publications.id); averages are DECIMAL strings.
+ *       Returns a single object (no pagination envelope). Cached for 1 hour.
  *     tags: [Bibliography]
  *     parameters:
  *       - in: query
@@ -228,7 +232,7 @@ router.get('/', validateBibliographyList, bibliographyController.getBibliography
  *           minimum: 1
  *       - in: query
  *         name: reading_type
- *         description: Filter by course_bibliography.reading_type.
+ *         description: Filter by course_bibliography.reading_type (REQUIRED, RECOMMENDED, SUPPLEMENTARY; case-insensitive).
  *         schema:
  *           type: string
  *           minLength: 1
@@ -245,7 +249,7 @@ router.get('/', validateBibliographyList, bibliographyController.getBibliography
  *           default: 20
  *     responses:
  *       200:
- *         description: Bibliography analytics object (arrays empty until course data is loaded operator-side).
+ *         description: Bibliography analytics object (arrays empty while course_bibliography holds no rows).
  *         content:
  *           application/json:
  *             schema:
@@ -272,11 +276,14 @@ router.get('/analyses', validateBibliographyAnalysis, bibliographyController.get
  *     summary: Bibliography statistics
  *     description: >-
  *       Global rollup counts over course bibliographies, including reading-type distribution and a
- *       nested year_range block. No query parameters; returns a single object (no pagination envelope).
+ *       nested year_range block. avg_works_per_course is averaged over bibliography rows (courses with
+ *       longer lists weigh more) and year_range spans every publication of the bibliography works;
+ *       averages and percentages are DECIMAL strings. No query parameters; returns a single object
+ *       (no pagination envelope). Cached for 1 hour.
  *     tags: [Bibliography]
  *     responses:
  *       200:
- *         description: Bibliography statistics object (zeros/nulls until course data is loaded operator-side).
+ *         description: Bibliography statistics object (zeros/nulls while course_bibliography holds no rows).
  *         content:
  *           application/json:
  *             schema:

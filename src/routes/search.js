@@ -88,78 +88,88 @@ const validateWorksSearch = [
  *     summary: Search works using full-text search
  *     tags: [Search]
  *     description: >-
- *       Full-text search over academic works served by Manticore across
- *       (title, subtitle, abstract, authors, subjects, venue). `q` is optional when a
- *       filter is supplied (filter-only queries are supported). The `author` and
- *       `subject` filters resolve through the Manticore authors / subjects fields
- *       (AND semantics); only the `venue`/`venue_name` filter runs against the MariaDB
- *       ft_venues_search index. Pagination totals are exact (Manticore COUNT).
+ *       Works search. With a text term (`q`, `author`, `subject` or `venue`/`venue_name`)
+ *       it runs on Manticore over (title, subtitle, abstract, authors, subjects, venue),
+ *       defaults to relevance order and reports an exact Manticore count. Without a text
+ *       term it is the MariaDB `/works` browse (default order `id DESC`; the count has a
+ *       2 s budget and falls back to the corpus estimate with
+ *       `meta.pagination_total_exact=false`). Query text is literal: only letters, digits,
+ *       `_` and whitespace reach the engine (everything else separates words, no operators
+ *       or wildcards) and every term is required. The `authors` field holds AUTHOR-role
+ *       contributors only. Pages beyond the first 100,000 full-text matches return 400.
+ *       Each row shows the latest publication matching the filters. Requests with `q`
+ *       are recorded for /search/popular.
  *     parameters:
  *       - name: q
  *         in: query
  *         required: false
- *         description: Search query (minimum 2 characters). Optional when filters are provided.
+ *         description: Free-text query (2-200 characters after trimming). Optional.
  *         schema:
  *           type: string
  *           minLength: 2
- *           example: "machine learning"
+ *           maxLength: 200
+ *           example: "kinship"
  *       - name: type
  *         in: query
- *         description: Filter by work type
+ *         description: Work type (case-insensitive); matches a work if any of its publications has that type.
  *         schema:
  *           type: string
- *           example: "ARTICLE"
+ *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
  *       - name: language
  *         in: query
- *         description: Filter by language
+ *         description: Language code (2-5 characters).
  *         schema:
  *           type: string
  *           example: "en"
  *       - name: peer_reviewed
  *         in: query
- *         description: Filter by peer review flag
+ *         description: Peer-review flag of any publication.
  *         schema:
- *           type: boolean
- *           example: true
+ *           type: string
+ *           enum: ["1", "0", "true", "false"]
  *       - name: open_access
  *         in: query
- *         description: Filter by open access flag
+ *         description: Open-access flag of any publication.
  *         schema:
- *           type: boolean
- *           example: true
+ *           type: string
+ *           enum: ["1", "0", "true", "false"]
  *       - name: venue_name
  *         in: query
- *         description: Filter by venue name (accepts partial match)
+ *         description: >-
+ *           Venue text filter (2-255 characters) on the Manticore `venue` field (name and
+ *           abbreviation of the venue of any publication, verbatim words). Counts as a text term.
  *         schema:
  *           type: string
- *           example: "Nature"
+ *           example: "mana"
  *       - name: venue
  *         in: query
- *         description: Alias of venue_name
+ *         description: Alias of venue_name.
  *         schema:
  *           type: string
- *           example: "Nature"
+ *           example: "mana"
  *       - name: year_from
  *         in: query
- *         description: Filter by minimum publication year
+ *         description: Minimum publication year (any publication).
  *         schema:
  *           type: integer
- *           example: 2020
+ *           minimum: 1000
+ *           example: 2015
  *       - name: year_to
  *         in: query
- *         description: Filter by maximum publication year
+ *         description: Maximum publication year (any publication; at most next year).
  *         schema:
  *           type: integer
+ *           minimum: 1000
  *           example: 2024
  *       - name: author
  *         in: query
- *         description: Filter by author name (Manticore authors field match, AND semantics)
+ *         description: Author name (2-255 characters) on the Manticore `authors` field (AUTHOR-role names, verbatim, AND semantics).
  *         schema:
  *           type: string
  *           example: "Geertz"
  *       - name: subject
  *         in: query
- *         description: Filter by subject (Manticore subjects field match, AND semantics)
+ *         description: Subject (2-255 characters) on the Manticore `subjects` field (stemmed, AND semantics).
  *         schema:
  *           type: string
  *           example: "anthropology"
@@ -178,7 +188,9 @@ const validateWorksSearch = [
  *           minimum: 0
  *       - name: sort_by
  *         in: query
- *         description: Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance` is only meaningful when `q`, `venue`, `author`, or `subject` is set.
+ *         description: >-
+ *           Primary sort key. Defaults to relevance when a text term is present, otherwise
+ *           `id` DESC. `relevance` is only meaningful with a text term.
  *         schema:
  *           type: string
  *           enum: [cited_by_count, references_count, publication_year, id, relevance]
@@ -195,9 +207,10 @@ const validateWorksSearch = [
  *     responses:
  *       200:
  *         description: >-
- *           Paginated work search results. Each data row is a WorkListItem enriched
- *           with search provenance (`data_source`, `search_engine`, `relevance`). Note
- *           `relevance` is always null even when `sort_by=relevance`.
+ *           Paginated work search results. Each row is a WorkListItem plus search
+ *           provenance (`data_source` / `search_engine`: `search` / `Manticore` on the
+ *           full-text path, `full_api` / `MariaDB` on the browse path) and `relevance`,
+ *           which is always null.
  *         content:
  *           application/json:
  *             schema:
@@ -219,6 +232,12 @@ const validateWorksSearch = [
  *                         search_type:
  *                           type: string
  *                           example: fulltext
+ *                         match_mode:
+ *                           type: string
+ *                           example: any_publication
+ *                         pagination_total_exact:
+ *                           type: boolean
+ *                           description: False when the browse-path count fell back to the corpus estimate.
  *                         performance:
  *                           type: object
  *       400:
@@ -236,19 +255,23 @@ router.get('/works', validateWorksSearch, searchController.searchWorks);
  *   get:
  *     summary: Global search across all entities
  *     tags: [Search]
- *     description: Perform simultaneous search across works and persons (institutions search disabled for performance)
+ *     description: >-
+ *       Works and persons searched in one round trip (Manticore), each block with its own
+ *       exact total and a `results[]` slice capped at `limit`. Institutions are not part of
+ *       the global search (use /institutions?q=). The query is recorded for /search/popular.
  *     parameters:
  *       - name: q
  *         in: query
  *         required: true
- *         description: Search query
+ *         description: Search query (2-200 characters after trimming).
  *         schema:
  *           type: string
  *           minLength: 2
- *           example: "artificial intelligence"
+ *           maxLength: 200
+ *           example: "anthropology"
  *       - name: limit
  *         in: query
- *         description: Limit per entity type
+ *         description: Rows per entity block (400 outside 1-20).
  *         schema:
  *           type: integer
  *           minimum: 1
@@ -257,9 +280,8 @@ router.get('/works', validateWorksSearch, searchController.searchWorks);
  *     responses:
  *       200:
  *         description: >-
- *           Combined works + persons results, each capped at `limit`. The institutions
- *           block is permanently empty (`total:0`, `results:[]`, with an explanatory
- *           `note`) — institutions search is disabled for performance.
+ *           Works and persons blocks, each capped at `limit`. The institutions block is
+ *           always `{ total: null, results: [], note }`; `null` means not searched.
  *         content:
  *           application/json:
  *             schema:
@@ -293,26 +315,29 @@ router.get('/global', [
  *   get:
  *     summary: Search persons/researchers by name
  *     description: >-
- *       Full-text search for researchers and authors served by Manticore across the
- *       name fields (preferred_name, given_names, family_name). Each row is a compact
- *       PersonSearchItem, not the full person profile. `relevance` is always null.
+ *       Name search for researchers and authors served by Manticore across
+ *       preferred_name, given_names and family_name (unstemmed, every term required,
+ *       query text literal). Each row is a compact PersonSearchItem, not the full person
+ *       profile; `relevance` is always null. Totals are exact; pages beyond the first
+ *       100,000 matches return 400.
  *     tags: [Search]
  *     parameters:
  *       - name: q
  *         in: query
  *         required: true
- *         description: Search query for person names (minimum 2 characters)
+ *         description: Person name query (2-200 characters after trimming).
  *         schema:
  *           type: string
  *           minLength: 2
- *           maxLength: 255
- *           example: "John Smith"
+ *           maxLength: 200
+ *           example: "silva"
  *       - name: verified
  *         in: query
  *         required: false
- *         description: Restrict to verified persons when true.
+ *         description: Restrict by verification status; echoed as a boolean in `meta.verified`.
  *         schema:
- *           type: boolean
+ *           type: string
+ *           enum: ["1", "0", "true", "false"]
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -358,81 +383,84 @@ router.get('/persons', [
  *     summary: Advanced works search with filters
  *     tags: [Search]
  *     description: >-
- *       Works search served by the same Manticore engine as /search/works, wrapping the
- *       rows under `data.results` alongside a `data.facets` object. Faceting is not
- *       implemented — `data.facets` is always an empty object `{}`. Use the individual
- *       filter params (type/work_type, language, year_from/to, venue, author, subject,
- *       cited_by_min/max) to narrow results.
+ *       Same engine, parameters and validation as /search/works, with the rows wrapped
+ *       under `data.results` (without the `relevance` key) next to a `data.facets` object.
+ *       Faceting is not implemented: `data.facets` is always `{}`. `work_type` is an alias
+ *       of `type` and takes precedence when both are set. Requests are not recorded for
+ *       /search/popular.
  *     parameters:
  *       - name: q
  *         in: query
  *         required: false
- *         description: Search query (minimum 2 characters). Optional when filters are provided.
+ *         description: Free-text query (2-200 characters after trimming). Optional.
  *         schema:
  *           type: string
  *           minLength: 2
- *           example: "machine learning"
+ *           maxLength: 200
+ *           example: "ritual"
  *       - name: work_type
  *         in: query
- *         description: Filter by work type
+ *         description: Work type (case-insensitive); alias of `type` that wins when both are set.
  *         schema:
  *           type: string
  *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
  *       - name: language
  *         in: query
- *         description: Filter by language code
+ *         description: Language code (2-5 characters).
  *         schema:
  *           type: string
  *           example: "en"
  *       - name: year_from
  *         in: query
- *         description: Filter by minimum publication year
+ *         description: Minimum publication year (any publication).
  *         schema:
  *           type: integer
- *           example: 2020
+ *           minimum: 1000
+ *           example: 2018
  *       - name: year_to
  *         in: query
- *         description: Filter by maximum publication year
+ *         description: Maximum publication year (any publication; at most next year).
  *         schema:
  *           type: integer
+ *           minimum: 1000
  *           example: 2024
  *       - name: peer_reviewed
  *         in: query
- *         description: Filter by peer review status
+ *         description: Peer-review flag of any publication.
  *         schema:
  *           type: string
- *           enum: ["true", "false"]
+ *           enum: ["1", "0", "true", "false"]
  *       - name: open_access
  *         in: query
- *         description: Filter by open access status
+ *         description: Open-access flag of any publication.
  *         schema:
  *           type: string
- *           enum: ["true", "false"]
+ *           enum: ["1", "0", "true", "false"]
  *       - name: venue_name
  *         in: query
- *         description: Filter by venue name (partial match)
+ *         description: Venue text filter on the Manticore `venue` field (2-255 characters); counts as a text term.
  *         schema:
  *           type: string
  *       - name: venue
  *         in: query
- *         description: Alias of venue_name
+ *         description: Alias of venue_name.
  *         schema:
  *           type: string
  *       - name: author
  *         in: query
- *         description: Filter by author name (full-text match)
+ *         description: Author name on the Manticore `authors` field (AUTHOR-role names, 2-255 characters).
  *         schema:
  *           type: string
- *           example: "Geertz"
+ *           example: "silva"
  *       - name: subject
  *         in: query
- *         description: Filter by subject (full-text match)
+ *         description: Subject on the Manticore `subjects` field (2-255 characters).
  *         schema:
  *           type: string
  *           example: "anthropology"
  *       - name: type
  *         in: query
- *         description: Alias of work_type
+ *         description: Work type (case-insensitive).
  *         schema:
  *           type: string
  *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
@@ -450,7 +478,9 @@ router.get('/persons', [
  *           minimum: 0
  *       - name: sort_by
  *         in: query
- *         description: Primary sort key. `cited_by_count` surfaces the most cited works first; `relevance` is only meaningful when a full-text clause is set.
+ *         description: >-
+ *           Primary sort key. Defaults to relevance when a text term is present, otherwise
+ *           `id` DESC. `relevance` is only meaningful with a text term.
  *         schema:
  *           type: string
  *           enum: [cited_by_count, references_count, publication_year, id, relevance]
@@ -630,9 +660,10 @@ router.get('/advanced', validateAdvancedSearch, advancedSearch);
  *     summary: Search engine health
  *     tags: [Search]
  *     description: >-
- *       Reports the Manticore backend status and index topology. The works and persons
- *       full-text surfaces are served unconditionally by Manticore; only the venue
- *       filter uses the MariaDB ft_venues_search index.
+ *       Reports the Manticore backend status and table topology. Works and persons
+ *       full-text (including the works `venue` filter) is served by Manticore with no
+ *       MariaDB fallback; `indexes.venues` names the MariaDB index behind /venues and the
+ *       /publications venue filter.
  *     responses:
  *       200:
  *         description: Search engine status and index topology.
@@ -663,7 +694,7 @@ router.get('/health', async (req, res, next) => {
       indexes: {
         works: 'Manticore table works (title, subtitle, abstract, authors, subjects, venue)',
         persons: 'Manticore table persons (preferred_name, given_names, family_name)',
-        venues: 'ft_venues_search (name + abbreviated_name) [MariaDB]'
+        venues: 'Manticore field venue for the works venue filter; MariaDB ft_venues_search (name + abbreviated_name) for the /publications venue filter'
       },
       endpoints: {
         basic_search: '/search/works',
@@ -694,28 +725,32 @@ const autocompleteService = require('../services/autocomplete.service');
  *       Each kind is searched in its own Manticore field (titles, author names, venue
  *       names) with the last term matched as a prefix (from 3 characters) and earlier
  *       terms as whole words; the most-cited matching works are hydrated from MariaDB.
- *       Author and venue suggestions contain every typed term.
- *       For a query shorter than 2 characters the endpoint still returns HTTP 200 but
- *       with the reduced shape `data: { suggestions: [], message: "Query too short" }`
- *       (no `query`/`type`/`count`/`generated_at`, and `meta.engine` absent).
+ *       Author and venue suggestions contain every typed term. Author and venue
+ *       `work_count` counts works among the sampled matches (the top `limit` x 5 by
+ *       citations), not the total. For a query shorter than 2 characters (or absent)
+ *       the endpoint still returns HTTP 200 but with the reduced shape
+ *       `data: { suggestions: [], message: "Query too short" }` (no
+ *       `query`/`type`/`count`/`generated_at`, and `meta.engine` absent). Requests are
+ *       not recorded for /search/popular.
  *     parameters:
  *       - name: q
  *         in: query
- *         required: true
- *         description: Search query for suggestions (minimum 2 characters)
+ *         required: false
+ *         description: Text to complete (at most 200 characters; under 2 returns the short shape).
  *         schema:
  *           type: string
- *           minLength: 2
+ *           maxLength: 200
+ *           example: "kins"
  *       - name: type
  *         in: query
- *         description: Type of suggestions
+ *         description: Suggestion kinds (400 for any other value).
  *         schema:
  *           type: string
  *           enum: [all, titles, authors, venues]
  *           default: all
  *       - name: limit
  *         in: query
- *         description: Maximum suggestions to return
+ *         description: Maximum suggestions to return (400 outside 1-20).
  *         schema:
  *           type: integer
  *           minimum: 1
@@ -735,6 +770,8 @@ const autocompleteService = require('../services/autocomplete.service');
  *                       $ref: '#/components/schemas/AutocompleteResult'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -806,13 +843,17 @@ router.get('/autocomplete', [
  *     summary: Get popular search terms
  *     tags: [Search]
  *     description: >-
- *       Most frequent title terms across the corpus, sourced from a precomputed
- *       analytics aggregate (fast; no longer times out). Each term carries its
- *       corpus frequency and a constant `type` of `popular`.
+ *       Most frequent recent search queries. Every /search/works request with a
+ *       non-empty `q` and every /search/global request appends its query (trimmed,
+ *       lower-cased, whole string) to the Redis list `search_analytics:YYYY-MM-DD`
+ *       (UTC date; newest 5000 entries kept per day, 30-day expiry). The endpoint counts
+ *       identical queries over the newest 2000 entries of each of the last 7 days, sorts
+ *       by frequency then alphabetically, and caches the top 50 for 600 s. Without Redis
+ *       the list is empty.
  *     parameters:
  *       - name: limit
  *         in: query
- *         description: Maximum number of terms to return.
+ *         description: Maximum number of terms to return (values outside 1-50 are clamped).
  *         schema:
  *           type: integer
  *           minimum: 1

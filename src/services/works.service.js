@@ -83,7 +83,7 @@ const resolveWorksOrderClause = (sortBy, sortOrder) => {
       return { withPub: `MAX(p.year) ${dir}, w.id DESC`, noPub: `w.latest_publication_year ${dir}, w.id ${dir}`, needsPub: false };
     case 'id':
     case 'work_id':
-      return { withPub: `w.id ${dir}`, noPub: `w.id ${dir}`, needsPub: false };
+      return { withPub: `w.id ${dir}`, noPub: `w.id ${dir}`, needsPub: false, byId: true, dir };
     default:
       return null;
   }
@@ -91,6 +91,7 @@ const resolveWorksOrderClause = (sortBy, sortOrder) => {
 
 const ESTIMATED_WORKS_TOTAL = 7657142;
 const WORKS_COUNT_BUDGET_MS = 2000;
+const PUBLICATION_DRIVEN_SORT_MAX = 250000;
 
 const normalizeWorksListFilters = (filters = {}) => {
   const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
@@ -344,7 +345,8 @@ class WorksService {
       : await this._getWorksVitrine(f, effectiveLimit, offset, page);
 
     result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
-    if (!result.meta?.page_degraded) {
+    const transientTotal = hasFulltext && result.meta?.pagination_total_exact === false;
+    if (!result.meta?.page_degraded && !transientTotal) {
       await cacheService.set(cacheKey, result, 1800);
     }
     return result;
@@ -408,36 +410,60 @@ class WorksService {
     if (f.cited_by_min !== null) { worksConds.push('w.citation_count >= ?'); worksParams.push(f.cited_by_min); }
     if (f.cited_by_max !== null) { worksConds.push('w.citation_count <= ?'); worksParams.push(f.cited_by_max); }
 
-    const selectionMatch = buildPublicationMatch(f, 'fp');
-    const idConds = [...worksConds];
-    const idParams = [...worksParams];
-    if (selectionMatch.conds.length > 0) {
-      idConds.push(`(SELECT 1 FROM publications fp WHERE fp.work_id = w.id AND ${selectionMatch.sql} LIMIT 1) IS NOT NULL`);
-      idParams.push(...selectionMatch.params);
-    }
+    const selectionMatch = buildPublicationMatch(f, 'p');
+    const hasPublicationFilter = selectionMatch.conds.length > 0;
+    const byId = !customOrder || customOrder.byId === true;
+    const idDir = customOrder?.dir || 'DESC';
+    const worksWhere = worksConds.length ? ` AND ${worksConds.join(' AND ')}` : '';
 
-    const isDefaultBrowse = idConds.length === 0 && !customOrder;
-    const idSql = isDefaultBrowse
-      ? 'SELECT DISTINCT work_id FROM publications ORDER BY work_id DESC LIMIT ? OFFSET ?'
-      : `SELECT w.id AS work_id FROM works w ${idConds.length ? `WHERE ${idConds.join(' AND ')}` : ''} ORDER BY ${customOrder ? customOrder.noPub : 'w.id DESC'} LIMIT ? OFFSET ?`;
-    const idReplacements = isDefaultBrowse ? [limit, offset] : [...idParams, limit, offset];
-
-    const primaryStart = process.hrtime.bigint();
-    const selectionPromise = sequelize.query(withTimeout(idSql), { replacements: idReplacements, type: sequelize.QueryTypes.SELECT })
+    const runSelection = (sql, replacements) => sequelize.query(withTimeout(sql), { replacements, type: sequelize.QueryTypes.SELECT })
       .then((rows) => ({ rows }))
       .catch((error) => {
         if (isStatementTimeout(error)) return { degraded: true };
         throw error;
       });
+
+    const buildSelection = (counted) => {
+      if (!hasPublicationFilter && worksConds.length === 0 && !customOrder) {
+        return ['SELECT DISTINCT work_id FROM publications ORDER BY work_id DESC LIMIT ? OFFSET ?', [limit, offset]];
+      }
+      if (!hasPublicationFilter) {
+        return [
+          `SELECT w.id AS work_id FROM works w ${worksConds.length ? `WHERE ${worksConds.join(' AND ')}` : ''} ORDER BY ${customOrder ? customOrder.noPub : 'w.id DESC'} LIMIT ? OFFSET ?`,
+          [...worksParams, limit, offset]
+        ];
+      }
+      if (byId) {
+        return [
+          `SELECT p.work_id FROM publications p ${worksConds.length ? 'INNER JOIN works w ON w.id = p.work_id' : ''} WHERE ${selectionMatch.sql}${worksWhere} GROUP BY p.work_id ORDER BY p.work_id ${idDir} LIMIT ? OFFSET ?`,
+          [...selectionMatch.params, ...worksParams, limit, offset]
+        ];
+      }
+      if (counted && counted.exact && counted.total <= PUBLICATION_DRIVEN_SORT_MAX) {
+        return [
+          `SELECT w.id AS work_id FROM works w WHERE w.id IN (SELECT p.work_id FROM publications p WHERE ${selectionMatch.sql})${worksWhere} ORDER BY ${customOrder.noPub} LIMIT ? OFFSET ?`,
+          [...selectionMatch.params, ...worksParams, limit, offset]
+        ];
+      }
+      const walkMatch = buildPublicationMatch(f, 'fp');
+      return [
+        `SELECT w.id AS work_id FROM works w WHERE (SELECT 1 FROM publications fp WHERE fp.work_id = w.id AND ${walkMatch.sql} LIMIT 1) IS NOT NULL${worksWhere} ORDER BY ${customOrder.noPub} LIMIT ? OFFSET ?`,
+        [...walkMatch.params, ...worksParams, limit, offset]
+      ];
+    };
+
+    const dependsOnCount = hasPublicationFilter && !byId;
+    const primaryStart = process.hrtime.bigint();
+    const selectionPromise = dependsOnCount ? null : runSelection(...buildSelection(null));
     let counted;
     try {
       counted = await this._countWorks(worksConds, worksParams, f);
     } catch (countError) {
-      selectionPromise.catch(() => {});
+      if (selectionPromise) selectionPromise.catch(() => {});
       throw countError;
     }
     if (counted.exact && counted.total === 0) {
-      selectionPromise.catch(() => {});
+      if (selectionPromise) selectionPromise.catch(() => {});
       return {
         data: [],
         pagination: createPagination(page, limit, 0),
@@ -445,7 +471,7 @@ class WorksService {
         performance: { engine: 'MariaDB', query_type: 'showcase_optimized' }
       };
     }
-    const selection = await selectionPromise;
+    const selection = await (selectionPromise || runSelection(...buildSelection(counted)));
 
     if (selection.degraded) {
       return {
@@ -1127,11 +1153,17 @@ class WorksService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { reading_type, year_from, year_to } = filters;
-    const cacheKey = `work:${workId}:bibliography:v2:${JSON.stringify(filters)}`;
+    const cacheKey = `work:${workId}:bibliography:v3:${JSON.stringify(filters)}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) return cached;
+
+      const [exists] = await sequelize.query('SELECT 1 AS ok FROM works WHERE id = ? LIMIT 1', {
+        replacements: [workId],
+        type: sequelize.QueryTypes.SELECT
+      });
+      if (!exists) return null;
 
       let baseQuery = `
         SELECT

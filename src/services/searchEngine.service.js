@@ -168,6 +168,31 @@ function buildWorksOrder(filters) {
   }
 }
 
+function queryTimeExceeded(meta) {
+  return (meta || []).some(row => row.Variable_name === 'warning' && /max_query_time/i.test(String(row.Value)));
+}
+
+async function boundedQuery(sql) {
+  const { rows, meta } = await manticore.queryWithMeta(sql);
+  if (queryTimeExceeded(meta)) {
+    const error = new Error('Search query exceeded max_query_time');
+    error.code = 'ER_STATEMENT_TIMEOUT';
+    throw error;
+  }
+  return rows;
+}
+
+async function boundedCount(sql) {
+  const { rows, meta } = await manticore.queryWithMeta(sql);
+  return { total: Number(rows[0]?.total) || 0, exact: !queryTimeExceeded(meta) };
+}
+
+function resolveTotal(counted, offset, limit, pageLength) {
+  if (counted.exact) return { total: counted.total, exact: true };
+  const lowerBound = offset + pageLength + (pageLength === limit ? 1 : 0);
+  return { total: Math.max(counted.total, lowerBound), exact: false };
+}
+
 async function searchWorkIds(filters = {}, limit, offset) {
   const matchExpr = buildWorksMatch(filters);
   if (!matchExpr) return { ids: [], total: 0, exact: true };
@@ -185,16 +210,15 @@ async function searchWorkIds(filters = {}, limit, offset) {
     + `OPTION ${options.join(', ')}`;
   const countSql = `SELECT COUNT(*) AS total FROM ${WORKS_TABLE} WHERE ${whereClause} OPTION ${UNRANKED}`;
 
-  const [pageRows, countRows] = await Promise.all([
-    manticore.query(pageSql),
-    manticore.query(countSql)
+  const [pageRows, counted] = await Promise.all([
+    boundedQuery(pageSql),
+    boundedCount(countSql)
   ]);
 
   return {
     ids: pageRows.map(r => Number(r.id)),
     weights: pageRows.map(r => Number(r.w)),
-    total: Number(countRows[0]?.total) || 0,
-    exact: true
+    ...resolveTotal(counted, offset, limit, pageRows.length)
   };
 }
 
@@ -216,16 +240,15 @@ async function searchPersonIds(query, { verified, limit, offset } = {}) {
     + `OPTION max_matches=${maxMatches}, field_weights=(${PERSONS_FIELD_WEIGHTS}), ${PERSONS_RELEVANCE_RANKER}, max_query_time=${MAX_QUERY_TIME_MS}`;
   const countSql = `SELECT COUNT(*) AS total FROM ${PERSONS_TABLE} WHERE ${whereClause} OPTION ${UNRANKED}`;
 
-  const [pageRows, countRows] = await Promise.all([
-    manticore.query(pageSql),
-    manticore.query(countSql)
+  const [pageRows, counted] = await Promise.all([
+    boundedQuery(pageSql),
+    boundedCount(countSql)
   ]);
 
   return {
     ids: pageRows.map(r => Number(r.id)),
     weights: pageRows.map(r => Number(r.w)),
-    total: Number(countRows[0]?.total) || 0,
-    exact: true
+    ...resolveTotal(counted, off, lim, pageRows.length)
   };
 }
 
@@ -233,7 +256,7 @@ async function runRelevanceWorkIdQuery(matchExpr, lim, maxMatches) {
   const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
     + `ORDER BY weight() DESC, citation_count DESC, id DESC LIMIT 0, ${lim} `
     + `OPTION max_matches=${maxMatches}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}, max_query_time=${MAX_QUERY_TIME_MS}`;
-  const rows = await manticore.query(sql);
+  const rows = await boundedQuery(sql);
   return rows.map(r => Number(r.id));
 }
 

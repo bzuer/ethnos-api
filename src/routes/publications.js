@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { param, query } = require('express-validator');
 const publicationsController = require('../controllers/publications.controller');
+const { commonValidations } = require('../middleware/validation');
+
+const WORK_TYPES = ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'];
 
 const validatePublicationId = [
   param('id')
@@ -25,14 +28,14 @@ const validatePublicationsQuery = [
     .isInt({ min: 0 })
     .withMessage('Offset must be a non-negative integer'),
 
-  query('q')
-    .optional({ values: 'falsy' })
-    .isLength({ min: 1, max: 200 })
-    .withMessage('Query string must be 1 to 200 characters'),
+  commonValidations.optionalSearchText('q'),
+  commonValidations.optionalSearchText('search'),
 
   query('type')
     .optional({ values: 'falsy' })
-    .isLength({ max: 50 }),
+    .customSanitizer(value => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+    .isIn(WORK_TYPES)
+    .withMessage(`type must be one of: ${WORK_TYPES.join(', ')}`),
 
   query('language')
     .optional({ values: 'falsy' })
@@ -66,7 +69,15 @@ const validatePublicationsQuery = [
 
   query('venue')
     .optional({ values: 'falsy' })
-    .isLength({ max: 255 }),
+    .trim()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('venue must be between 2 and 255 characters'),
+
+  query('venue_name')
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('venue_name must be between 2 and 255 characters'),
 
   query('venue_id')
     .optional({ values: 'falsy' })
@@ -125,55 +136,48 @@ const validatePublicationsQuery = [
  *     description: |
  *       Returns a paginated list of publications backed by
  *       `publications p INNER JOIN works w LEFT JOIN venues v LEFT JOIN organizations publisher`.
- *       Paginate-then-hydrate: a page of `p.id` is selected first (joining
- *       `works` only when a `w.` column is referenced), then the full row set is
- *       hydrated for those ids.
+ *       A page of `p.id` is selected first (joining `works` only when a works
+ *       column such as `language` is involved), then the full rows are loaded
+ *       for those ids. Every row carries `_links.self`.
  *
- *       Full-text resolution:
- *       - `q`, `author`, `subject` resolve matching work ids through **Manticore**
- *         (`q` spans title+subtitle+abstract+authors+subjects+venue; `author` → `authors`;
- *         `subject` → `subjects`), capped at 5000 work ids. When a full-text term
- *         participates, `meta.engine` is `"Manticore"` and the total is exact; the cap
- *         hit sets `meta.fulltext_truncated=true` and `meta.fulltext_work_cap=5000`.
- *       - `venue` (substring) resolves through MariaDB `ft_venues_search`
- *         (venue name + abbreviated name, boolean mode) and flips the venue join to INNER.
+ *       Filter resolution:
+ *       - `q` (alias `search`), `author`, `subject` resolve matching work ids
+ *         through **Manticore** (`q` spans title+subtitle+abstract+authors+subjects+venue;
+ *         `author` → authors; `subject` → subjects), keeping at most the first 5000
+ *         works by relevance (`MANTICORE_PUBLICATIONS_WORK_CAP`); `meta.engine` is
+ *         then `"Manticore"`. When the cap is hit the response sets
+ *         `meta.fulltext_truncated=true`, `meta.fulltext_work_cap=5000` and
+ *         `pagination_total_exact=false` (the total only counts those works' publications).
+ *       - `venue` (alias `venue_name`) is a word match (boolean mode, every word
+ *         required) against venue name and abbreviation via MariaDB `ft_venues_search`.
  *       - All other filters (`type`, `language`, `year_from`/`year_to`, `open_access`,
  *         `peer_reviewed`, `has_files`, `venue_id`, `publisher_id`, `work_id`, `doi`,
- *         `cited_by_min`/`cited_by_max`) hit B-tree indexes directly and set `meta.engine="MariaDB"`.
+ *         `cited_by_min`/`cited_by_max`) hit indexes directly (`meta.engine="MariaDB"`).
+ *       - `has_files=true` alone with the default sort is served from the files index
+ *         (`meta.has_files_source="files_index"`, exact total); combined with any other
+ *         filter or sort, `has_files` (true or false) is checked per publication.
  *
- *       `pagination.total` is only reliable when `meta.pagination_total_exact` is `true`.
- *       When `false` (e.g. `type` or `year_from`/`year_to` whose count exceeds the 2s budget),
- *       `pagination.total` is the whole-corpus estimate, NOT the filtered subset — use
- *       `data.length < limit` as the last-page terminator. `cited_by_min`/`cited_by_max`
- *       and the `cited_by_count`/`references_count` sorts run against the indexed
- *       denormalized `p.citation_count`/`p.reference_count` and DO return exact totals fast.
+ *       `pagination.total` is exact when its count finishes inside a 2 s budget
+ *       (`type=ARTICLE` → 7,055,450). Otherwise, and on the unfiltered listing, it is
+ *       the whole-corpus estimate (7,744,534) with `pagination_total_exact=false` —
+ *       NOT the filtered subset; use `data.length < limit` as the last-page
+ *       terminator. If the id selection exceeds its statement budget the page
+ *       degrades to `data: []` with `meta.page_degraded=true` and a `meta.note`.
  *
- *       Note: `sort_by=relevance` is accepted but is a no-op on this listing (falls back to
- *       `p.id DESC`); publications are never ordered by full-text relevance.
+ *       Note: `sort_by=relevance` is accepted but behaves like the default
+ *       (`p.id DESC`); publications are never ordered by full-text relevance.
  *     tags: [Publications]
  *     parameters:
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number for pagination
+ *       - $ref: '#/components/parameters/pageParam'
  *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
  *           minimum: 1
  *           maximum: 100
- *           default: 20
- *         description: Number of results per page (max 100)
- *       - in: query
- *         name: offset
- *         schema:
- *           type: integer
- *           minimum: 0
- *           default: 0
- *         description: Number of items to skip (alternative to page)
+ *           default: 10
+ *         description: Number of results per page (1..100, default 10)
+ *       - $ref: '#/components/parameters/offsetParam'
  *       - in: query
  *         name: q
  *         schema:
@@ -185,11 +189,16 @@ const validatePublicationsQuery = [
  *           subjects and venue of each publication's parent work. Sets `meta.engine="Manticore"`.
  *         example: ritual
  *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Alias of `q`.
+ *       - in: query
  *         name: type
  *         schema:
  *           type: string
  *           enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER]
- *         description: Exact publication type filter on `p.type`.
+ *         description: Exact publication type filter on `p.type` (case-insensitive). Values outside the enum are not rejected; they return an empty page.
  *         example: ARTICLE
  *       - in: query
  *         name: language
@@ -222,23 +231,29 @@ const validatePublicationsQuery = [
  *         name: peer_reviewed
  *         schema:
  *           type: boolean
- *         description: Filter by peer reviewed flag (accepts 1/0/true/false)
+ *         description: Filter by peer reviewed flag (accepts 1/0/true/false). Every publication is currently flagged peer-reviewed.
  *       - in: query
  *         name: has_files
  *         schema:
  *           type: boolean
  *         description: >-
- *           Keep only publications with (or without) attached files, enforced via
- *           `EXISTS (files)`. Combine with a selective filter (e.g. `venue_id`);
- *           a standalone `has_files=true` can exceed the statement budget.
+ *           Keep only publications with (or without) attached files. `has_files=true` alone with the
+ *           default sort is served from the files index (`meta.has_files_source="files_index"`, exact
+ *           total); combined with any other filter or sort it is checked per publication and the
+ *           total is exact whenever the count fits its budget.
  *       - in: query
  *         name: venue
  *         schema:
  *           type: string
  *           maxLength: 255
  *         description: >-
- *           Substring match against the venue name and abbreviated name via MariaDB
- *           `ft_venues_search` (boolean mode). This is the only text predicate that runs in MariaDB.
+ *           Word match (boolean mode, every word required) against the venue name and abbreviated
+ *           name via MariaDB `ft_venues_search`. `venue_name` is an accepted alias.
+ *       - in: query
+ *         name: venue_name
+ *         schema:
+ *           type: string
+ *         description: Alias of `venue`.
  *       - in: query
  *         name: venue_id
  *         schema:
@@ -256,13 +271,13 @@ const validatePublicationsQuery = [
  *         schema:
  *           type: integer
  *           minimum: 1
- *         description: Restrict the result set to siblings of a single work
+ *         description: Restrict the result set to the publications of a single work
  *       - in: query
  *         name: doi
  *         schema:
  *           type: string
  *           maxLength: 255
- *         description: Exact DOI lookup (uses publications.doi unique key)
+ *         description: Exact DOI lookup on the unique `publications.doi`; `https://doi.org/` / `doi:` prefixes are stripped and case is ignored
  *       - in: query
  *         name: author
  *         schema:
@@ -281,7 +296,8 @@ const validatePublicationsQuery = [
  *           type: integer
  *           minimum: 0
  *         description: >-
- *           Inclusive lower bound on the indexed `p.citation_count`. Alias `citation_count_min`. Returns an exact total.
+ *           Inclusive lower bound on the indexed `p.citation_count` (an exact mirror of the parent work's
+ *           `works.citation_count`). Alias `citation_count_min`.
  *         example: 5
  *       - in: query
  *         name: cited_by_max
@@ -297,8 +313,9 @@ const validatePublicationsQuery = [
  *         description: >-
  *           Primary sort key (aliases: `citation_count`=`cited_by_count`, `reference_count`=`references_count`,
  *           `year`=`publication_year`, `publication_id`=`id`; camelCase `sortBy` is also accepted).
- *           `cited_by_count`/`references_count` sort the indexed `p.citation_count`/`p.reference_count`.
- *           `relevance` is accepted but is a no-op (falls back to `p.id DESC`). Default order is `p.id DESC`.
+ *           `cited_by_count`/`references_count` sort the indexed `p.citation_count`/`p.reference_count`
+ *           (ties on `p.id` in the same direction); `publication_year` sorts `p.year` then `p.id DESC`.
+ *           `relevance` is accepted but behaves like the default. Default order is `p.id DESC`.
  *         example: cited_by_count
  *       - in: query
  *         name: sort_order
@@ -311,10 +328,10 @@ const validatePublicationsQuery = [
  *       200:
  *         description: >-
  *           Publications retrieved. `meta.engine` is `"Manticore"` when a full-text term
- *           (`q`/`author`/`subject`) participates, else `"MariaDB"`; `meta.pagination_total_exact`
+ *           (`q`/`search`/`author`/`subject`) participates, else `"MariaDB"`; `meta.pagination_total_exact`
  *           gates the reliability of `pagination.total`; `meta.fulltext_truncated`/`meta.fulltext_work_cap`
- *           appear when the Manticore work-id cap is hit; `meta.page_degraded` appears if the id-selection
- *           budget fires.
+ *           appear when the Manticore work-id cap is hit; `meta.has_files_source` appears on the
+ *           files-index path; `meta.page_degraded` and `meta.note` appear if the id-selection budget fires.
  *         content:
  *           application/json:
  *             schema:
@@ -344,6 +361,11 @@ const validatePublicationsQuery = [
  *                           type: integer
  *                         page_degraded:
  *                           type: boolean
+ *                         note:
+ *                           type: string
+ *                         has_files_source:
+ *                           type: string
+ *                           enum: [files_index]
  *                         pagination_extras:
  *                           type: object
  *                           properties:
@@ -364,12 +386,15 @@ router.get('/', validatePublicationsQuery, publicationsController.getPublication
  *   get:
  *     summary: Get a publication by id
  *     description: |
- *       Returns a single publication identified by `publications.id`.
- *       The response carries a nested `work` block (parent work fields), the
- *       full identifier set from `publications`, embedded `files` joined live
- *       from the `files` base table, an array of `siblings` (other publications
- *       of the same work, capped at 50), and optional `citations` / `references`
- *       blocks hydrated from `work_references`.
+ *       Returns a single publication identified by `publications.id`: its own
+ *       `type`, the full identifier set from `publications`, `source_indexed_at`,
+ *       embedded `files` read live from the `files` base table (capped at 200),
+ *       a nested `work` block (parent work fields; `work.type` repeats this
+ *       publication's type), `reviewed_work_id` and `review_relations`, an
+ *       array of `siblings` (the other publications of the same work, each with
+ *       its own `type`, capped at 50), and the parent work's `citations` /
+ *       `references` blocks hydrated from `work_references`. The DOI resolver
+ *       (`GET /{doi}`) returns the same payload.
  *     tags: [Publications]
  *     parameters:
  *       - in: path
@@ -379,15 +404,16 @@ router.get('/', validatePublicationsQuery, publicationsController.getPublication
  *           type: integer
  *           minimum: 1
  *         description: publications.id
- *         example: 123456
+ *         example: 1127609346
  *       - in: query
  *         name: include_citations
  *         schema:
  *           type: boolean
  *           default: true
  *         description: >-
- *           Include the incoming-citations array hydrated from `work_references`. When `false`,
- *           `data.citations` is `null` (not an empty array).
+ *           Include the incoming-citations array hydrated from `work_references`. `false`, `0` or `no`
+ *           disable it, and `data.citations` is then `null` (not an empty array). Independent of
+ *           `include_references`.
  *       - in: query
  *         name: include_references
  *         schema:
@@ -395,7 +421,7 @@ router.get('/', validatePublicationsQuery, publicationsController.getPublication
  *           default: true
  *         description: >-
  *           Include the `references` block (`{resolved[], unresolved[]}`) hydrated from `work_references`.
- *           When `false`, `data.references` is `null`.
+ *           `false`, `0` or `no` disable it, and `data.references` is then `null`.
  *     responses:
  *       200:
  *         description: Publication retrieved successfully
@@ -416,6 +442,8 @@ router.get('/', validatePublicationsQuery, publicationsController.getPublication
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/:id', validatePublicationId, publicationsController.getPublication);
 

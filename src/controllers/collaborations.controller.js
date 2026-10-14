@@ -57,10 +57,7 @@ class CollaborationsController {
       });
     } catch (error) {
       logger.error('Error in person collaborators controller:', error);
-      return res.fail('Failed to retrieve person collaborators', {
-        statusCode: 500,
-        code: ERROR_CODES.INTERNAL
-      });
+      return res.error(error, { message: 'Failed to retrieve person collaborators' });
     }
   }
 
@@ -103,10 +100,7 @@ class CollaborationsController {
       });
     } catch (error) {
       logger.error('Error in collaboration network controller:', error);
-      return res.fail('Failed to retrieve collaboration network', {
-        statusCode: 500,
-        code: ERROR_CODES.INTERNAL
-      });
+      return res.error(error, { message: 'Failed to retrieve collaboration network' });
     }
   }
 
@@ -150,10 +144,7 @@ class CollaborationsController {
       });
     } catch (error) {
       logger.error('Error in top collaborations controller:', error);
-      return res.fail('Failed to retrieve top collaborations', {
-        statusCode: 500,
-        code: ERROR_CODES.INTERNAL
-      });
+      return res.error(error, { message: 'Failed to retrieve top collaborations' });
     }
   }
 }

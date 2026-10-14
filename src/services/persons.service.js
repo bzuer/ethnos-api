@@ -695,9 +695,12 @@ class PersonsService {
     const result = {
       data: formattedResults,
       pagination: createPagination(page, limit, mres.total),
+      meta: { pagination_total_exact: mres.exact },
       performance: { engine: 'Manticore', query_type: 'search' }
     };
-    try { await cacheService.set(cacheKey, result, 3600); } catch (_) {}
+    if (mres.exact) {
+      try { await cacheService.set(cacheKey, result, 3600); } catch (_) {}
+    }
     logger.info(`Persons search "${trimmed}" [Manticore]: ${formattedResults.length} of ${mres.total} results`);
     return result;
   }

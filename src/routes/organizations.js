@@ -60,15 +60,14 @@ const validateOrganizationWorksQuery = [
  *   get:
  *     summary: List academic institutions and organizations
  *     description: >-
- *       Paginated catalogue of organizations (universities, institutes, publishers, funders, companies)
- *       backed by operator-maintained metric columns. Supports full-text + acronym search, faceted
- *       filtering (type, OpenAlex type, country, status, identifier presence, metric bounds) and rich
- *       sorting. Browse is activity-gated on `publication_count > 0`; in the current corpus every
- *       publication-bearing organization is `type=INSTITUTE`, so `type=UNIVERSITY|PUBLISHER|FUNDER|COMPANY|OTHER`
- *       return an empty page here. FUNDER and PUBLISHER organizations exist but carry 0 publications and are
- *       reachable only by direct id (`/institutions/{id}`, and for funders `/institutions/{id}/funded-works`).
- *       `meta.engine` is `MariaDB` on browse and `MariaDB-FULLTEXT` on a search; `meta.sort` echoes the
- *       effective `{by,order}` and `meta.pagination_total_exact` is `true` (count runs under a 2.5s budget).
+ *       Paginated catalogue of organizations backed by operator-maintained metric columns, presented
+ *       verbatim. Supports name + acronym search, faceted filtering (type, OpenAlex type, country, status,
+ *       identifier presence, metric bounds) and sorting. Browse and search are activity-gated on
+ *       `publication_count > 0`, so only INSTITUTE and UNIVERSITY organizations are listed; FUNDER and
+ *       PUBLISHER organizations carry 0 publications and are reachable only by id (`/institutions/{id}`,
+ *       and for funders `/institutions/{id}/funded-works`). `meta.engine` is `MariaDB` on browse and
+ *       `MariaDB-FULLTEXT` on a search; `meta.sort` echoes the effective `{by,order}`. The count runs under a
+ *       2.5 s budget; if it fires, `pagination.total` is an estimate and `meta.pagination_total_exact` is `false`.
  *     tags: [Institutions]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -77,7 +76,11 @@ const validateOrganizationWorksQuery = [
  *       - in: query
  *         name: search
  *         schema: { type: string, minLength: 2, maxLength: 255 }
- *         description: Free-text query over institution name (MariaDB FULLTEXT `ft_organizations_name`) and acronyms (exact match against the acronyms JSON array, e.g. `USP`). Min 2, max 255 chars.
+ *         description: >-
+ *           Name or acronym search. A row matches when its name contains every token of 3+ characters as a word
+ *           prefix (MariaDB FULLTEXT `ft_organizations_name` in BOOLEAN MODE, `+token*`; stopwords such as `of`,
+ *           `the`, `de` are ignored) or when one of its acronyms equals the whole term, case-insensitively
+ *           (e.g. `USP`, `SamDU`). A term made only of short tokens or stopwords matches acronyms only. 2..255 chars.
  *         example: Universidade de São Paulo
  *       - in: query
  *         name: q
@@ -87,12 +90,12 @@ const validateOrganizationWorksQuery = [
  *         name: type
  *         schema: { type: string, enum: [UNIVERSITY, INSTITUTE, PUBLISHER, FUNDER, COMPANY, OTHER] }
  *         description: >-
- *           Filter by organization type. Because browse is activity-gated (`publication_count > 0`), only
- *           `INSTITUTE` returns rows here; the other values are documented for completeness but yield an empty page.
+ *           Filter by organization type (case-insensitive). Because the listing is activity-gated, only
+ *           `INSTITUTE` and `UNIVERSITY` return rows; the other values yield an empty page.
  *       - in: query
  *         name: openalex_type
  *         schema: { type: string, minLength: 2, maxLength: 30 }
- *         description: Exact match on the finer OpenAlex institution type (education, healthcare, government, nonprofit, archive, funder, company).
+ *         description: Exact match on the finer OpenAlex institution type (education, healthcare, company, facility, government, nonprofit, archive, funder, other).
  *         example: education
  *       - in: query
  *         name: country
@@ -138,7 +141,10 @@ const validateOrganizationWorksQuery = [
  *       - in: query
  *         name: sort_by
  *         schema: { type: string, enum: [works_count, researchers_count, citations, cited_by_count, h_index, i10_index, name, id, created_at, updated_at, relevance], default: works_count }
- *         description: Sort key (`citations` == `cited_by_count`). `relevance` applies only with a search term and is the implicit default when searching. camelCase alias `sortBy` is also honored.
+ *         description: >-
+ *           Sort key (`citations` == `cited_by_count`, both on the stored `total_citations`). `relevance` applies only
+ *           with a search term and is the default when searching: exact acronym match first, then exact name match,
+ *           then `publication_count` DESC, then name relevance DESC, then id. camelCase alias `sortBy` is also honored.
  *       - in: query
  *         name: sort_order
  *         schema: { type: string, enum: [ASC, DESC] }
@@ -164,6 +170,7 @@ const validateOrganizationWorksQuery = [
  *       400: { $ref: '#/components/responses/BadRequest' }
  *       429: { $ref: '#/components/responses/RateLimitExceeded' }
  *       500: { $ref: '#/components/responses/InternalError' }
+ *       503: { $ref: '#/components/responses/RequestTimeout' }
  */
 router.get('/', validateOrganizationsQuery, organizationsController.getOrganizations);
 
@@ -173,13 +180,13 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
  *   get:
  *     summary: Get an institution by ID
  *     description: >-
- *       Full institution profile: identifiers, names (acronyms + alternative names), operator-maintained
- *       metrics (works, researchers, citations, h-index, i10-index, 2-yr mean citedness),
- *       corpus production summary (by work type + yearly trend), affiliated top authors, recent works,
- *       organizational hierarchy (parents/children/related), and funding role. Resolves any existing
- *       organization regardless of activity (0-publication FUNDER/PUBLISHER orgs resolve by id); an id that
- *       does not exist returns 404. Each include flag, when set `false`, emits its block EMPTY (arrays `[]`,
- *       relationship counts `0`) rather than omitting it.
+ *       Full institution profile: identifiers, names (acronyms + alternative names), stored metrics (works,
+ *       researchers, citations, h-index, i10-index, 2-yr mean citedness) plus the derived corpus year range,
+ *       production summary (by work type + yearly trend), top affiliated authors, recent works, organizational
+ *       hierarchy (parents/children/related) and funding role (`funded_works_count` = distinct funded works).
+ *       Resolves any existing organization regardless of activity (0-publication FUNDER/PUBLISHER organizations
+ *       resolve by id); an id that does not exist returns 404. Include flags accept `true|false|1|0` (anything
+ *       else is a 400); a flag set to false emits its block empty (arrays `[]`, relationship counts `0`).
  *     tags: [Institutions]
  *     parameters:
  *       - in: path
@@ -189,19 +196,19 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
  *         description: Unique identifier of the organization.
  *       - in: query
  *         name: include_production
- *         schema: { type: boolean, default: true }
+ *         schema: { type: string, enum: ['true', 'false', '1', '0'], default: 'true' }
  *         description: Embed production_summary (by_work_type + publication_trend).
  *       - in: query
  *         name: include_authors
- *         schema: { type: boolean, default: true }
+ *         schema: { type: string, enum: ['true', 'false', '1', '0'], default: 'true' }
  *         description: Embed top_authors.
  *       - in: query
  *         name: include_works
- *         schema: { type: boolean, default: true }
+ *         schema: { type: string, enum: ['true', 'false', '1', '0'], default: 'true' }
  *         description: Embed recent_works.
  *       - in: query
  *         name: include_relationships
- *         schema: { type: boolean, default: true }
+ *         schema: { type: string, enum: ['true', 'false', '1', '0'], default: 'true' }
  *         description: Embed the parents/children/related hierarchy.
  *     responses:
  *       200:
@@ -219,6 +226,7 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
  *       404: { $ref: '#/components/responses/NotFound' }
  *       429: { $ref: '#/components/responses/RateLimitExceeded' }
  *       500: { $ref: '#/components/responses/InternalError' }
+ *       503: { $ref: '#/components/responses/RequestTimeout' }
  */
 router.get('/:id', [
   ...validateOrganizationId,
@@ -235,10 +243,13 @@ router.get('/:id', [
  *     summary: List works affiliated with an institution
  *     description: >-
  *       Works whose authorships carry this organization as an affiliation (`meta.match_mode = "affiliation"`).
- *       Supports work-type, language, publication-year, open-access, peer-review and citation-bound filters
- *       plus the standard work sort contract (cited_by_count, references_count, publication_year, id). Each
- *       row carries a `grant_number` key that is `null` on this affiliation surface (it is populated on
- *       `/institutions/{id}/funded-works`). 404 when the organization id does not exist.
+ *       The publication filters (`type`, `year_from`, `year_to`, `open_access`, `peer_reviewed`) keep a work
+ *       when at least one of its publications satisfies all of them, and the row then shows the latest such
+ *       publication; without them the row shows the work's latest publication. `language` and the citation
+ *       bounds filter on `works`. Standard work sort contract (cited_by_count, references_count,
+ *       publication_year, id). Rows carry `grant_number` and `grant_numbers` keys that are `null` on this
+ *       affiliation surface (populated on `/institutions/{id}/funded-works`). 404 when the organization id
+ *       does not exist.
  *     tags: [Institutions]
  *     parameters:
  *       - in: path
@@ -251,16 +262,16 @@ router.get('/:id', [
  *       - $ref: '#/components/parameters/offsetParam'
  *       - in: query
  *         name: type
- *         schema: { type: string }
- *         description: Filter by work type (e.g. ARTICLE, BOOK, CHAPTER, THESIS).
+ *         schema: { type: string, enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER] }
+ *         description: Publication type (case-insensitive); any other value is a 400.
  *       - in: query
  *         name: year_from
- *         schema: { type: integer }
- *         description: Inclusive lower bound on publication year.
+ *         schema: { type: integer, minimum: 1500 }
+ *         description: Inclusive lower bound on the year of a matching publication.
  *       - in: query
  *         name: year_to
- *         schema: { type: integer }
- *         description: Inclusive upper bound on publication year.
+ *         schema: { type: integer, minimum: 1500 }
+ *         description: Inclusive upper bound on the year of a matching publication.
  *       - in: query
  *         name: language
  *         schema: { type: string }
@@ -268,19 +279,19 @@ router.get('/:id', [
  *       - in: query
  *         name: open_access
  *         schema: { type: boolean }
- *         description: Filter by open-access status of the latest publication.
+ *         description: Keep works with a publication of this open-access status.
  *       - in: query
  *         name: peer_reviewed
  *         schema: { type: boolean }
- *         description: Filter by peer-review status of the latest publication.
+ *         description: Keep works with a publication of this peer-review status.
  *       - in: query
  *         name: cited_by_min
  *         schema: { type: integer, minimum: 0 }
- *         description: Inclusive lower bound on the work citation count.
+ *         description: Inclusive lower bound on `works.citation_count`. Alias `citation_count_min`.
  *       - in: query
  *         name: cited_by_max
  *         schema: { type: integer, minimum: 0 }
- *         description: Inclusive upper bound on the work citation count.
+ *         description: Inclusive upper bound on `works.citation_count`. Alias `citation_count_max`.
  *       - in: query
  *         name: sort_by
  *         schema: { type: string, enum: [cited_by_count, references_count, publication_year, id], default: publication_year }
@@ -311,6 +322,7 @@ router.get('/:id', [
  *       404: { $ref: '#/components/responses/NotFound' }
  *       429: { $ref: '#/components/responses/RateLimitExceeded' }
  *       500: { $ref: '#/components/responses/InternalError' }
+ *       503: { $ref: '#/components/responses/RequestTimeout' }
  */
 router.get('/:id/works', validateOrganizationId, validateOrganizationWorksQuery, organizationsController.getOrganizationWorks);
 
@@ -321,11 +333,12 @@ router.get('/:id/works', validateOrganizationId, validateOrganizationWorksQuery,
  *     summary: List works funded by an institution
  *     description: >-
  *       Works financed by this organization acting as a funder (`funding.funder_id`; `meta.match_mode = "funder"`).
- *       Each row carries the associated `grant_number` when available. This surface is meaningful only for
- *       FUNDER organizations (e.g. id `694519` National Natural Science Foundation of China, `694484` NSF,
- *       `2741433` NIH); those funders carry 0 publications and so are absent from `/institutions` browse —
- *       reach them by direct id. INSTITUTE ids typically return an empty page. Accepts the same filters and
- *       sort contract as `/institutions/{id}/works`. 404 when the organization id does not exist.
+ *       Each row carries `grant_number` (the lowest grant number recorded for this funder on the work, or `null`)
+ *       and `grant_numbers` (every distinct grant number, sorted; `[]` when none is recorded). Meaningful for
+ *       FUNDER organizations (e.g. `694519` National Natural Science Foundation of China, `694484` NSF,
+ *       `2741433` NIH); funders carry 0 publications, so they are absent from `/institutions` and reached by id.
+ *       INSTITUTE ids typically return an empty page. Same filters, filter semantics and sort contract as
+ *       `/institutions/{id}/works`. 404 when the organization id does not exist.
  *     tags: [Institutions]
  *     parameters:
  *       - in: path
@@ -338,28 +351,36 @@ router.get('/:id/works', validateOrganizationId, validateOrganizationWorksQuery,
  *       - $ref: '#/components/parameters/offsetParam'
  *       - in: query
  *         name: type
- *         schema: { type: string }
+ *         schema: { type: string, enum: [ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER] }
+ *         description: Publication type (case-insensitive); any other value is a 400.
  *       - in: query
  *         name: year_from
- *         schema: { type: integer }
+ *         schema: { type: integer, minimum: 1500 }
+ *         description: Inclusive lower bound on the year of a matching publication.
  *       - in: query
  *         name: year_to
- *         schema: { type: integer }
+ *         schema: { type: integer, minimum: 1500 }
+ *         description: Inclusive upper bound on the year of a matching publication.
  *       - in: query
  *         name: language
  *         schema: { type: string }
+ *         description: Filter by work language.
  *       - in: query
  *         name: open_access
  *         schema: { type: boolean }
+ *         description: Keep works with a publication of this open-access status.
  *       - in: query
  *         name: peer_reviewed
  *         schema: { type: boolean }
+ *         description: Keep works with a publication of this peer-review status.
  *       - in: query
  *         name: cited_by_min
  *         schema: { type: integer, minimum: 0 }
+ *         description: Inclusive lower bound on `works.citation_count`. Alias `citation_count_min`.
  *       - in: query
  *         name: cited_by_max
  *         schema: { type: integer, minimum: 0 }
+ *         description: Inclusive upper bound on `works.citation_count`. Alias `citation_count_max`.
  *       - in: query
  *         name: sort_by
  *         schema: { type: string, enum: [cited_by_count, references_count, publication_year, id], default: publication_year }
@@ -370,7 +391,7 @@ router.get('/:id/works', validateOrganizationId, validateOrganizationWorksQuery,
  *         description: Sort direction. camelCase alias `sortOrder` also honored.
  *     responses:
  *       200:
- *         description: Paginated funded works. `meta.match_mode` is `funder`; each row's `grant_number` is populated where recorded.
+ *         description: Paginated funded works. `meta.match_mode` is `funder`; each row carries `grant_number` and `grant_numbers`.
  *         content:
  *           application/json:
  *             schema:
@@ -390,6 +411,7 @@ router.get('/:id/works', validateOrganizationId, validateOrganizationWorksQuery,
  *       404: { $ref: '#/components/responses/NotFound' }
  *       429: { $ref: '#/components/responses/RateLimitExceeded' }
  *       500: { $ref: '#/components/responses/InternalError' }
+ *       503: { $ref: '#/components/responses/RequestTimeout' }
  */
 router.get('/:id/funded-works', validateOrganizationId, validateOrganizationWorksQuery, organizationsController.getOrganizationFundedWorks);
 

@@ -169,7 +169,7 @@ router.get('/audit', requireAccessKey, (req, res) => {
  * /security/stats:
  *   get:
  *     summary: Get rate-limit configuration and block statistics
- *     description: Returns the effective rate-limiter configuration, the (always-empty) in-memory blocked-IP list, and block/violation counters. Rate limiting uses in-memory rolling windows, so no per-IP violation or block tracking is persisted. Requires internal access key.
+ *     description: Returns the effective rate-limiter configuration and the clients currently over the per-IP limit (with when they were limited and when their window resets). The rolling windows live in this process's memory and reset on restart. Requires internal access key.
  *     tags: [Security]
  *     security:
  *       - XAccessKey: []
@@ -225,7 +225,7 @@ router.get('/stats', requireAccessKey, (req, res) => {
  * /security/unblock/{ip}:
  *   post:
  *     summary: Unblock an IP address (admin function)
- *     description: Removes an IP from the in-memory blocked list. Because rate limiting uses in-memory rolling windows with no persistent block list, no IP is ever actually blocked, so a valid IP always returns 200 with unblocked=false. Requires internal access key.
+ *     description: Resets the rate-limit and slow-down counters of a client address, lifting a current limit immediately. unblocked is true when the client was over the limit at call time; a valid address that was not limited still returns 200 with unblocked=false. Requires internal access key.
  *     tags: [Security]
  *     security:
  *       - XAccessKey: []
@@ -238,7 +238,7 @@ router.get('/stats', requireAccessKey, (req, res) => {
  *         description: IPv4 or IPv6 address to unblock (validated with isIP).
  *     responses:
  *       200:
- *         description: Unblock result (no-op unless the IP was in the in-memory block list)
+ *         description: Unblock result (the counters are reset either way)
  *         content:
  *           application/json:
  *             schema:

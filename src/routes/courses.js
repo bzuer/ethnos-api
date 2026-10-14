@@ -12,9 +12,10 @@ const { query, param } = require('express-validator');
  *     description: >-
  *       Paginated list of courses with instructor/bibliography rollup counts and a preview of up to
  *       three instructor names. Sort is fixed (year DESC, semester, name) and not client-controllable.
- *       Default page size is 10; out-of-range limit values are silently clamped to 100.
- *       Note: list rows carry only instructor_count and bibliography_count under metrics (subject_count
- *       is computed on the detail endpoint only). meta.performance.query_time_ms is a placeholder and is always 0.
+ *       Default page size is 10; an explicit offset is served as given. Every query parameter is
+ *       validated and an out-of-range value returns 400 VALIDATION_ERROR. List rows carry only
+ *       instructor_count and bibliography_count under metrics (subject_count is detail-only).
+ *       Cached for 30 minutes.
  *     tags: [Courses]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -24,22 +25,28 @@ const { query, param } = require('express-validator');
  *         name: search
  *         schema:
  *           type: string
+ *           minLength: 1
+ *           maxLength: 100
  *         description: Case-insensitive LIKE filter over course name or code
  *       - in: query
  *         name: program_id
  *         schema:
  *           type: integer
+ *           minimum: 1
  *         description: Exact match on program_id
  *       - in: query
  *         name: year
  *         schema:
  *           type: integer
- *         description: Exact match on academic year
+ *           minimum: 1000
+ *         description: Exact match on academic year (1000 up to next year)
  *       - in: query
  *         name: semester
  *         schema:
  *           type: string
- *         description: Exact match on semester label (e.g. "1")
+ *           minLength: 1
+ *           maxLength: 20
+ *         description: Exact match on semester label (1, 2, SUMMER, WINTER, YEAR_LONG)
  *     responses:
  *       200:
  *         description: Paginated list of courses
@@ -58,6 +65,8 @@ const { query, param } = require('express-validator');
  *                       $ref: '#/components/schemas/PaginationMeta'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
@@ -105,6 +114,53 @@ const validateCourseId = [
     .toInt()
 ];
 
+const validateNestedPagination = [
+  query('page')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1 })
+    .withMessage('Page must be a positive integer'),
+  query('limit')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1, max: 100 })
+    .withMessage('Limit must be between 1 and 100'),
+  query('offset')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('Offset must be non-negative')
+];
+
+const upperCaseEnum = (field, values) => query(field)
+  .optional({ values: 'falsy' })
+  .customSanitizer((value) => String(value).trim().toUpperCase())
+  .isIn(values)
+  .withMessage(`${field} must be one of ${values.join(', ')}`);
+
+const validateCourseInstructors = [
+  ...validateCourseId,
+  ...validateNestedPagination,
+  upperCaseEnum('role', ['PROFESSOR', 'ASSISTANT', 'TA', 'GUEST'])
+];
+
+const validateCourseBibliography = [
+  ...validateCourseId,
+  ...validateNestedPagination,
+  upperCaseEnum('reading_type', ['REQUIRED', 'RECOMMENDED', 'SUPPLEMENTARY']),
+  query('week_number')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0, max: 1000 })
+    .withMessage('week_number must be a non-negative integer')
+];
+
+const validateCourseSubjects = [
+  ...validateCourseId,
+  ...validateNestedPagination,
+  query('vocabulary')
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage('vocabulary must be between 1 and 50 characters')
+];
+
 const validateCourseDetail = [
   ...validateCourseId,
   ...['bibliography_limit', 'instructors_limit', 'subjects_limit'].map((field) => query(field)
@@ -127,6 +183,7 @@ router.get('/', validateCoursesList, coursesController.getCourses);
  *     description: >-
  *       Aggregate course counts plus year and semester distributions. Note avg_credits is returned as a
  *       DECIMAL string (e.g. "1.0000"), not a JSON number, and is null when no credited courses exist.
+ *       Cached for 1 hour.
  *     tags: [Courses]
  *     responses:
  *       200:
@@ -156,8 +213,9 @@ router.get('/statistics', coursesController.getCoursesStatistics);
  *     summary: Get course by ID
  *     description: >-
  *       Full course detail: base fields plus embedded bibliography, instructors and derived subjects,
- *       each with per-facet statistics. Nested lists may be legitimately empty. Returns 404
- *       COURSE_NOT_FOUND when the id does not exist.
+ *       each with per-facet statistics. Nested lists may be legitimately empty. Include flags accept
+ *       true/false/1/0 and the *_limit parameters accept 1..100; any other value returns 400
+ *       VALIDATION_ERROR. Returns 404 COURSE_NOT_FOUND when the id does not exist. Cached for 30 minutes.
  *     tags: [Courses]
  *     parameters:
  *       - in: path
@@ -165,42 +223,52 @@ router.get('/statistics', coursesController.getCoursesStatistics);
  *         required: true
  *         schema:
  *           type: integer
+ *           minimum: 1
  *       - in: query
  *         name: include_bibliography
  *         schema:
- *           type: boolean
- *           default: true
- *         description: Set false to omit the bibliography array and bibliography_statistics
+ *           type: string
+ *           enum: ['true', 'false', '1', '0']
+ *           default: 'true'
+ *         description: false or 0 omits the bibliography array and bibliography_statistics
  *       - in: query
  *         name: include_instructors
  *         schema:
- *           type: boolean
- *           default: true
- *         description: Set false to omit the instructors array and instructor_statistics
+ *           type: string
+ *           enum: ['true', 'false', '1', '0']
+ *           default: 'true'
+ *         description: false or 0 omits the instructors array and instructor_statistics
  *       - in: query
  *         name: include_subjects
  *         schema:
- *           type: boolean
- *           default: true
- *         description: Set false to omit the subjects array and subject_statistics
+ *           type: string
+ *           enum: ['true', 'false', '1', '0']
+ *           default: 'true'
+ *         description: false or 0 omits the subjects array and subject_statistics
  *       - in: query
  *         name: bibliography_limit
  *         schema:
  *           type: integer
+ *           minimum: 1
+ *           maximum: 100
  *           default: 50
- *         description: Cap on embedded bibliography rows
+ *         description: Cap on embedded bibliography rows (echoed in meta.limits.bibliography)
  *       - in: query
  *         name: instructors_limit
  *         schema:
  *           type: integer
+ *           minimum: 1
+ *           maximum: 100
  *           default: 20
  *         description: Cap on embedded instructor rows (echoed in meta.limits.instructors)
  *       - in: query
  *         name: subjects_limit
  *         schema:
  *           type: integer
+ *           minimum: 1
+ *           maximum: 100
  *           default: 30
- *         description: Cap on embedded subject rows
+ *         description: Cap on embedded subject rows (echoed in meta.limits.subjects)
  *     responses:
  *       200:
  *         description: Full course detail
@@ -215,6 +283,8 @@ router.get('/statistics', coursesController.getCoursesStatistics);
  *                       $ref: '#/components/schemas/CourseDetail'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -230,8 +300,9 @@ router.get('/:id', validateCourseDetail, coursesController.getCourseById);
  *   get:
  *     summary: List course instructors
  *     description: >-
- *       Paginated instructors for a course. Sort is fixed (role, preferred_name); default page size is 10.
- *       Returns 404 COURSE_NOT_FOUND when the course id does not exist.
+ *       Paginated instructors for a course. Sort is fixed (role, preferred_name); default page size is 10
+ *       (a limit above 100 is clamped to 100). Returns 404 COURSE_NOT_FOUND when the course id does not
+ *       exist. Cached for 30 minutes.
  *     tags: [Courses]
  *     parameters:
  *       - in: path
@@ -246,7 +317,8 @@ router.get('/:id', validateCourseDetail, coursesController.getCourseById);
  *         name: role
  *         schema:
  *           type: string
- *         description: Exact match on instructor role (e.g. PROFESSOR)
+ *           enum: [PROFESSOR, ASSISTANT, TA, GUEST]
+ *         description: Exact, case-insensitive match on the instructor role
  *     responses:
  *       200:
  *         description: Paginated list of course instructors
@@ -265,6 +337,8 @@ router.get('/:id', validateCourseDetail, coursesController.getCourseById);
  *                       $ref: '#/components/schemas/PaginationMeta'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
@@ -273,7 +347,7 @@ router.get('/:id', validateCourseDetail, coursesController.getCourseById);
  *         $ref: '#/components/responses/InternalError'
  */
 
-router.get('/:id/instructors', validateCourseId, coursesController.getCourseInstructors);
+router.get('/:id/instructors', validateCourseInstructors, coursesController.getCourseInstructors);
 
 /**
  * @swagger
@@ -281,9 +355,11 @@ router.get('/:id/instructors', validateCourseId, coursesController.getCourseInst
  *   get:
  *     summary: List course bibliography entries
  *     description: >-
- *       Paginated bibliography (reading list) for a course, each row carrying an author preview.
- *       Sort is fixed (week_number, reading_type, title); default page size is 10. No existence guard:
- *       an unknown course id returns HTTP 200 with an empty page (does not 404).
+ *       Paginated bibliography (reading list) for a course. Each row carries the work's latest
+ *       publication (highest publications.id) and every contributor name (authors_preview, not capped).
+ *       Sort is fixed (week_number, reading_type, title); default page size is 10 (a limit above 100 is
+ *       clamped to 100). No existence guard: an unknown course id returns HTTP 200 with an empty page.
+ *       Cached for 30 minutes.
  *     tags: [Courses]
  *     parameters:
  *       - in: path
@@ -298,8 +374,8 @@ router.get('/:id/instructors', validateCourseId, coursesController.getCourseInst
  *         name: reading_type
  *         schema:
  *           type: string
- *           enum: [REQUIRED, RECOMMENDED, SUPPLEMENTARY, OPTIONAL]
- *         description: Exact match on reading type
+ *           enum: [REQUIRED, RECOMMENDED, SUPPLEMENTARY]
+ *         description: Exact, case-insensitive match on reading type
  *       - in: query
  *         name: week_number
  *         schema:
@@ -323,12 +399,14 @@ router.get('/:id/instructors', validateCourseId, coursesController.getCourseInst
  *                       $ref: '#/components/schemas/PaginationMeta'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/:id/bibliographies', validateCourseId, coursesController.getCourseBibliography);
+router.get('/:id/bibliographies', validateCourseBibliography, coursesController.getCourseBibliography);
 
 /**
  * @swagger
@@ -337,8 +415,8 @@ router.get('/:id/bibliographies', validateCourseId, coursesController.getCourseB
  *     summary: List course subjects
  *     description: >-
  *       Subjects derived from the course's bibliography works (course_bibliography -> work_subjects -> subjects).
- *       Sort is fixed (work_count DESC, term); default page size is 10. No existence guard: an unknown course
- *       id returns HTTP 200 with an empty page (does not 404).
+ *       Sort is fixed (work_count DESC, term); default page size is 10 (a limit above 100 is clamped to 100).
+ *       No existence guard: an unknown course id returns HTTP 200 with an empty page. Cached for 30 minutes.
  *     tags: [Courses]
  *     parameters:
  *       - in: path
@@ -372,11 +450,13 @@ router.get('/:id/bibliographies', validateCourseId, coursesController.getCourseB
  *                       $ref: '#/components/schemas/PaginationMeta'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/:id/subjects', validateCourseId, coursesController.getCourseSubjects);
+router.get('/:id/subjects', validateCourseSubjects, coursesController.getCourseSubjects);
 
 module.exports = router;

@@ -12,7 +12,7 @@ class CollaborationsService {
     const { page = 1, limit = 20, min_collaborations = 2, sort_by = 'collaboration_count' } = filters;
     const offset = Number.isFinite(parseInt(filters.offset, 10)) ? Math.max(0, parseInt(filters.offset, 10)) : (page - 1) * limit;
     
-    const cacheKey = `collaborators:v2:${personId}:${JSON.stringify(filters)}`;
+    const cacheKey = `collaborators:v3:${personId}:${JSON.stringify(filters)}`;
     
     try {
       const [exists] = await sequelize.query(
@@ -40,7 +40,7 @@ class CollaborationsService {
       };
       const orderByClause = sortColumnMap[sort_by] || sortColumnMap.collaboration_count;
 
-      const collaborators = await sequelize.query(withTimeout(`
+      const fetchCollaborators = (pageLimit, pageOffset) => sequelize.query(withTimeout(`
         SELECT
           p2.id AS collaborator_id,
           p2.preferred_name AS collaborator_name,
@@ -65,16 +65,20 @@ class CollaborationsService {
         replacements: {
           id: parseInt(personId),
           min: parseInt(min_collaborations),
-          limit: parseInt(limit),
-          offset: parseInt(offset)
+          limit: pageLimit,
+          offset: pageOffset
         },
         type: sequelize.QueryTypes.SELECT
       });
 
+      const pageOffset = parseInt(offset, 10) || 0;
+      const collaborators = await fetchCollaborators(parseInt(limit, 10), pageOffset);
       const collaboratorsList = Array.isArray(collaborators) ? collaborators : [];
-      const totalCount = collaboratorsList.length > 0
-        ? parseInt(collaboratorsList[0].total_collaborators, 10)
-        : parseInt(offset, 10) || 0;
+      let totalCount = collaboratorsList.length > 0 ? parseInt(collaboratorsList[0].total_collaborators, 10) : 0;
+      if (collaboratorsList.length === 0 && pageOffset > 0) {
+        const [probe] = await fetchCollaborators(1, 0);
+        totalCount = probe ? parseInt(probe.total_collaborators, 10) : 0;
+      }
       const formattedCollaborators = collaboratorsList.map(formatCollaborator);
 
       const result = {
@@ -244,6 +248,11 @@ class CollaborationsService {
       return { pairs: [], total: 0, degraded: true };
     }
 
+    if (pairs.length === 0 && offset > 0) {
+      const probe = await this.rankCollaborationPairs({ minCollaborations, yearFrom, yearTo, limit: 1, offset: 0 });
+      return { pairs: [], total: probe.total, degraded: probe.degraded };
+    }
+
     const personIds = Array.from(new Set(pairs.flatMap((p) => [p.person1_id, p.person2_id])));
     const nameMap = new Map();
     if (personIds.length > 0) {
@@ -260,7 +269,7 @@ class CollaborationsService {
         person1_name: nameMap.get(pair.person1_id) || null,
         person2_name: nameMap.get(pair.person2_id) || null
       })),
-      total: pairs.length > 0 ? parseInt(pairs[0].total_pairs, 10) : (offset > 0 ? null : 0),
+      total: pairs.length > 0 ? parseInt(pairs[0].total_pairs, 10) : 0,
       degraded: false
     };
   }
@@ -271,14 +280,14 @@ class CollaborationsService {
     const minCollaborations = parseInt(filters.min_collaborations, 10) || 5;
     const yearFrom = filters.year_from ? parseInt(filters.year_from, 10) : null;
     const yearTo = filters.year_to ? parseInt(filters.year_to, 10) : null;
-    const cacheKey = `top_collaborations:v3:${JSON.stringify({ page, limit, offset, minCollaborations, yearFrom, yearTo })}`;
+    const cacheKey = `top_collaborations:v4:${JSON.stringify({ page, limit, offset, minCollaborations, yearFrom, yearTo })}`;
 
     const cached = await cacheService.get(cacheKey);
     if (cached) return cached;
 
     const ranked = await this.rankCollaborationPairs({ minCollaborations, yearFrom, yearTo, limit, offset });
     const formattedPairs = ranked.pairs.map((pair, i) => formatTopCollaboration(pair, offset + i + 1));
-    const total = ranked.total ?? offset;
+    const total = ranked.total;
 
     const result = {
       top_collaborations: formattedPairs,

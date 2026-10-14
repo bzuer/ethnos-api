@@ -10,7 +10,7 @@ module.exports = {
       "publication_id": {
         "type": "integer",
         "nullable": true,
-        "description": "Id of the displayed (latest matching) publication; navigate to /publications/{publication_id}."
+        "description": "Latest publication matching the filters (highest id among the matching ones; without publication filters, the latest publication)."
       },
       "publications_count": {
         "type": "integer",
@@ -130,7 +130,7 @@ module.exports = {
       },
       "data_source": {
         "type": "string",
-        "description": "'full_api' (MariaDB) or 'search' (Manticore)."
+        "description": "'search' when the page came from the Manticore full-text path; 'full_api' when it came from the MariaDB browse (including filter-only /search/works)."
       },
       "search_engine": {
         "type": "string",
@@ -152,7 +152,7 @@ module.exports = {
       "relevance": {
         "type": "number",
         "nullable": true,
-        "description": "Relevance score; present only on /search/works and /search/advanced responses (currently always null even when sort_by=relevance)."
+        "description": "Present (always null, even with sort_by=relevance) on /search/works and the works block of /search/global; absent on /works and /search/advanced."
       }
     }
   },
@@ -250,7 +250,7 @@ module.exports = {
         "items": {
           "type": "string"
         },
-        "description": "Distinct languages across publications."
+        "description": "The work language as a one-element array (empty when unknown); publications carry no language."
       },
       "summary_updated_at": {
         "type": "string",
@@ -260,7 +260,8 @@ module.exports = {
       },
       "primary_publication_id": {
         "type": "integer",
-        "nullable": true
+        "nullable": true,
+        "description": "Primary publication. Picker: latest year, then has files, then highest id; can differ from a list card's publication_id."
       },
       "primary_publication": {
         "type": "object",
@@ -521,7 +522,8 @@ module.exports = {
                 }
               }
             },
-            "description": "Works citing this one (<=100)."
+            "description": "Works citing this one (<=100); null when include_citations is false/0/no.",
+            "nullable": true
           },
           "references": {
             "type": "array",
@@ -568,7 +570,8 @@ module.exports = {
                 }
               }
             },
-            "description": "Resolved outgoing references (<=100)."
+            "description": "Resolved outgoing references (<=100); null when include_references is false/0/no.",
+            "nullable": true
           },
           "unresolved_references": {
             "type": "array",
@@ -600,7 +603,9 @@ module.exports = {
                   "format": "date-time"
                 }
               }
-            }
+            },
+            "nullable": true,
+            "description": "null when include_references is false/0/no."
           },
           "unsolved": {
             "type": "array",
@@ -633,7 +638,8 @@ module.exports = {
                 }
               }
             },
-            "description": "Alias of unresolved_references."
+            "description": "Alias of unresolved_references; null when include_references is false/0/no.",
+            "nullable": true
           }
         }
       },
@@ -863,7 +869,13 @@ module.exports = {
       "verification": {
         "type": "string",
         "nullable": true,
-        "description": "Verification status, e.g. VERIFIED, PENDING."
+        "description": "Verification status, e.g. VERIFIED, PENDING.",
+        "enum": [
+          "PENDING",
+          "VERIFIED",
+          "FAILED",
+          "CORRUPTED"
+        ]
       },
       "download_count": {
         "type": "integer"
@@ -876,6 +888,25 @@ module.exports = {
     "properties": {
       "id": {
         "type": "integer"
+      },
+      "type": {
+        "type": "string",
+        "nullable": true,
+        "enum": [
+          "ARTICLE",
+          "BOOK",
+          "CHAPTER",
+          "THESIS",
+          "CONFERENCE",
+          "CONFERENCE_PAPER",
+          "REPORT",
+          "DATASET",
+          "PREPRINT",
+          "REVIEW",
+          "EDITORIAL",
+          "OTHER"
+        ],
+        "description": "This publication's type."
       },
       "identifiers": {
         "type": "object",
@@ -954,7 +985,8 @@ module.exports = {
       },
       "language": {
         "type": "string",
-        "nullable": true
+        "nullable": true,
+        "description": "The work's language (publications carry no language column)."
       },
       "open_access": {
         "type": "boolean"
@@ -970,9 +1002,6 @@ module.exports = {
       },
       "has_libgen_file": {
         "type": "boolean"
-      },
-      "download_count": {
-        "type": "integer"
       },
       "license_url": {
         "type": "string",
@@ -990,7 +1019,8 @@ module.exports = {
       "source_indexed_at": {
         "type": "string",
         "nullable": true,
-        "format": "date-time"
+        "format": "date-time",
+        "description": "When the source last indexed this record."
       },
       "venue": {
         "$ref": "#/components/schemas/WorkVenueRef"
@@ -1001,18 +1031,20 @@ module.exports = {
       "files": {
         "type": "array",
         "items": {
-          "$ref": "#/components/schemas/WorkFile"
+          "$ref": "#/components/schemas/PublicationFile"
         }
       },
       "created_at": {
         "type": "string",
         "nullable": true,
-        "format": "date-time"
+        "format": "date-time",
+        "description": "Publication record creation timestamp."
       },
       "updated_at": {
         "type": "string",
         "nullable": true,
-        "format": "date-time"
+        "format": "date-time",
+        "description": "Publication record update timestamp."
       },
       "_links": {
         "type": "object",
@@ -1072,7 +1104,12 @@ module.exports = {
       },
       "role": {
         "type": "string",
-        "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"],
+        "enum": [
+          "AUTHOR",
+          "EDITOR",
+          "TRANSLATOR",
+          "REVIEWER"
+        ],
         "description": "Authorship role, default AUTHOR."
       },
       "position": {
@@ -1314,14 +1351,24 @@ module.exports = {
       },
       "role": {
         "type": "string",
-        "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"],
+        "enum": [
+          "AUTHOR",
+          "EDITOR",
+          "TRANSLATOR",
+          "REVIEWER"
+        ],
         "description": "Highest-ranked role this person holds on the work."
       },
       "roles": {
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"]
+          "enum": [
+            "AUTHOR",
+            "EDITOR",
+            "TRANSLATOR",
+            "REVIEWER"
+          ]
         },
         "description": "Every role this person holds on the work."
       },
@@ -1360,7 +1407,12 @@ module.exports = {
         "type": "array",
         "items": {
           "type": "string",
-          "enum": ["AUTHOR", "EDITOR", "TRANSLATOR", "REVIEWER"]
+          "enum": [
+            "AUTHOR",
+            "EDITOR",
+            "TRANSLATOR",
+            "REVIEWER"
+          ]
         },
         "description": "Every role this person holds on the work, e.g. [\"AUTHOR\", \"EDITOR\"] for someone who both wrote in and edited the volume."
       },
@@ -1520,7 +1572,7 @@ module.exports = {
       },
       "authors_count": {
         "type": "integer",
-        "description": "Number of authorship rows on the citing work; 0 when none."
+        "description": "Distinct contributors (persons) of the citing work."
       },
       "citation": {
         "type": "object",
@@ -1856,10 +1908,9 @@ module.exports = {
             "enum": [
               "current",
               "recent",
-              "historical",
-              "unknown"
+              "historical"
             ],
-            "description": "current = latest citation is this year; recent = within last 2 years; historical = older; unknown = fallback path."
+            "description": "current = latest citation is this year; recent = within the last 2 years; historical = older."
           }
         }
       }
@@ -2176,7 +2227,13 @@ module.exports = {
       "verification": {
         "type": "string",
         "nullable": true,
-        "description": "Verification status, e.g. PENDING or VERIFIED."
+        "description": "Verification status, e.g. PENDING or VERIFIED.",
+        "enum": [
+          "PENDING",
+          "VERIFIED",
+          "FAILED",
+          "CORRUPTED"
+        ]
       },
       "download_count": {
         "type": "integer"
@@ -2303,7 +2360,7 @@ module.exports = {
       },
       "author_count": {
         "type": "integer",
-        "description": "Count of hydrated authorships."
+        "description": "Distinct people credited on the parent work across every role."
       },
       "citation_count": {
         "type": "integer",
@@ -2313,9 +2370,14 @@ module.exports = {
         "type": "integer",
         "description": "Parent work reference_count (default 0)."
       },
-      "download_count": {
-        "type": "integer",
-        "description": "Publication download_count (default 0)."
+      "_links": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "type": "string",
+            "example": "/publications/123"
+          }
+        }
       }
     }
   },
@@ -2340,7 +2402,8 @@ module.exports = {
       },
       "type": {
         "type": "string",
-        "nullable": true
+        "nullable": true,
+        "description": "This publication's type (same as the top-level type), not the work's primary type."
       },
       "language": {
         "type": "string",
@@ -2393,7 +2456,7 @@ module.exports = {
             },
             "vocabulary": {
               "type": "string",
-              "description": "Default KEYWORD."
+              "description": "Upper-cased vocabulary (KEYWORD, OPENALEX, ...)."
             },
             "lang": {
               "type": "string",
@@ -2410,6 +2473,25 @@ module.exports = {
     "properties": {
       "id": {
         "type": "integer"
+      },
+      "type": {
+        "type": "string",
+        "nullable": true,
+        "enum": [
+          "ARTICLE",
+          "BOOK",
+          "CHAPTER",
+          "THESIS",
+          "CONFERENCE",
+          "CONFERENCE_PAPER",
+          "REPORT",
+          "DATASET",
+          "PREPRINT",
+          "REVIEW",
+          "EDITORIAL",
+          "OTHER"
+        ],
+        "description": "The sibling publication's type."
       },
       "doi": {
         "type": "string",
@@ -2448,7 +2530,8 @@ module.exports = {
         "type": "boolean"
       },
       "venue": {
-        "$ref": "#/components/schemas/PublicationVenueRef"
+        "$ref": "#/components/schemas/PublicationVenueRef",
+        "description": "Only id, name and abbreviated_name are filled."
       },
       "_links": {
         "type": "object",
@@ -2475,9 +2558,10 @@ module.exports = {
         "type": "string",
         "nullable": true
       },
-      "year": {
+      "publication_year": {
         "type": "integer",
-        "nullable": true
+        "nullable": true,
+        "description": "Year of the work's latest publication."
       },
       "venue_name": {
         "type": "string",
@@ -2494,10 +2578,11 @@ module.exports = {
       "authors": {
         "type": "string",
         "nullable": true,
-        "description": "Semicolon-joined author names."
+        "description": "'; '-joined names of the first 3 contributors (role rank, then position)."
       },
       "authors_count": {
-        "type": "integer"
+        "type": "integer",
+        "description": "Distinct contributors of the whole work."
       },
       "open_access": {
         "type": "boolean",
@@ -2552,6 +2637,25 @@ module.exports = {
       "id": {
         "type": "integer"
       },
+      "type": {
+        "type": "string",
+        "nullable": true,
+        "enum": [
+          "ARTICLE",
+          "BOOK",
+          "CHAPTER",
+          "THESIS",
+          "CONFERENCE",
+          "CONFERENCE_PAPER",
+          "REPORT",
+          "DATASET",
+          "PREPRINT",
+          "REVIEW",
+          "EDITORIAL",
+          "OTHER"
+        ],
+        "description": "This publication's type (work.type carries the same value)."
+      },
       "identifiers": {
         "$ref": "#/components/schemas/PublicationIdentifiers"
       },
@@ -2597,9 +2701,6 @@ module.exports = {
       "has_libgen_file": {
         "type": "boolean"
       },
-      "download_count": {
-        "type": "integer"
-      },
       "license_url": {
         "type": "string",
         "nullable": true
@@ -2616,7 +2717,7 @@ module.exports = {
         "type": "string",
         "format": "date-time",
         "nullable": true,
-        "description": "Detail-only field."
+        "description": "When the source last indexed this record."
       },
       "venue": {
         "$ref": "#/components/schemas/PublicationVenueRef"
@@ -2655,7 +2756,7 @@ module.exports = {
       "citations": {
         "type": "array",
         "nullable": true,
-        "description": "Incoming citations (works citing this), capped at 100. null when include_citations=false.",
+        "description": "Works citing the parent work; null when include_citations is false/0/no (independent of include_references).",
         "items": {
           "$ref": "#/components/schemas/PublicationCitationRow"
         }
@@ -2663,7 +2764,7 @@ module.exports = {
       "references": {
         "type": "object",
         "nullable": true,
-        "description": "Outgoing references, capped at 100 each. null when include_references=false.",
+        "description": "References of the parent work; null when include_references is false/0/no (independent of include_citations).",
         "properties": {
           "resolved": {
             "type": "array",
@@ -2726,7 +2827,7 @@ module.exports = {
       },
       "identifiers": {
         "type": "object",
-        "description": "Person identifiers (the ONLY place identifiers appear; never duplicated at top level). On the list surface only orcid may be populated; wikidata_id/openalex_id/url are always null there.",
+        "description": "Person identifiers (the only place identifiers appear). orcid is populated on every path; lattes_id/scopus_id only on /persons/{id}; wikidata_id/openalex_id/url have no source column and are always null.",
         "properties": {
           "orcid": {
             "type": "string",
@@ -2813,7 +2914,7 @@ module.exports = {
       },
       "identifiers": {
         "type": "object",
-        "description": "Person identifiers (the ONLY place identifiers appear; never duplicated at top level). On the list surface only orcid may be populated; wikidata_id/openalex_id/url are always null there.",
+        "description": "Person identifiers (the only place identifiers appear). orcid is populated on every path; lattes_id/scopus_id only on /persons/{id}; wikidata_id/openalex_id/url have no source column and are always null.",
         "properties": {
           "orcid": {
             "type": "string",
@@ -2892,7 +2993,8 @@ module.exports = {
         "type": "object",
         "properties": {
           "works_count": {
-            "type": "integer"
+            "type": "integer",
+            "description": "persons.total_works (stored, all roles)."
           },
           "author_count": {
             "type": "integer",
@@ -2900,7 +3002,7 @@ module.exports = {
           },
           "editor_count": {
             "type": "integer",
-            "description": "Distinct works with role EDITOR."
+            "description": "Distinct works with role EDITOR. Translator credits are not broken out."
           },
           "total_citations": {
             "type": "integer",
@@ -2971,7 +3073,7 @@ module.exports = {
       },
       "recent_works": {
         "type": "array",
-        "description": "Up to 10 most recent works.",
+        "description": "Up to 10 works, one row per work, latest publication year DESC (NULL last), then id DESC.",
         "items": {
           "type": "object",
           "properties": {
@@ -3012,13 +3114,29 @@ module.exports = {
               "nullable": true,
               "enum": [
                 "AUTHOR",
-                "EDITOR"
-              ]
+                "EDITOR",
+                "TRANSLATOR",
+                "REVIEWER"
+              ],
+              "description": "Highest-ranked role held on the work."
+            },
+            "roles": {
+              "type": "array",
+              "description": "Every role held on the work.",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "AUTHOR",
+                  "EDITOR",
+                  "TRANSLATOR",
+                  "REVIEWER"
+                ]
+              }
             },
             "position": {
               "type": "integer",
               "nullable": true,
-              "description": "Author position."
+              "description": "1-based position within role (per role, not per work)."
             },
             "venue": {
               "type": "object",
@@ -3160,7 +3278,7 @@ module.exports = {
                 "REVIEWER"
               ]
             },
-            "description": "Every role this person holds on the work."
+            "description": "Every role this person holds on the work; complete even under a role filter."
           },
           "position": {
             "type": "integer",
@@ -3168,7 +3286,8 @@ module.exports = {
             "description": "1-based position within the primary role, not within the work."
           },
           "is_corresponding": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true if any of the person's authorships on the work is corresponding."
           }
         }
       },
@@ -3206,7 +3325,7 @@ module.exports = {
         "properties": {
           "total_count": {
             "type": "integer",
-            "description": "Total authorship rows for the work."
+            "description": "Distinct people credited on the work across every role."
           },
           "author_string": {
             "type": "string",
@@ -3227,8 +3346,7 @@ module.exports = {
     "properties": {
       "ranking": {
         "type": "integer",
-        "nullable": true,
-        "description": "1-based rank of the pair within the full result set (by shared works descending)."
+        "description": "Global 1-based rank: offset + index + 1."
       },
       "collaborators": {
         "type": "object",
@@ -3268,11 +3386,11 @@ module.exports = {
         "properties": {
           "shared_works": {
             "type": "integer",
-            "description": "Distinct works co-authored by both persons."
+            "description": "Distinct shared works, each counted once."
           },
           "avg_shared_citations": {
             "type": "number",
-            "description": "Average citation_count across the shared works (0 or fractional)."
+            "description": "Mean works.citation_count of the shared works."
           },
           "collaboration_strength": {
             "type": "string",
@@ -3282,7 +3400,7 @@ module.exports = {
               "moderate",
               "weak"
             ],
-            "description": "very_strong >=10, strong >=5, moderate >=2, weak otherwise (by shared_works)."
+            "description": "very_strong >=10, strong >=5, moderate >=3, weak otherwise (by shared_works)."
           }
         }
       },
@@ -3292,12 +3410,12 @@ module.exports = {
           "first_collaboration_year": {
             "type": "integer",
             "nullable": true,
-            "description": "Earliest shared publication year."
+            "description": "MIN works.latest_publication_year over the shared works."
           },
           "latest_collaboration_year": {
             "type": "integer",
             "nullable": true,
-            "description": "Most recent shared publication year."
+            "description": "MAX works.latest_publication_year over the shared works."
           },
           "collaboration_years": {
             "type": "integer",
@@ -3330,11 +3448,11 @@ module.exports = {
         "properties": {
           "shared_works": {
             "type": "integer",
-            "description": "Distinct works co-authored with the queried person."
+            "description": "Distinct shared works, each counted once."
           },
           "avg_shared_citations": {
             "type": "number",
-            "description": "Average citation_count across the shared works (0 or fractional)."
+            "description": "Mean works.citation_count of the shared works."
           },
           "collaboration_strength": {
             "type": "string",
@@ -3344,7 +3462,7 @@ module.exports = {
               "moderate",
               "weak"
             ],
-            "description": "very_strong >=10, strong >=5, moderate >=2, weak otherwise (by shared_works)."
+            "description": "very_strong >=10, strong >=5, moderate >=3, weak otherwise (by shared_works)."
           }
         }
       },
@@ -3354,12 +3472,12 @@ module.exports = {
           "first_collaboration_year": {
             "type": "integer",
             "nullable": true,
-            "description": "Earliest shared publication year."
+            "description": "MIN works.latest_publication_year over the shared works."
           },
           "latest_collaboration_year": {
             "type": "integer",
             "nullable": true,
-            "description": "Most recent shared publication year."
+            "description": "MAX works.latest_publication_year over the shared works."
           },
           "collaboration_years": {
             "type": "integer",
@@ -3580,10 +3698,22 @@ module.exports = {
             "type": "object",
             "description": "Publisher identifiers carried over from the organizations row.",
             "properties": {
-              "ror_id": { "type": "string", "nullable": true },
-              "grid_id": { "type": "string", "nullable": true },
-              "wikidata_id": { "type": "string", "nullable": true },
-              "openalex_id": { "type": "string", "nullable": true }
+              "ror_id": {
+                "type": "string",
+                "nullable": true
+              },
+              "grid_id": {
+                "type": "string",
+                "nullable": true
+              },
+              "wikidata_id": {
+                "type": "string",
+                "nullable": true
+              },
+              "openalex_id": {
+                "type": "string",
+                "nullable": true
+              }
             }
           },
           "_links": {
@@ -3700,7 +3830,12 @@ module.exports = {
           "sjr_best_quartile": {
             "type": "string",
             "nullable": true,
-            "enum": ["Q1", "Q2", "Q3", "Q4"],
+            "enum": [
+              "Q1",
+              "Q2",
+              "Q3",
+              "Q4"
+            ],
             "description": "Best SJR subject quartile."
           },
           "snip": {
@@ -4210,22 +4345,43 @@ module.exports = {
         "type": "object",
         "description": "Venue counts per best SJR quartile.",
         "properties": {
-          "Q1": { "type": "integer" },
-          "Q2": { "type": "integer" },
-          "Q3": { "type": "integer" },
-          "Q4": { "type": "integer" }
+          "Q1": {
+            "type": "integer"
+          },
+          "Q2": {
+            "type": "integer"
+          },
+          "Q3": {
+            "type": "integer"
+          },
+          "Q4": {
+            "type": "integer"
+          }
         }
       },
       "identifier_coverage": {
         "type": "object",
         "description": "How many venues carry each external identifier. isbn13/openlibrary_work dominate because SOURCE_BOOK is ~92% of the corpus.",
         "properties": {
-          "issn": { "type": "integer", "description": "Venues with issn or eissn." },
-          "isbn13": { "type": "integer" },
-          "openlibrary_work": { "type": "integer" },
-          "openalex_id": { "type": "integer" },
-          "scopus_id": { "type": "integer" },
-          "wikidata_id": { "type": "integer" }
+          "issn": {
+            "type": "integer",
+            "description": "Venues with issn or eissn."
+          },
+          "isbn13": {
+            "type": "integer"
+          },
+          "openlibrary_work": {
+            "type": "integer"
+          },
+          "openalex_id": {
+            "type": "integer"
+          },
+          "scopus_id": {
+            "type": "integer"
+          },
+          "wikidata_id": {
+            "type": "integer"
+          }
         }
       },
       "with_publisher": {
@@ -4258,7 +4414,7 @@ module.exports = {
   },
   "OrganizationListItem": {
     "type": "object",
-    "description": "One organization in the /institutions listing. Browse is activity-gated (publication_count>0) so in practice type is always INSTITUTE here. Metric columns are operator-maintained and presented verbatim.",
+    "description": "One organization in the /institutions listing.Metric columns are operator-maintained and presented verbatim. Listed rows are INSTITUTE or UNIVERSITY.",
     "properties": {
       "id": {
         "type": "integer",
@@ -4278,7 +4434,7 @@ module.exports = {
           "COMPANY",
           "OTHER"
         ],
-        "description": "Organization type. Only INSTITUTE appears on browse."
+        "description": "INSTITUTE or UNIVERSITY on the activity-gated listing."
       },
       "openalex_type": {
         "type": "string",
@@ -4400,7 +4556,7 @@ module.exports = {
       },
       "relevance": {
         "type": "number",
-        "description": "Search-only. Present as a top-level field only when a search term (q/search) is supplied; full-text relevance score (0 for acronym-only matches). Absent on plain browse."
+        "description": "Natural-language name relevance, 0 for acronym-only matches; informational: rows are ordered acronym_exact, name_exact, publication_count DESC, relevance DESC, id."
       }
     }
   },
@@ -4541,7 +4697,7 @@ module.exports = {
         "properties": {
           "funded_works_count": {
             "type": "integer",
-            "description": "Works financed by this org as funder."
+            "description": "Distinct works financed by this org (COUNT(DISTINCT work_id) over funding); equals the /funded-works total."
           },
           "grants_count": {
             "type": "integer",
@@ -4725,7 +4881,7 @@ module.exports = {
   },
   "AffiliatedWork": {
     "type": "object",
-    "description": "A work row from /institutions/{id}/works, /institutions/{id}/funded-works, and OrganizationDetail.recent_works. grant_number is always present as a key: null on the affiliation surface, populated (where recorded) on funded-works.",
+    "description": "A work row from /institutions/{id}/works, /institutions/{id}/funded-works, and OrganizationDetail.recent_works. grant_number is always present as a key: null on the affiliation surface, populated (where recorded) on funded-works. The displayed publication is the latest matching publication when publication filters are given, else the latest publication.",
     "properties": {
       "id": {
         "type": "integer",
@@ -4846,7 +5002,7 @@ module.exports = {
         "properties": {
           "total_count": {
             "type": "integer",
-            "description": "Total authorships on the work."
+            "description": "Distinct contributors (persons) on the work."
           },
           "author_string": {
             "type": "string",
@@ -4865,7 +5021,15 @@ module.exports = {
       "grant_number": {
         "type": "string",
         "nullable": true,
-        "description": "Grant number; null on the affiliation surface, populated where recorded on funded-works."
+        "description": "Lowest grant number of this funder on the work (null when none); null on the affiliation surface."
+      },
+      "grant_numbers": {
+        "type": "array",
+        "nullable": true,
+        "items": {
+          "type": "string"
+        },
+        "description": "Every distinct grant number of this funder on the work, sorted; [] when none recorded; null on /institutions/{id}/works and recent_works."
       },
       "_links": {
         "type": "object",
@@ -4909,10 +5073,11 @@ module.exports = {
       "name_signature": {
         "type": "string",
         "nullable": true,
-        "description": "Signature label; null in practice."
+        "description": "Always null on search paths."
       },
       "identifiers": {
         "type": "object",
+        "description": "orcid is populated; lattes_id/scopus_id are not loaded on search paths; wikidata_id/openalex_id/url have no source column. All but orcid are null here.",
         "properties": {
           "orcid": {
             "type": "string",
@@ -4965,7 +5130,7 @@ module.exports = {
   },
   "GlobalSearchResult": {
     "type": "object",
-    "description": "data payload of /search/global: parallel works and persons result blocks. The institutions block is permanently empty.",
+    "description": "data payload of /search/global: parallel works and persons result blocks. Institutions are not part of the global search (use /institutions?q=).",
     "properties": {
       "works": {
         "type": "object",
@@ -5001,11 +5166,13 @@ module.exports = {
       },
       "institutions": {
         "type": "object",
-        "description": "Always disabled for performance.",
+        "description": "Institutions are not part of the global search; use /institutions?q=.",
         "properties": {
           "total": {
             "type": "integer",
-            "example": 0
+            "nullable": true,
+            "example": null,
+            "description": "Always null (not searched)."
           },
           "results": {
             "type": "array",
@@ -5014,7 +5181,7 @@ module.exports = {
           },
           "note": {
             "type": "string",
-            "example": "Institutions search disabled for performance optimization"
+            "example": "Institutions are not part of the global search; query /institutions?q= instead"
           }
         }
       }
@@ -5022,7 +5189,7 @@ module.exports = {
   },
   "AutocompleteResult": {
     "type": "object",
-    "description": "data payload of /search/autocomplete. For queries shorter than 2 chars only { suggestions:[], message } is returned.",
+    "description": "data payload of /search/autocomplete. When q is absent or shorter than 2 chars only { suggestions:[], message } is returned.",
     "properties": {
       "query": {
         "type": "string",
@@ -5052,7 +5219,7 @@ module.exports = {
             },
             "work_count": {
               "type": "integer",
-              "description": "author and venue items only: number of works."
+              "description": "author and venue items only: number of works among the sampled matches (the top limit x 5 by citations), not the corpus total."
             },
             "name": {
               "type": "string",
@@ -5102,7 +5269,7 @@ module.exports = {
   },
   "PopularTerms": {
     "type": "object",
-    "description": "data payload of /search/popular: analytics-sourced most frequent title terms.",
+    "description": "data payload of /search/popular: the most frequent query strings recorded from /search/works (with q) and /search/global over the last 7 days (Redis analytics).",
     "properties": {
       "popular_terms": {
         "type": "array",
@@ -5110,11 +5277,12 @@ module.exports = {
           "type": "object",
           "properties": {
             "term": {
-              "type": "string"
+              "type": "string",
+              "description": "Recorded query string, trimmed and lower-cased; may contain several words."
             },
             "frequency": {
               "type": "integer",
-              "description": "Corpus occurrence count of the term."
+              "description": "Number of recorded requests with that query in the window."
             },
             "type": {
               "type": "string",
@@ -5147,7 +5315,8 @@ module.exports = {
       },
       "backend": {
         "type": "string",
-        "example": "manticore"
+        "example": "manticore",
+        "description": "Runtime SEARCH_BACKEND (default manticore)."
       },
       "reachable": {
         "type": "boolean"
@@ -5184,7 +5353,8 @@ module.exports = {
             "type": "string"
           },
           "venues": {
-            "type": "string"
+            "type": "string",
+            "description": "Both venue-filter backends: the Manticore venue field (works filter of /works and /search/*) and MariaDB ft_venues_search (/publications venue filter)."
           }
         }
       },
@@ -5530,7 +5700,7 @@ module.exports = {
       "publication_year": {
         "type": "integer",
         "nullable": true,
-        "description": "Latest publication year across the work's publications."
+        "description": "MAX year over the publications that satisfy the year_* / document_type filters (all publications when none)."
       },
       "language": {
         "type": "string",
@@ -5540,12 +5710,12 @@ module.exports = {
       "document_type": {
         "type": "string",
         "nullable": true,
-        "description": "Latest publication type, e.g. ARTICLE, BOOK, CHAPTER."
+        "description": "Type of the newest such publication."
       },
       "open_access": {
         "type": "boolean",
         "nullable": true,
-        "description": "True if any publication is open access."
+        "description": "True if any of those publications is open access."
       },
       "relevance_score": {
         "type": "number",
@@ -5565,7 +5735,7 @@ module.exports = {
   },
   "SubjectCourse": {
     "type": "object",
-    "description": "Course referencing a subject (GET /subjects/{id}/courses). Currently never returned because the course domain is unpopulated; shape documents the populated response.",
+    "description": "A course whose bibliography includes works of this subject; one row per course. Empty while course_bibliography holds no rows.",
     "properties": {
       "id": {
         "type": "integer",
@@ -5604,7 +5774,19 @@ module.exports = {
       "reading_type": {
         "type": "string",
         "nullable": true,
-        "description": "course_bibliography.reading_type for the referencing entry."
+        "description": "Highest-priority type among the course's matching entries (REQUIRED > RECOMMENDED > SUPPLEMENTARY)."
+      },
+      "reading_types": {
+        "type": "array",
+        "description": "Every reading type of the matching entries, in priority order.",
+        "items": {
+          "type": "string",
+          "enum": [
+            "REQUIRED",
+            "RECOMMENDED",
+            "SUPPLEMENTARY"
+          ]
+        }
       },
       "works_with_subject": {
         "type": "integer",
@@ -5921,21 +6103,21 @@ module.exports = {
       "publication_year": {
         "type": "integer",
         "nullable": true,
-        "description": "Year of the latest publication of the work"
+        "description": "From the latest publication (highest publications.id)."
       },
       "language": {
         "type": "string",
         "nullable": true,
-        "description": "ISO 639-1 language from works.language"
+        "description": "The work's language."
       },
       "document_type": {
         "type": "string",
         "nullable": true,
-        "description": "publications.type of the latest publication (ARTICLE/BOOK/CHAPTER/...)"
+        "description": "From the latest publication (highest publications.id)."
       },
       "open_access": {
         "type": "boolean",
-        "description": "True if the latest publication is open access"
+        "description": "From the latest publication (highest publications.id)."
       },
       "reading_type": {
         "type": "string",
@@ -5943,8 +6125,7 @@ module.exports = {
         "enum": [
           "REQUIRED",
           "RECOMMENDED",
-          "SUPPLEMENTARY",
-          "OPTIONAL"
+          "SUPPLEMENTARY"
         ],
         "description": "Reading classification"
       },
@@ -5962,16 +6143,16 @@ module.exports = {
         "items": {
           "type": "string"
         },
-        "description": "Author preferred names ordered by authorship position"
+        "description": "Every contributor name, one per person, ordered by role rank then position (not capped)."
       },
       "author_count": {
         "type": "integer",
-        "description": "Total number of authors on the work"
+        "description": "Distinct people (the length of authors_preview)."
       },
       "first_author_name": {
         "type": "string",
         "nullable": true,
-        "description": "Preferred name of the first author"
+        "description": "First AUTHOR-role contributor when one exists, else the highest-ranked contributor."
       }
     }
   },
@@ -6136,6 +6317,19 @@ module.exports = {
           "type": "integer"
         },
         "description": "Distinct program ids the instructor teaches in."
+      },
+      "_links": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "type": "string",
+            "example": "/instructors/123"
+          },
+          "person": {
+            "type": "string",
+            "example": "/persons/123"
+          }
+        }
       }
     }
   },
@@ -6229,6 +6423,19 @@ module.exports = {
         "format": "date-time",
         "nullable": true,
         "description": "persons.created_at (ISO 8601)."
+      },
+      "_links": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "type": "string",
+            "example": "/instructors/123"
+          },
+          "person": {
+            "type": "string",
+            "example": "/persons/123"
+          }
+        }
       }
     }
   },
@@ -6360,23 +6567,35 @@ module.exports = {
       "reading_type": {
         "type": "string",
         "nullable": true,
-        "description": "course_bibliography.reading_type."
+        "description": "Highest-priority reading type among the entries (REQUIRED > RECOMMENDED > SUPPLEMENTARY)."
+      },
+      "reading_types": {
+        "type": "array",
+        "description": "Every reading type of the work in this instructor's courses, in priority order.",
+        "items": {
+          "type": "string",
+          "enum": [
+            "REQUIRED",
+            "RECOMMENDED",
+            "SUPPLEMENTARY"
+          ]
+        }
       },
       "author_count": {
         "type": "integer",
-        "description": "Total authorships for the work."
+        "description": "Distinct people credited on the work."
       },
       "first_author_name": {
         "type": "string",
         "nullable": true,
-        "description": "preferred_name of the position-0 author."
+        "description": "First contributor by role rank, then position."
       },
       "authors": {
         "type": "array",
         "items": {
           "type": "string"
         },
-        "description": "Ordered author preferred_names."
+        "description": "One name per person, ordered by role rank then position."
       },
       "usage_metrics": {
         "type": "object",
@@ -6407,7 +6626,7 @@ module.exports = {
       },
       "avg_courses_per_instructor": {
         "type": "string",
-        "description": "MySQL AVG as a decimal string, e.g. \"1.0000\"."
+        "description": "Mean of each instructor's distinct-course count, as a DECIMAL string."
       },
       "role_distribution": {
         "type": "array",
@@ -6606,7 +6825,7 @@ module.exports = {
       },
       "recent_authored_works": {
         "type": "array",
-        "description": "Up to 10 most recent authored works.",
+        "description": "Up to 10 distinct works of any role; year/type/open access from the latest publication; NULL years last.",
         "items": {
           "type": "object",
           "properties": {
@@ -6776,20 +6995,20 @@ module.exports = {
       },
       "short_signatures": {
         "type": "integer",
-        "description": "Signatures with LENGTH(signature) <= 10."
+        "description": "Signatures with CHAR_LENGTH(signature) <= 10."
       },
       "medium_signatures": {
         "type": "integer",
-        "description": "Signatures with LENGTH(signature) between 11 and 20."
+        "description": "Signatures with CHAR_LENGTH(signature) between 11 and 20."
       },
       "long_signatures": {
         "type": "integer",
-        "description": "Signatures with LENGTH(signature) > 20."
+        "description": "Signatures with CHAR_LENGTH(signature) > 20."
       },
       "avg_signature_length": {
         "type": "number",
         "format": "float",
-        "description": "AVG(LENGTH(signature)) in characters."
+        "description": "AVG(CHAR_LENGTH(signature)) in characters."
       },
       "linked_signatures": {
         "type": "integer",
@@ -6803,7 +7022,7 @@ module.exports = {
   },
   "SignatureSearchItem": {
     "type": "object",
-    "description": "Raw signature search row (no _links).",
+    "description": "A signature matching /signatures/search, with persons_count computed for the returned page.",
     "properties": {
       "id": {
         "type": "integer",
@@ -6821,7 +7040,16 @@ module.exports = {
       },
       "persons_count": {
         "type": "integer",
-        "description": "Distinct persons linked to this signature; may be 0."
+        "description": "Persons linked to this signature (computed for the returned rows)."
+      },
+      "_links": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "type": "string",
+            "example": "/signatures/123"
+          }
+        }
       }
     }
   },
@@ -6982,13 +7210,15 @@ module.exports = {
             "type": "string",
             "enum": [
               "AUTHOR",
-              "EDITOR"
+              "EDITOR",
+              "TRANSLATOR",
+              "REVIEWER"
             ],
             "description": "MIN role over the matching authorships."
           },
           "position": {
             "type": "integer",
-            "description": "Position in the author list."
+            "description": "1-based position within its role."
           },
           "is_corresponding": {
             "type": "boolean"
@@ -7002,7 +7232,8 @@ module.exports = {
             "nullable": true,
             "description": "That person preferred_name."
           }
-        }
+        },
+        "description": "One representative authorship of the signature on the work, chosen by role rank, then position, then person id; every field comes from that row."
       },
       "publication": {
         "type": "object",
@@ -7010,7 +7241,7 @@ module.exports = {
           "year": {
             "type": "integer",
             "nullable": true,
-            "description": "From the latest publication."
+            "description": "Year of the latest publication; works without one sort last."
           },
           "journal": {
             "type": "string",
@@ -7040,7 +7271,7 @@ module.exports = {
         "properties": {
           "total_count": {
             "type": "integer",
-            "description": "Total authorships on the work."
+            "description": "Distinct people credited on the work."
           },
           "author_string": {
             "type": "string",
@@ -7074,7 +7305,12 @@ module.exports = {
       "reading_type": {
         "type": "string",
         "nullable": true,
-        "description": "Reading classification from course_bibliography.reading_type (free text, e.g. required, recommended)."
+        "description": "Reading classification from course_bibliography.reading_type (free text, e.g. required, recommended).",
+        "enum": [
+          "REQUIRED",
+          "RECOMMENDED",
+          "SUPPLEMENTARY"
+        ]
       },
       "week_number": {
         "type": "integer",
@@ -7119,12 +7355,12 @@ module.exports = {
       "publication_year": {
         "type": "integer",
         "nullable": true,
-        "description": "Latest publication year for the work (MAX(publications.year))."
+        "description": "From the latest publication (highest publications.id)."
       },
       "open_access": {
         "type": "boolean",
         "nullable": true,
-        "description": "Open-access flag from the latest publication."
+        "description": "From the latest publication (highest publications.id)."
       },
       "language": {
         "type": "string",
@@ -7134,7 +7370,7 @@ module.exports = {
       "document_type": {
         "type": "string",
         "nullable": true,
-        "description": "Type of the latest publication.",
+        "description": "From the latest publication (highest publications.id).",
         "enum": [
           "ARTICLE",
           "BOOK",
@@ -7153,12 +7389,12 @@ module.exports = {
       "author_count": {
         "type": "integer",
         "nullable": true,
-        "description": "Count of authorships for the work. Null on the light/default query path."
+        "description": "Distinct people credited on the work."
       },
       "first_author_name": {
         "type": "string",
         "nullable": true,
-        "description": "First author's preferred_name, by authorship position."
+        "description": "First contributor by role rank, then position."
       },
       "instructors": {
         "type": "string",
@@ -7167,7 +7403,7 @@ module.exports = {
       },
       "authors": {
         "type": "array",
-        "description": "Author preferred_names ordered by authorship position; empty when none.",
+        "description": "One name per person, ordered by role rank then position.",
         "items": {
           "type": "string"
         }
@@ -7234,7 +7470,12 @@ module.exports = {
               "type": "array",
               "description": "Distinct reading_type values for this work.",
               "items": {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "REQUIRED",
+                  "RECOMMENDED",
+                  "SUPPLEMENTARY"
+                ]
               }
             }
           }
@@ -7264,9 +7505,9 @@ module.exports = {
               "description": "COUNT(DISTINCT program_id)."
             },
             "avg_publication_year": {
-              "type": "number",
+              "type": "string",
               "nullable": true,
-              "description": "AVG(publications.year), fractional."
+              "description": "DECIMAL string: mean year of each entry's latest publication."
             }
           }
         }
@@ -7360,9 +7601,9 @@ module.exports = {
         "description": "COUNT(DISTINCT program_id)."
       },
       "avg_works_per_course": {
-        "type": "number",
+        "type": "string",
         "nullable": true,
-        "description": "Average works per course; null when empty."
+        "description": "DECIMAL string: plain mean of each course's work count over the courses with a bibliography."
       },
       "max_works_per_course": {
         "type": "integer",
@@ -7385,8 +7626,8 @@ module.exports = {
               "description": "Number of rows of that type."
             },
             "percentage": {
-              "type": "number",
-              "description": "count * 100 / total, 2 decimal places."
+              "type": "string",
+              "description": "DECIMAL string, percent of all bibliography entries."
             }
           }
         }
@@ -7416,9 +7657,9 @@ module.exports = {
             "description": "MAX(publications.year)."
           },
           "avg_publication_year": {
-            "type": "number",
+            "type": "string",
             "nullable": true,
-            "description": "AVG(publications.year), fractional."
+            "description": "DECIMAL string: mean year of each entry's latest publication."
           }
         }
       }
@@ -7499,7 +7740,7 @@ module.exports = {
       },
       "ranking": {
         "type": "integer",
-        "description": "1-based, page-relative (offset + index + 1)."
+        "description": "Global 1-based rank: offset + index + 1."
       },
       "name": {
         "type": "string",
@@ -7574,7 +7815,7 @@ module.exports = {
       },
       "ranking": {
         "type": "integer",
-        "description": "1-based, page-relative."
+        "description": "Global 1-based rank: offset + index + 1."
       },
       "name": {
         "type": "string",
@@ -7652,7 +7893,7 @@ module.exports = {
       },
       "ranking": {
         "type": "integer",
-        "description": "1-based, page-relative."
+        "description": "Global 1-based rank: offset + index + 1."
       },
       "name": {
         "type": "string",
@@ -7723,11 +7964,11 @@ module.exports = {
   },
   "MetricsCollaborationRankingItem": {
     "type": "object",
-    "description": "Top co-authorship pair (flat shape identical to CollaborationPair; computed over the top ~2000 authors).",
+    "description": "Same statement and shape as CollaborationPair (top 2,000 persons with total_works >= 30, AUTHOR role on both sides).",
     "properties": {
       "ranking": {
         "type": "integer",
-        "description": "1-based, page-relative."
+        "description": "Global 1-based rank: offset + index + 1."
       },
       "collaborators": {
         "type": "object",
@@ -7767,11 +8008,11 @@ module.exports = {
         "properties": {
           "shared_works": {
             "type": "integer",
-            "description": "COUNT(DISTINCT work_id) co-authored."
+            "description": "Distinct shared works, each counted once."
           },
           "avg_shared_citations": {
             "type": "number",
-            "description": "ROUND(AVG(works.citation_count), 2) over shared works."
+            "description": "Mean works.citation_count of the shared works."
           },
           "collaboration_strength": {
             "type": "string",
@@ -7781,7 +8022,7 @@ module.exports = {
               "moderate",
               "weak"
             ],
-            "description": "Derived from shared_works (>=10 very_strong, >=5 strong, >=3 moderate, else weak)."
+            "description": "very_strong >=10, strong >=5, moderate >=3, weak otherwise (by shared_works)."
           }
         }
       },
@@ -7791,12 +8032,12 @@ module.exports = {
           "first_collaboration_year": {
             "type": "integer",
             "nullable": true,
-            "description": "MIN(publications.year)."
+            "description": "MIN works.latest_publication_year over the shared works."
           },
           "latest_collaboration_year": {
             "type": "integer",
             "nullable": true,
-            "description": "MAX(publications.year)."
+            "description": "MAX works.latest_publication_year over the shared works."
           },
           "collaboration_years": {
             "type": "integer",
@@ -7813,6 +8054,7 @@ module.exports = {
       "type": {
         "type": "string",
         "enum": [
+          "dependency",
           "error",
           "performance",
           "volume",
@@ -7837,12 +8079,12 @@ module.exports = {
       "threshold": {
         "type": "string",
         "nullable": true,
-        "description": "Threshold that was crossed, e.g. '5%', '50ms', '100 QPS'."
+        "description": "Threshold that was crossed, e.g. '5%', '50ms', '100 QPS', 'reachable'."
       },
       "current_value": {
         "type": "string",
         "nullable": true,
-        "description": "Current observed value as a string with unit, e.g. '373ms', '2.31%'."
+        "description": "Current observed value, e.g. '373ms', '2.31%', 'unreachable'."
       },
       "timestamp": {
         "type": "string",
@@ -7865,7 +8107,7 @@ module.exports = {
     "properties": {
       "endpoint": {
         "type": "string",
-        "description": "Method and path, e.g. 'GET /publications'."
+        "description": "Method + route pattern, e.g. 'GET /works/:id'; unmatched requests are grouped under 'GET (unmatched)'."
       },
       "count": {
         "type": "integer",
@@ -7875,7 +8117,7 @@ module.exports = {
   },
   "DashboardTrendIndicator": {
     "type": "object",
-    "description": "Trend indicator comparing a recent 3-day average against the oldest 3-day average.",
+    "description": "Recent w-day mean vs oldest w-day mean, w = min(3, floor(days/2)). recent_average, historical_average and is_significant are absent when trend is unknown.",
     "properties": {
       "trend": {
         "type": "string",
@@ -7885,11 +8127,12 @@ module.exports = {
           "stable",
           "unknown"
         ],
-        "description": "increasing when change > +10%, decreasing when < -10%, else stable; unknown when data is insufficient."
+        "description": "increasing when change > +10%, decreasing when < -10%, else stable; with a zero baseline, increasing if the recent mean > 0, else stable; unknown with fewer than 2 days of data or without Redis."
       },
       "change_percent": {
         "type": "number",
-        "description": "Percent change of recent vs historical average (2 dp)."
+        "description": "Percent change of the recent vs the baseline mean (2 dp); null when the baseline mean is 0 or the trend is unknown.",
+        "nullable": true
       },
       "recent_average": {
         "type": "number",
@@ -7928,16 +8171,24 @@ module.exports = {
       },
       "top_terms": {
         "type": "array",
-        "description": "Always an empty array in the current DTO output.",
+        "description": "Up to 10 most searched queries that day.",
         "items": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "term": {
+              "type": "string"
+            },
+            "count": {
+              "type": "integer"
+            }
+          }
         }
       }
     }
   },
   "DashboardOverview": {
     "type": "object",
-    "description": "Complete dashboard snapshot from in-process monitoring telemetry (not the database). Numbers are cumulative since the last process restart.",
+    "description": "Operational snapshot: in-process monitoring telemetry (cumulative since the last process restart) plus live dependency probes.",
     "properties": {
       "timestamp": {
         "type": "string",
@@ -7949,7 +8200,7 @@ module.exports = {
         "properties": {
           "engine_status": {
             "type": "string",
-            "description": "Search engine label; hardcoded 'Manticore'."
+            "description": "'Manticore (reachable)' or 'Manticore (unreachable)'."
           },
           "current_metrics": {
             "type": "object",
@@ -7962,13 +8213,13 @@ module.exports = {
                 "type": "integer",
                 "description": "Average response time in milliseconds over the recent sampling window."
               },
+              "p95_response_time": {
+                "type": "number",
+                "description": "95th percentile response time in milliseconds (recent window)."
+              },
               "error_rate": {
                 "type": "number",
-                "description": "Error rate in PERCENT units (e.g. 2.31 means 2.31%), computed as errors/requests*100. Not a 0-1 fraction."
-              },
-              "index_size_mb": {
-                "type": "number",
-                "description": "Index size in MB; always 0 (not tracked)."
+                "description": "5xx responses / all responses, in percent (e.g. 2.31 means 2.31%)."
               }
             }
           },
@@ -8000,65 +8251,62 @@ module.exports = {
       "system_health": {
         "type": "object",
         "properties": {
-          "rollback_active": {
-            "type": "boolean",
-            "description": "Hardcoded false."
-          },
           "uptime_seconds": {
             "type": "integer",
             "description": "Process uptime in seconds."
-          },
-          "consecutive_failures": {
-            "type": "integer",
-            "description": "Hardcoded 0."
-          },
-          "last_successful_check": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Synthetic; equals generation time."
           },
           "memory_usage": {
             "type": "string",
             "description": "Resident set size as a string with unit, e.g. '142MB rss'."
           },
-          "active_connections": {
-            "type": "integer",
-            "description": "Hardcoded 0."
+          "dependencies": {
+            "type": "object",
+            "description": "Live reachability probes.",
+            "properties": {
+              "database": {
+                "type": "boolean"
+              },
+              "search_engine": {
+                "type": "boolean"
+              },
+              "cache": {
+                "oneOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "disabled"
+                    ]
+                  }
+                ],
+                "description": "false when Redis is unreachable; 'disabled' when caching is turned off."
+              }
+            }
           },
           "health_status": {
             "type": "string",
             "enum": [
               "healthy",
-              "warning",
-              "unhealthy",
               "degraded",
+              "unhealthy",
               "unknown"
             ],
-            "description": "Derived health status; effectively always 'healthy'."
+            "description": "unhealthy when the database is unreachable, degraded when another dependency is, else healthy."
           }
         }
       },
       "recent_activity": {
         "type": "object",
         "properties": {
-          "queries_last_hour": {
+          "requests_last_10_minutes": {
             "type": "integer",
-            "description": "Sample count in the recent monitoring window (labeled hour)."
-          },
-          "queries_last_minute": {
-            "type": "integer",
-            "description": "Hardcoded 0."
-          },
-          "recent_queries": {
-            "type": "array",
-            "description": "Always an empty array (no query retention).",
-            "items": {
-              "type": "object"
-            }
+            "description": "Requests sampled in the last 10 minutes (capped at 1,000)."
           },
           "search_analytics": {
             "type": "object",
-            "description": "Map of date key 'YYYY-MM-DD' to that day's search analytics; spans a fixed 7-day window. May instead be { message } when no analytics data is available.",
+            "description": "Map of date key 'YYYY-MM-DD' to that day's search analytics over the last 7 days; {} when Redis is unavailable.",
             "additionalProperties": {
               "type": "object",
               "properties": {
@@ -8098,7 +8346,7 @@ module.exports = {
               "very_high",
               "unknown"
             ],
-            "description": "Bucketed activity level derived from queries_last_hour."
+            "description": "Bucketed from requests_last_10_minutes: >170 very_high, >85 high, >17 moderate, >2 low, else minimal."
           }
         }
       },
@@ -8137,9 +8385,9 @@ module.exports = {
             "type": "integer",
             "description": "95th percentile response time in milliseconds (recent window)."
           },
-          "error_count": {
+          "error_rate": {
             "type": "number",
-            "description": "MISLABELED: this is the error RATE in PERCENT (e.g. 2.26 means 2.26%), not a count. Route sets error_count = error_rate."
+            "description": "5xx responses / all responses, in percent."
           },
           "uptime_seconds": {
             "type": "integer",
@@ -8174,11 +8422,11 @@ module.exports = {
   },
   "DashboardSearchTrends": {
     "type": "object",
-    "description": "Search trend indicators, popular autocomplete terms and per-day search analytics.",
+    "description": "Search trend indicators, the most searched queries and per-day search analytics.",
     "properties": {
       "trends": {
         "type": "object",
-        "description": "Trend indicators. May instead be { message: 'Insufficient data for trend analysis' } when fewer than 2 days of analytics exist.",
+        "description": "Trend indicators; each is { trend: 'unknown', change_percent: null } with fewer than 2 days of analytics or without Redis.",
         "properties": {
           "search_volume": {
             "$ref": "#/components/schemas/DashboardTrendIndicator"
@@ -8193,17 +8441,17 @@ module.exports = {
       },
       "popular_terms": {
         "type": "array",
-        "description": "Up to 20 popular terms sorted by descending frequency; frequency is corpus autocomplete frequency, not user-search counts.",
+        "description": "Most frequent user search queries of the last 7 days, by descending frequency.",
         "items": {
           "type": "object",
           "properties": {
             "term": {
               "type": "string",
-              "description": "Search term."
+              "description": "Recorded query string."
             },
             "frequency": {
               "type": "integer",
-              "description": "Corpus frequency of the term."
+              "description": "Times searched."
             },
             "trend": {
               "type": "string",
@@ -8214,14 +8462,14 @@ module.exports = {
       },
       "daily_data": {
         "type": "array",
-        "description": "Per-day analytics, ascending by date, over the fixed 7-day window.",
+        "description": "One entry per day of the requested window, ascending by date.",
         "items": {
           "$ref": "#/components/schemas/DashboardDailySearch"
         }
       },
       "analytics_period": {
         "type": "string",
-        "description": "Analytics window label; hardcoded to the fixed 7-day window, e.g. '7 days'. Does not reflect the days parameter."
+        "description": "'<days> days', reflecting the days parameter."
       },
       "generated_at": {
         "type": "string",
@@ -8261,7 +8509,7 @@ module.exports = {
   },
   "SecurityStats": {
     "type": "object",
-    "description": "Effective rate-limiter configuration plus in-memory block/violation counters returned by GET /security/stats. Rate limiting uses in-memory rolling windows, so no per-IP violation or block tracking is persisted.",
+    "description": "Effective rate-limiter configuration plus the clients currently over the per-IP limit, returned by GET /security/stats. The rolling windows live in this process's memory and reset on restart.",
     "properties": {
       "rate_limit_config": {
         "type": "object",
@@ -8277,19 +8525,7 @@ module.exports = {
           },
           "general": {
             "type": "integer",
-            "description": "Requests allowed per window for the general limiter (default 120)."
-          },
-          "search": {
-            "type": "integer",
-            "description": "Requests allowed per window for the search limiter (observed 1200)."
-          },
-          "metrics": {
-            "type": "integer",
-            "description": "Requests allowed per window for the metrics limiter (observed 3000)."
-          },
-          "relational": {
-            "type": "integer",
-            "description": "Requests allowed per window for the relational limiter (observed 240)."
+            "description": "Requests allowed per IP per window (RATE_LIMIT_GENERAL, default 120). The single bucket shared by every open endpoint."
           },
           "slowDown": {
             "type": "object",
@@ -8319,39 +8555,52 @@ module.exports = {
           "disabled",
           "windowMs",
           "general",
-          "search",
-          "metrics",
-          "relational",
           "slowDown"
         ]
       },
       "blocked_ips": {
         "type": "array",
-        "description": "Currently blocked IP addresses; always empty (no persistent block list).",
+        "description": "Clients currently over the per-IP limit in this process (entries drop out when their window resets).",
         "items": {
-          "type": "string"
+          "type": "object",
+          "properties": {
+            "ip": {
+              "type": "string",
+              "description": "Client address as seen past the trusted loopback proxies."
+            },
+            "limited_since": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the client first exceeded the limit in the current window."
+            },
+            "resets_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the client's rate-limit window resets."
+            }
+          },
+          "required": [
+            "ip",
+            "limited_since",
+            "resets_at"
+          ]
         }
       },
       "stats": {
         "type": "object",
-        "description": "Block/violation counters.",
+        "description": "Block counters.",
         "properties": {
           "total_blocked": {
             "type": "integer",
-            "description": "Count of blocked IPs (blocked_ips.length); always 0."
-          },
-          "total_violations": {
-            "type": "integer",
-            "description": "Total recorded violations; not tracked, always 0."
+            "description": "Number of clients currently over the limit (blocked_ips.length)."
           },
           "block_tracking_persisted": {
             "type": "boolean",
-            "description": "Whether block tracking is persisted; always false."
+            "description": "Always false: the limiter state is in memory and resets on restart."
           }
         },
         "required": [
           "total_blocked",
-          "total_violations",
           "block_tracking_persisted"
         ]
       }
@@ -8521,7 +8770,7 @@ module.exports = {
   },
   "UnblockResult": {
     "type": "object",
-    "description": "Result of POST /security/unblock/{ip}. Because the block list is in-memory and always empty, unblocked is effectively always false.",
+    "description": "Result of POST /security/unblock/{ip}. The client's rate-limit and slow-down counters are always reset; unblocked reports whether it was over the limit at call time.",
     "properties": {
       "ip": {
         "type": "string",
@@ -8529,7 +8778,7 @@ module.exports = {
       },
       "unblocked": {
         "type": "boolean",
-        "description": "Whether the IP was present in the in-memory block list and removed; effectively always false."
+        "description": "true when the client was over the per-IP limit when the call was made."
       }
     },
     "required": [

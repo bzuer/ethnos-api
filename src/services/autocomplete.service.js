@@ -279,7 +279,7 @@ class AutocompleteService {
                     const key = `search_analytics:${day.toISOString().slice(0, 10)}`;
                     let entries = [];
                     try {
-                        entries = await redis.lrange(key, 0, 1999);
+                        entries = await redis.lrange(key, 0, ANALYTICS_DAILY_CAP - 1);
                     } catch (readError) {
                         entries = [];
                     }

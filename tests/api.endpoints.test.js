@@ -5,6 +5,7 @@ process.env.TEST_FAST = '1';
 process.env.INTERNAL_ACCESS_KEY = process.env.INTERNAL_ACCESS_KEY || 'test-internal-key';
 process.env.SECURITY_ACCESS_KEY = process.env.SECURITY_ACCESS_KEY || 'test-security-key';
 
+const assert = require('node:assert/strict');
 const { createMockReq, createMockRes, withResponseFormatter } = require('./helpers/mock-express');
 const { invokeRouter } = require('./helpers/router-invoke');
 
@@ -1136,12 +1137,19 @@ describe('Manticore query options', () => {
 
   const captureSql = () => {
     const statements = [];
+    const respond = (sql) => (sql.startsWith('SELECT COUNT') ? [{ total: 0 }] : []);
     stubMethod(manticore, 'query', async (sql) => {
       statements.push(sql);
-      return sql.startsWith('SELECT COUNT') ? [{ total: 0 }] : [];
+      return respond(sql);
+    });
+    stubMethod(manticore, 'queryWithMeta', async (sql) => {
+      statements.push(sql);
+      return { rows: respond(sql), meta: [] };
     });
     return statements;
   };
+
+  const timeoutMeta = [{ Variable_name: 'warning', Value: 'index works: query time exceeded max_query_time' }];
 
   test('relevance ranks works on matched-word coverage and contiguity, never on lcs', async () => {
     const statements = captureSql();
@@ -1166,6 +1174,33 @@ describe('Manticore query options', () => {
     const statements = captureSql();
     await searchEngine.searchPersonIds('malinowski', { limit: 5, offset: 0 });
     expect(statements[1]).toContain('OPTION ranker=none');
+  });
+
+  test('a page cut short by max_query_time is a statement timeout, never a truncated page', async () => {
+    const { isStatementTimeout } = require('../src/utils/db');
+    stubMethod(manticore, 'queryWithMeta', async (sql) => ({
+      rows: sql.startsWith('SELECT COUNT') ? [{ total: 3 }] : [{ id: 1, w: 1 }],
+      meta: sql.startsWith('SELECT COUNT') ? [] : timeoutMeta
+    }));
+    await assert.rejects(searchEngine.searchWorkIds({ q: 'the' }, 10, 0), (error) => isStatementTimeout(error));
+    await assert.rejects(searchEngine.searchPersonIds('silva', { limit: 10, offset: 0 }), (error) => isStatementTimeout(error));
+  });
+
+  test('a count cut short by max_query_time is reported inexact with a usable lower bound', async () => {
+    const ids = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, w: 1 }));
+    stubMethod(manticore, 'queryWithMeta', async (sql) => (sql.startsWith('SELECT COUNT')
+      ? { rows: [{ total: 0 }], meta: timeoutMeta }
+      : { rows: ids, meta: [] }));
+    const full = await searchEngine.searchWorkIds({ q: 'the', sort_by: 'id' }, 10, 20);
+    expect(full.exact).toBe(false);
+    expect(full.total).toBe(31);
+    restoreStubs();
+    stubMethod(manticore, 'queryWithMeta', async (sql) => (sql.startsWith('SELECT COUNT')
+      ? { rows: [{ total: 0 }], meta: timeoutMeta }
+      : { rows: ids.slice(0, 4), meta: [] }));
+    const last = await searchEngine.searchPersonIds('silva', { limit: 10, offset: 20 });
+    expect(last.exact).toBe(false);
+    expect(last.total).toBe(24);
   });
 
   test('autocomplete prefix lookups never run the expression ranker', async () => {

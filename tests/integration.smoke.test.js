@@ -685,6 +685,35 @@ describe('Integration smoke (real DB)', () => {
       assert.equal(shifted.meta?.pagination_extras?.offset, 3);
     });
 
+    test('rare publication filters page through /works without degrading', async () => {
+      const first = assertSuccess(await fetchJson('/works?type=PREPRINT&limit=20'), 'preprints page 1');
+      assert.equal(first.meta?.pagination_total_exact, true, 'a rare filter counts exactly');
+      const deep = assertSuccess(await fetchJson('/works?type=PREPRINT&limit=20&page=3'), 'preprints page 3');
+      assert.ok(!deep.meta?.page_degraded, 'a rare filter does not degrade past page 1');
+      assert.ok(deep.data.length > 0 && deep.data.every((w) => w.type === 'PREPRINT'), 'every row is a preprint');
+      const ids = new Set(first.data.map((w) => w.id));
+      assert.ok(deep.data.every((w) => !ids.has(w.id)), 'page 3 does not repeat page 1');
+      const sorted = assertSuccess(await fetchJson('/works?type=PREPRINT&sort_by=cited_by_count&limit=20&page=2'), 'preprints by citations');
+      const cites = sorted.data.map((w) => w.cited_by_count);
+      for (let i = 1; i < cites.length; i += 1) assert.ok(cites[i - 1] >= cites[i], 'cited_by_count DESC');
+    });
+
+    test('invalid filters are 400 and unknown parents are 404', async () => {
+      assert.equal((await fetchJson('/publications?type=foo')).status, 400, 'publication type is an enum');
+      assert.equal((await fetchJson('/publications?q=a')).status, 400, 'q needs 2 characters');
+      assert.equal((await fetchJson('/works/999999999/bibliographies')).status, 404, 'unknown work');
+      assert.equal((await fetchJson('/works/1/bibliographies?reading_type=OPTIONAL')).status, 400, 'reading_type is an enum');
+      assert.equal((await fetchJson('/courses/1/instructors?limit=500')).status, 400, 'nested course limit is validated');
+      assert.equal((await fetchJson('/signatures/search?q=silva&page=0')).status, 400, 'signature page is validated');
+    });
+
+    test('a collaboration page past the end keeps the exact total', async () => {
+      const first = assertSuccess(await fetchJson('/collaborations/top?limit=5'), 'collaborations page 1');
+      const beyond = assertSuccess(await fetchJson('/collaborations/top?limit=5&page=100000'), 'collaborations past the end');
+      assert.equal(beyond.data.length, 0);
+      assert.equal(beyond.pagination.total, first.pagination.total, 'total is the real pair count, not the offset');
+    });
+
     test('client errors are 4xx and the OpenAPI document is raw', async () => {
       const cors = await fetch(`${BASE_URL}/health/liveness`, { headers: { Origin: 'https://not-allowed.example' } });
       assert.equal(cors.status, 200, 'a disallowed origin gets no CORS headers, not a 500');

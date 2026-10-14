@@ -334,28 +334,32 @@ class BibliographyService {
   }
 
   async getBibliographyStatistics() {
-    const cacheKey = 'bibliography:statistics';
+    const cacheKey = 'bibliography:statistics:v2';
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
     const query = `
-      SELECT 
+      SELECT
         COUNT(*) as total_bibliography_entries,
         COUNT(DISTINCT cb.work_id) as unique_works,
         COUNT(DISTINCT cb.course_id) as courses_with_bibliography,
-        COUNT(DISTINCT c.program_id) as programs_with_bibliography,
-        AVG(works_per_course.work_count) as avg_works_per_course,
-        MAX(works_per_course.work_count) as max_works_per_course
+        COUNT(DISTINCT c.program_id) as programs_with_bibliography
       FROM course_bibliography cb
       JOIN courses c ON cb.course_id = c.id
-      JOIN (
-        SELECT course_id, COUNT(*) as work_count
-        FROM course_bibliography
-        GROUP BY course_id
-      ) works_per_course ON cb.course_id = works_per_course.course_id
+    `;
+    const perCourseQuery = `
+      SELECT
+        AVG(per_course.work_count) as avg_works_per_course,
+        MAX(per_course.work_count) as max_works_per_course
+      FROM (
+        SELECT cb.course_id, COUNT(*) as work_count
+        FROM course_bibliography cb
+        JOIN courses c ON cb.course_id = c.id
+        GROUP BY cb.course_id
+      ) per_course
     `;
 
-    const [stats] = await pool.execute(query);
+    const [[stats], [perCourse]] = await Promise.all([pool.execute(query), pool.execute(perCourseQuery)]);
 
     const readingTypeQuery = `
       SELECT 
@@ -379,14 +383,14 @@ class BibliographyService {
       FROM course_bibliography cb
       JOIN courses c ON cb.course_id = c.id
       JOIN works w ON cb.work_id = w.id
-      LEFT JOIN publications pub ON w.id = pub.work_id
-      WHERE c.year IS NOT NULL AND pub.year IS NOT NULL
+      ${latestPublicationJoin('pub', 'LEFT')}
     `;
 
     const [yearRange] = await pool.execute(yearRangeQuery);
 
     const result = {
       ...stats[0],
+      ...perCourse[0],
       reading_type_distribution: readingTypes,
       year_range: yearRange[0]
     };

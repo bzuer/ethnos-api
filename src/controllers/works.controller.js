@@ -153,6 +153,12 @@ class WorksController {
       };
 
       const result = await worksService.getWorkBibliography(id, filters);
+      if (!result) {
+        return res.fail(`Work with ID ${id} not found`, {
+          statusCode: 404,
+          code: ERROR_CODES.NOT_FOUND
+        });
+      }
       return res.success(result.data, {
         pagination: result.pagination
       });

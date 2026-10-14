@@ -450,14 +450,14 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const minCollaborations = parseInt(filters.min_collaborations, 10) || 2;
-    const cacheKey = `metrics:collaborations:v5:${JSON.stringify({ page, limit, offset, minCollaborations })}`;
+    const cacheKey = `metrics:collaborations:v6:${JSON.stringify({ page, limit, offset, minCollaborations })}`;
 
     const cached = await cacheService.get(cacheKey);
     if (cached) return cached;
 
     const ranked = await collaborationsService.rankCollaborationPairs({ minCollaborations, limit, offset });
     const formattedCollaborations = ranked.pairs.map((pair, index) => formatTopCollaboration(pair, offset + index + 1));
-    const total = ranked.total ?? offset;
+    const total = ranked.total;
 
     const result = {
       data: formattedCollaborations,

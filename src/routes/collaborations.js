@@ -82,11 +82,13 @@ const validateNetworkDepth = [
  *     summary: Get collaborators for a person
  *     tags: [Collaborations]
  *     description: >-
- *       Co-authors of a person ranked by shared-work count, with per-pair metrics
- *       (shared works, average shared citations, collaboration strength) and the
- *       collaboration timespan. Returns 200 with an empty `collaborators[]` when the
- *       person exists and has co-authors but none meet `min_collaborations`; returns
- *       404 only when the person has no co-authors at all or does not exist.
+ *       Co-authors of a person (any contributor role), ranked by shared works with the
+ *       person id as tiebreak. Each shared work is counted once; `avg_shared_citations` is
+ *       the mean `works.citation_count` of the shared works and the timespan uses
+ *       `works.latest_publication_year`. `pagination.total` is the exact number of
+ *       qualifying co-authors. A person who exists but has no co-author meeting
+ *       `min_collaborations` gets 200 with an empty `collaborators[]`; 404 only when the
+ *       person does not exist.
  *     parameters:
  *       - name: id
  *         in: path
@@ -106,9 +108,10 @@ const validateNetworkDepth = [
  *       - name: sort_by
  *         in: query
  *         description: >-
- *           Ordering of the collaborator list. `collaboration_count` sorts by shared works,
- *           `latest_collaboration_year` by most recent shared publication year,
- *           `avg_citations_together` by average citations of shared works.
+ *           Ordering of the collaborator list (always descending, tiebreak person id).
+ *           `collaboration_count` sorts by shared works, `latest_collaboration_year` by the
+ *           most recent shared-work year, `avg_citations_together` by average citations of
+ *           the shared works.
  *         schema:
  *           type: string
  *           enum: [collaboration_count, latest_collaboration_year, avg_citations_together]
@@ -153,6 +156,8 @@ const validateNetworkDepth = [
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollaborationFilters], collaborationsController.getPersonCollaborators);
 
@@ -166,8 +171,9 @@ router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollab
  *       Co-authorship ego-network built by BFS outward from the person. `nodes` is a
  *       map keyed by stringified person-id; `edges` are undirected co-authorship links
  *       whose `weight` (shared works) is at least 2. The result is capped at 120 nodes
- *       with a per-node fan-out of 20 direct collaborators. Returns 404 when the person
- *       does not exist or has no co-authorship network.
+ *       with a per-node fan-out of 20 collaborators. Returns 404 when the person does
+ *       not exist; a person without qualifying co-authors gets 200 with only the
+ *       central node and no edges.
  *     parameters:
  *       - name: id
  *         in: path
@@ -209,6 +215,8 @@ router.get('/persons/:id/collaborators', [...validatePersonId, ...validateCollab
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth], collaborationsController.getCollaborationNetwork);
 
@@ -219,11 +227,16 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *     summary: Get top research collaborations
  *     tags: [Collaborations]
  *     description: >-
- *       Most productive research partnerships — pairs of persons who co-authored,
- *       ranked by shared-work count. Restricted to the top 2000 persons by total works,
- *       keeping pairs whose shared-work count is at least `min_collaborations`. `data`
- *       is a flat array ordered by shared works descending; the partnership summary is in
- *       `meta.summary`.
+ *       Most productive research partnerships: pairs among the 2,000 persons with the most
+ *       works (`total_works >= 30`) who share works as AUTHOR on both sides, each shared
+ *       work counted once, keeping pairs with at least `min_collaborations` shared works.
+ *       `data` is a flat array ordered by shared works DESC, average shared citations DESC,
+ *       then the person ids; `ranking` is the global rank (offset + index + 1).
+ *       `avg_shared_citations` is the mean `works.citation_count` of the shared works and the
+ *       timespan uses `works.latest_publication_year`. Same statement, pair shape and strength
+ *       scale as `/metrics/collaborations` (which defaults `min_collaborations` to 2 and has no
+ *       year filters). `pagination.total` is exact; if the statement exceeds its budget the
+ *       page is empty with `meta.degraded = true` and `meta.pagination_total_exact = false`.
  *     parameters:
  *       - name: min_collaborations
  *         in: query
@@ -235,14 +248,14 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *           default: 5
  *       - name: year_from
  *         in: query
- *         description: Keep pairs with at least one shared publication year >= this value.
+ *         description: Count only shared works whose latest publication year is >= this value.
  *         schema:
  *           type: integer
  *           minimum: 1900
  *           example: 2015
  *       - name: year_to
  *         in: query
- *         description: Keep pairs with at least one shared publication year <= this value.
+ *         description: Count only shared works whose latest publication year is <= this value.
  *         schema:
  *           type: integer
  *           minimum: 1900
@@ -272,15 +285,17 @@ router.get('/persons/:id/network', [...validatePersonId, ...validateNetworkDepth
  *                         Includes `source` (`collaboration_ranking`),
  *                         `summary.{total_partnerships,avg_collaborations}`,
  *                         `filters.{min_collaborations,year_from,year_to}`,
- *                         `query_time_ms`, `pagination_extras.offset`, and (only when the
- *                         self-join hits its statement-timeout budget and the page falls
- *                         back to empty) `degraded: true`.
+ *                         `pagination_total_exact`, `query_time_ms`,
+ *                         `pagination_extras.offset`, and `degraded: true` only when the
+ *                         ranking statement exceeded its budget (the page is then empty).
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/collaborations/top', validateTopCollaborations, collaborationsController.getTopCollaborations);
 

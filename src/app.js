@@ -212,14 +212,14 @@ app.get('/', (req, res) => {
     },
     system_status: {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
-      search_engine: 'Manticore Search (SphinxQL) full-text for works and persons, including the works venue filter; MariaDB FULLTEXT for organizations (ft_organizations_name), subjects (ft_subjects_term) and the /publications venue filter (ft_venues_search)',
+      search_engine: 'Manticore Search (SphinxQL) full-text for works and persons, including the works venue filter; MariaDB FULLTEXT for organizations (ft_organizations_name) and the /publications venue filter (ft_venues_search)',
       cache: 'Redis; per-endpoint TTLs from 1 minute to 48 hours',
       rate_limiting: 'Public requests limited to 120/min per IP; a valid X-Access-Key removes the limit',
       authentication: 'No key required for data and metrics endpoints; X-Access-Key still gates /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics)'
     },
     main_categories: {
       search_discovery: {
-        description: 'Search across works, persons, and publications backed by Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations, subjects and the /publications venue filter',
+        description: 'Search across works, persons, and publications backed by Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations and the /publications venue filter',
         endpoints: ['/search/works', '/search/persons', '/search/advanced', '/search/autocomplete', '/search/global']
       },
       academic_works: {
@@ -261,7 +261,7 @@ app.get('/', (req, res) => {
       collected_at: homepageStats?.collected_at || null
     },
     technical_features: {
-      search_performance: 'Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations (ft_organizations_name), subjects (ft_subjects_term) and the /publications venue filter (ft_venues_search)',
+      search_performance: 'Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations (ft_organizations_name) and the /publications venue filter (ft_venues_search)',
       authentication: 'Open access: data and metrics endpoints need no key. An optional X-Access-Key (header: x-access-key | x-internal-key | x-api-key) lifts the rate limit and unlocks /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics).',
       rate_limits: 'Unauthenticated requests: 120/min per IP. No limit when a valid X-Access-Key is supplied.',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
@@ -392,8 +392,11 @@ const publicationsController = require('./controllers/publications.controller');
  *       - `/doi.org/{doi}` (e.g. `/doi.org/10.4324/9781003371694`)
  *       - `/https://doi.org/{doi}` (e.g. `/https://doi.org/10.4324/9781003371694`)
  *
- *       Returns the publication-shaped payload with the parent `work` block embedded,
- *       resolving to the exact publication that owns the DOI.
+ *       Resolves to the exact publication that owns the DOI (lookup on the
+ *       unique `publications.doi`; prefixes stripped, case ignored) and returns the same payload as `GET /publications/{id}`,
+ *       including its `type`, the parent `work` block, `siblings`,
+ *       `review_relations`, `citations` and `references`. The `https://` form
+ *       needs its double slash intact; `/https:/doi.org/...` is a 404.
  *     tags: [Publications]
  *     parameters:
  *       - in: path
@@ -401,20 +404,20 @@ const publicationsController = require('./controllers/publications.controller');
  *         required: true
  *         schema:
  *           type: string
- *         description: DOI identifier (with or without doi.org prefix)
+ *         description: DOI identifier (with or without doi.org prefix); slashes need no encoding
  *         example: 10.4324/9781003371694
  *       - in: query
  *         name: include_citations
  *         schema:
  *           type: boolean
  *           default: true
- *         description: When false, `data.citations` is set to null (the key is still present, not omitted).
+ *         description: "`false`, `0` or `no` set `data.citations` to null (the key stays). Independent of `include_references`."
  *       - in: query
  *         name: include_references
  *         schema:
  *           type: boolean
  *           default: true
- *         description: When false, `data.references` is set to null (the key is still present, not omitted).
+ *         description: "`false`, `0` or `no` set `data.references` to null (the key stays). Independent of `include_citations`."
  *     responses:
  *       200:
  *         description: Publication resolved from the DOI, with the parent work embedded
@@ -433,6 +436,8 @@ const publicationsController = require('./controllers/publications.controller');
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 app.get(/^\/((?:https?:\/\/)?doi\.org\/)?(\d{2}\..+)$/, (req, res, next) => {
   req.params.doi = req.params[1];
@@ -466,7 +471,7 @@ const startServer = async () => {
       logger.info(`Server running on ${BIND_HOST}:${PORT} (public entry point is nginx)`);
       logger.info(`API Bibliografica ${process.env.NODE_ENV || 'development'} mode`);
       logger.info(`Health check: http://${BIND_HOST}:${PORT}/health`);
-      logger.info('Search engine: Manticore Search (SphinxQL) for works and persons; MariaDB FULLTEXT for organizations, subjects and the /publications venue filter');
+      logger.info('Search engine: Manticore Search (SphinxQL) for works and persons; MariaDB FULLTEXT for organizations and the /publications venue filter');
     });
 
     server.on('error', (error) => {

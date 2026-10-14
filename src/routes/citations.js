@@ -47,7 +47,10 @@ const validateNetworkDepth = [
  *   get:
  *     summary: Get works that cite this work
  *     tags: [Citations]
- *     description: Retrieve works that cite the target, resolved by direct work link or DOI matching. Each citation entry includes `citation.type` and `citation.status`.
+ *     description: >-
+ *       Works that cite the target, matched by direct work link (`cited_work_id`) or by any DOI of the target's
+ *       publications (`cited_doi`), one row per citing work, newest edge first. Each entry carries
+ *       `citation.type` and `citation.status`. `pagination.total` is an exact `COUNT(DISTINCT citing_work_id)`.
  *     parameters:
  *       - name: id
  *         in: path
@@ -58,7 +61,7 @@ const validateNetworkDepth = [
  *           example: 1
  *       - name: type
  *         in: query
- *         description: Filter by citation type
+ *         description: Filter by citation type (case-insensitive; `all` disables the filter).
  *         schema:
  *           type: string
  *           enum: [all, POSITIVE, NEUTRAL, NEGATIVE, SELF]
@@ -105,6 +108,8 @@ const validateNetworkDepth = [
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/works/:id/citations', [...validateWorkId, ...validatePagination, ...validateCitationType], citationsController.getWorkCitations);
 
@@ -146,12 +151,16 @@ router.get('/works/:id/citations', [...validateWorkId, ...validatePagination, ..
  *                       $ref: '#/components/schemas/PaginationMeta'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/works/:id/references', [...validateWorkId, ...validatePagination], citationsController.getWorkReferences);
 
@@ -162,10 +171,11 @@ router.get('/works/:id/references', [...validateWorkId, ...validatePagination], 
  *     summary: Get bibliometric metrics for a work
  *     tags: [Citations]
  *     description: >-
- *       Retrieve citation/reference counts, citation-type breakdown, temporal span and impact
- *       indicators for a work. `total_citations_received` counts RESOLVED `work_references` rows and
- *       may differ from the denormalized `works.citation_count` surfaced as `cited_by_count` on
- *       `/works`. `temporal_metrics` years are clamped to a valid range (1000..current year+1).
+ *       Citation/reference counts, citation-type breakdown, temporal span and impact indicators for a
+ *       work. `total_citations_received` counts RESOLVED `work_references` rows by `cited_work_id` and can
+ *       differ from the denormalized `works.citation_count` surfaced as `cited_by_count` on `/works`.
+ *       `temporal_metrics` use citing-work years within 1000..current year + 1. Failures are not masked:
+ *       a statement-budget overrun returns 503 `REQUEST_TIMEOUT`, other errors 500.
  *     parameters:
  *       - name: id
  *         in: path
@@ -188,12 +198,16 @@ router.get('/works/:id/references', [...validateWorkId, ...validatePagination], 
  *                       $ref: '#/components/schemas/WorkMetricsReport'
  *                     meta:
  *                       type: object
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       429:
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/works/:id/metrics', validateWorkId, citationsController.getWorkMetrics);
 
@@ -204,10 +218,12 @@ router.get('/works/:id/metrics', validateWorkId, citationsController.getWorkMetr
  *     summary: Get citation network for a work
  *     tags: [Citations]
  *     description: >-
- *       Build a BFS-expanded citation network (nodes + directed edges) around a central work over
- *       resolved `work_references`. The graph is a bounded sample, not exhaustive: it is capped at
- *       ~120 nodes and 100 edges, so a deep/dense work returns a truncated graph. `nodes` is an
- *       object keyed by work-id string, not an array.
+ *       BFS-expanded citation network (nodes + directed edges, `source` cites `target`) around a central
+ *       work over RESOLVED `work_references`. The graph is a bounded sample: at most 100 edges and ~120
+ *       nodes. A work with 100 or more resolved edges fills the cap at depth 1, so deeper levels add
+ *       nothing; `network_depth` echoes the requested depth and `network_stats.max_depth` the deepest level
+ *       reached. `nodes` is an object keyed by work-id string, not an array. Failures are not masked: a
+ *       statement-budget overrun returns 503 `REQUEST_TIMEOUT`, other errors 500.
  *     parameters:
  *       - name: id
  *         in: path
@@ -246,6 +262,8 @@ router.get('/works/:id/metrics', validateWorkId, citationsController.getWorkMetr
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/works/:id/network', [...validateWorkId, ...validateNetworkDepth], citationsController.getCitationNetwork);
 

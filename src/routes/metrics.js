@@ -71,19 +71,19 @@ const validateCollaborations = [
  *     summary: Annual publication statistics
  *     tags: [Metrics]
  *     description: >-
- *       Yearly roll-up served from the operator-maintained precomputed metrics_annual_summary
- *       table (single indexed read per page, sub-second; transparent fallback to a live
- *       publications aggregation if the table is absent). Years are bounded 1000..YEAR(CURDATE())+1
- *       and ordered year DESC. Each row nests a metrics block (unique_organizations and
- *       avg_citations are real precomputed values) and a growth block (growth.* are always null).
- *       There is no total_downloads field — download counts are not computed in the DB.
- *       meta.summary carries total_years, date_range, total_works_all_years, avg_works_per_year
- *       and a growth_trend enum (increasing|stable|decreasing|insufficient_data or null).
+ *       Yearly roll-up read from the operator-maintained metrics_annual_summary table (fallback to a
+ *       live aggregation over publications only if the table is absent). Years are bounded
+ *       1000..YEAR(CURDATE())+1 and ordered year DESC. Each row nests a metrics block and a growth
+ *       block (growth.* are always null). meta.summary covers every year in the requested range, not
+ *       only the page: scope ("all_years_in_range"), total_years, date_range ("min-max"),
+ *       total_publications_all_years, avg_publications_per_year, growth_trend (mean of the 3 most recent
+ *       complete years vs the 3 before; increasing|stable|decreasing above ±10%, insufficient_data with
+ *       fewer than 6 complete years), source and refreshed_at (latest refresh of the summary table).
  *     parameters:
  *       - name: year_from
  *         in: query
  *         required: false
- *         description: Inclusive lower bound on year (effective service floor is 1000).
+ *         description: Inclusive lower bound on year (1900..current year + 1).
  *         schema:
  *           type: integer
  *           minimum: 1900
@@ -91,7 +91,7 @@ const validateCollaborations = [
  *       - name: year_to
  *         in: query
  *         required: false
- *         description: Inclusive upper bound on year.
+ *         description: Inclusive upper bound on year (1900..current year + 1).
  *         schema:
  *           type: integer
  *           minimum: 1900
@@ -123,6 +123,8 @@ const validateCollaborations = [
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
 
@@ -132,11 +134,12 @@ router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
  *   get:
  *     summary: Top venues by works count
  *     description: >-
- *       Venues ranked by venues.works_count DESC (tiebreak total_score DESC). Compact ranking
- *       rows only. Note: metrics.unique_authors, metrics.open_access_works and
- *       metrics.open_access_percentage are placeholder zeros (not yet computed). timespan uses
- *       the venue coverage years. meta.summary carries total_venues_ranked, top_venue_publications,
- *       total_unique_authors (0), avg_open_access_percentage (0) and the page's distinct venue_types.
+ *       Venues ranked by venues.works_count DESC (tiebreak total_score DESC), restricted to
+ *       works_count > 0. ranking is the global rank (offset + index + 1). metrics.unique_authors,
+ *       metrics.open_access_works and metrics.open_access_percentage are placeholder zeros (not
+ *       computed). timespan uses the venue coverage years. meta.summary carries total_venues_ranked,
+ *       top_venue_publications, total_unique_authors (0), avg_open_access_percentage (0) and the
+ *       page's distinct venue_types.
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -166,6 +169,8 @@ router.get('/annual', validateAnnualStats, metricsController.getAnnualStats);
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/venues', validateLimit, metricsController.getTopVenues);
 
@@ -176,10 +181,12 @@ router.get('/venues', validateLimit, metricsController.getTopVenues);
  *     summary: Institution productivity ranking
  *     description: >-
  *       Organizations ranked by organizations.publication_count DESC (tiebreak id ASC), restricted
- *       to publication_count > 0. Compact ranking rows only. productivity_score is always null.
+ *       to publication_count > 0. ranking is the global rank (offset + index + 1). Stored metric
+ *       columns are presented verbatim; productivity_score is always null.
  *       metrics.open_access_works_count is scope-mismatched and can exceed total_works, so do not
- *       derive an OA percentage from it. timespan first/latest publication year come from a bounded
- *       authorships+publications join and the latest year may be a garbage future year.
+ *       derive an OA percentage from it. timespan first/latest publication year come from an
+ *       authorships+publications join over the page's organizations and the latest year can be a
+ *       future year present in the data.
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -218,6 +225,8 @@ router.get('/venues', validateLimit, metricsController.getTopVenues);
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/institutions', validateInstitutionProductivity, metricsController.getInstitutionProductivity);
 
@@ -227,9 +236,10 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  *   get:
  *     summary: Person production analytics
  *     description: >-
- *       Researchers ranked by persons.total_works DESC (base filter total_works > 0). Compact
- *       ranking rows only. primary_affiliation and productivity_score are always null.
- *       meta.filters echoes organization_id (as a string when provided).
+ *       Researchers ranked by persons.total_works DESC, then persons.id DESC (base filter
+ *       total_works > 0). ranking is the global rank (offset + index + 1). primary_affiliation and
+ *       productivity_score are always null. meta.filters echoes organization_id (as a string when
+ *       provided).
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -238,10 +248,10 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  *       - name: min_works
  *         in: query
  *         required: false
- *         description: Minimum works threshold (filters total_works >= min_works). No default applied when omitted.
+ *         description: Minimum works threshold (total_works >= min_works). Non-integer or negative values are a 400; 0 or omitted applies no extra filter.
  *         schema:
  *           type: integer
- *           minimum: 1
+ *           minimum: 0
  *       - name: organization_id
  *         in: query
  *         required: false
@@ -273,6 +283,8 @@ router.get('/institutions', validateInstitutionProductivity, metricsController.g
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/persons', validatePersonProduction, metricsController.getPersonProduction);
 
@@ -282,12 +294,16 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  *   get:
  *     summary: Top collaboration pairs
  *     description: >-
- *       Top co-authorship pairs computed over the top ~2000 authors (persons.total_works >= 30),
- *       ordered by shared_works DESC. Each row is a flat pair shape identical to CollaborationPair
- *       (also served by /collaborations/top). meta.summary carries total_collaboration_pairs,
- *       strongest_collaboration_count, avg_collaboration_years and a
- *       collaboration_strength_distribution histogram. On statement-timeout the service degrades to
- *       an empty data array with meta.degraded = true.
+ *       Top co-authorship pairs, computed by the same statement as /collaborations/top: pairs among
+ *       the 2,000 persons with the most works (total_works >= 30), AUTHOR role on both sides, each shared
+ *       work counted once. Ordered by shared_works DESC, avg_shared_citations DESC, then the person ids;
+ *       ranking is the global rank (offset + index + 1). Rows use the CollaborationPair shape and the
+ *       shared strength scale. pagination.total is exact and meta.pagination_total_exact is true; if the
+ *       statement exceeds its budget the page is empty with meta.degraded = true and
+ *       meta.pagination_total_exact = false. meta.summary carries total_collaboration_pairs,
+ *       strongest_collaboration_count, avg_collaboration_years and a page-level
+ *       collaboration_strength_distribution histogram. Differs from /collaborations/top only in the
+ *       min_collaborations default (2 here, 5 there) and the absence of year filters.
  *     tags: [Metrics]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -296,7 +312,7 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  *       - name: min_collaborations
  *         in: query
  *         required: false
- *         description: Minimum shared works per pair (HAVING shared_works >= min_collaborations). Defaults to 2.
+ *         description: Minimum shared works per pair (shared_works >= min_collaborations). Defaults to 2.
  *         schema:
  *           type: integer
  *           minimum: 1
@@ -326,6 +342,8 @@ router.get('/persons', validatePersonProduction, metricsController.getPersonProd
  *         $ref: '#/components/responses/RateLimitExceeded'
  *       500:
  *         $ref: '#/components/responses/InternalError'
+ *       503:
+ *         $ref: '#/components/responses/RequestTimeout'
  */
 router.get('/collaborations', validateCollaborations, metricsController.getCollaborations);
 

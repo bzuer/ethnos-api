@@ -13,7 +13,7 @@ const {
   countDistinctContributors
 } = require('../dto/helpers');
 const { withTimeout, latestPublicationJoin, isStatementTimeout } = require('../utils/db');
-const { hydrateAuthorsForWorks } = require('../utils/hydration');
+const { hydrateAuthorsForWorks, hydrateAuthorCountsByWork } = require('../utils/hydration');
 const { fetchReviewRelations } = require('../utils/reviewRelations');
 const searchEngine = require('./searchEngine.service');
 
@@ -233,7 +233,7 @@ class PublicationsService {
   async getPublicationById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
-    const cacheKey = `publication:${id}:v5:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `publication:${id}:v6:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -720,12 +720,15 @@ class PublicationsService {
         LEFT JOIN venues v ON v.id = p.venue_id
         WHERE w.id IN (${placeholders})
       `, { replacements: allWorkIds, type: sequelize.QueryTypes.SELECT });
-      const authorsMap = await hydrateAuthorsForWorks(allWorkIds);
+      const [authorsMap, countsMap] = await Promise.all([
+        hydrateAuthorsForWorks(allWorkIds, 3),
+        hydrateAuthorCountsByWork(allWorkIds)
+      ]);
       for (const row of rows) {
         const authors = authorsMap.get(row.work_id) || [];
         workMap[row.work_id] = {
           ...row,
-          authors_count: countDistinctContributors(authors),
+          authors_count: countsMap.get(row.work_id) ?? countDistinctContributors(authors),
           authors_string: contributorNames(authors).join('; ') || null
         };
       }
@@ -737,7 +740,7 @@ class PublicationsService {
         work_id: row[idField],
         title: wm.title || null,
         type: wm.work_type || null,
-        year: wm.year || null,
+        publication_year: wm.year || null,
         venue_name: wm.venue_name || wm.venue_abbreviated_name || null,
         venue_abbreviated_name: wm.venue_abbreviated_name || null,
         doi: wm.doi || row.cited_doi || null,
