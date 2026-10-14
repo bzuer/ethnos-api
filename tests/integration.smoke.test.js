@@ -714,6 +714,14 @@ describe('Integration smoke (real DB)', () => {
       assert.equal(beyond.pagination.total, first.pagination.total, 'total is the real pair count, not the offset');
     });
 
+    test('query values reach the API unescaped', async () => {
+      const doi = '10.1002/(sici)1096-8644(1996)23+<1::aid-ajpa1>3.0.co;2-9';
+      const byDoi = assertSuccess(await fetchJson(`/publications?doi=${encodeURIComponent(doi)}`), 'SICI DOI filter');
+      assert.equal(byDoi.data.length, 1, 'a DOI containing angle brackets matches');
+      const search = assertSuccess(await fetchJson('/search/works?q=p%3C0.05&limit=1'), 'q with <');
+      assert.equal(search.meta.query, 'p<0.05', 'the query is echoed verbatim');
+    });
+
     test('client errors are 4xx and the OpenAPI document is raw', async () => {
       const cors = await fetch(`${BASE_URL}/health/liveness`, { headers: { Origin: 'https://not-allowed.example' } });
       assert.equal(cors.status, 200, 'a disallowed origin gets no CORS headers, not a 500');

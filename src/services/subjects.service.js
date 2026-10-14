@@ -165,18 +165,18 @@ class SubjectsService {
     );
     const storedTotal = subjectRows?.[0]?.total ? Number.parseInt(subjectRows[0].total, 10) : 0;
 
+    const countSql = `SELECT COUNT(*) AS total FROM work_subjects ws WHERE ${whereClause}`;
     const countFiltered = async () => {
       if (!filtered) return { total: storedTotal, exact: true };
-      try {
-        const [rows] = await pool.query(
-          withTimeout(`SELECT COUNT(*) AS total FROM work_subjects ws WHERE ${whereClause}`, 2000),
-          conditionParams
-        );
-        return { total: Number.parseInt(rows?.[0]?.total ?? 0, 10), exact: true };
-      } catch (error) {
-        if (isStatementTimeout(error)) return { total: storedTotal, exact: false };
-        throw error;
-      }
+      return cache.rememberCount('subject:count:v1', countSql, conditionParams, async () => {
+        try {
+          const [rows] = await pool.query(withTimeout(countSql, 2000), conditionParams);
+          return { total: Number.parseInt(rows?.[0]?.total ?? 0, 10), exact: true };
+        } catch (error) {
+          if (isStatementTimeout(error)) return { total: storedTotal, exact: false };
+          throw error;
+        }
+      });
     };
 
     try {

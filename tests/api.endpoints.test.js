@@ -1387,6 +1387,24 @@ describe('Cache TTL resolution', () => {
     expect(cacheService.resolveTtl('nope')).toBe(cacheService.defaultTTL.default);
     expect(cacheService.resolveTtl(0)).toBe(cacheService.defaultTTL.default);
   });
+
+  test('count outcomes are reused per statement and kept longer when exact', async () => {
+    const store = new Map();
+    const ttls = [];
+    stubMethod(cacheService, 'get', async (key) => store.get(key) || null);
+    stubMethod(cacheService, 'set', async (key, value, ttl) => { store.set(key, value); ttls.push(ttl); return true; });
+    let runs = 0;
+    const produce = async () => { runs += 1; return { total: 42, exact: true }; };
+    const first = await cacheService.rememberCount('works:count:v1', 'SELECT COUNT(*) FROM t WHERE a = ?', [1], produce);
+    const again = await cacheService.rememberCount('works:count:v1', 'SELECT COUNT(*) FROM t WHERE a = ?', [1], produce);
+    await cacheService.rememberCount('works:count:v1', 'SELECT COUNT(*) FROM t WHERE a = ?', [2], produce);
+    expect(first).toEqual({ total: 42, exact: true });
+    expect(again).toEqual(first);
+    expect(runs).toBe(2);
+    expect([...store.keys()].every((key) => key.startsWith('works:count:v1:'))).toBe(true);
+    await cacheService.rememberCount('works:count:v1', 'SELECT 1', [], async () => ({ total: 7, exact: false }));
+    expect(ttls).toEqual([3600, 3600, 600]);
+  });
 });
 
 describe('Dashboard health derivation', () => {

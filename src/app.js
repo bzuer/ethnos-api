@@ -266,7 +266,7 @@ app.get('/', (req, res) => {
       rate_limits: 'Unauthenticated requests: 120/min per IP. No limit when a valid X-Access-Key is supplied.',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
       cache_ttl: 'per endpoint, 1 minute to 48 hours',
-      security: 'XSS protection, SQL injection prevention, abuse detection'
+      security: 'Parameterized SQL, whitelisted full-text input, CSP and nosniff headers, per-IP rate limiting'
     },
     quick_examples: {
       search_works: 'GET /search/works?q=machine+learning&limit=10',

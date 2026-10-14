@@ -1,7 +1,10 @@
+const crypto = require('crypto');
 const { getActiveRedisClient } = require('../config/redis');
 const { logger } = require('../middleware/errorHandler');
 
 const MEMORY_CACHE_MAX_ENTRIES = 5000;
+const COUNT_TTL_EXACT_SECONDS = 3600;
+const COUNT_TTL_ESTIMATE_SECONDS = 600;
 
 class CacheService {
   constructor() {
@@ -70,6 +73,16 @@ class CacheService {
       logger.warn('Cache set error', { key, error: error.message });
       return false;
     }
+  }
+
+  async rememberCount(prefix, sql, params, produce) {
+    const digest = crypto.createHash('sha1').update(`${sql}\u0000${JSON.stringify(params || [])}`).digest('hex');
+    const key = `${prefix}:${digest}`;
+    const cached = await this.get(key);
+    if (cached && typeof cached.total === 'number' && typeof cached.exact === 'boolean') return cached;
+    const outcome = await produce();
+    await this.set(key, outcome, outcome.exact ? COUNT_TTL_EXACT_SECONDS : COUNT_TTL_ESTIMATE_SECONDS);
+    return outcome;
   }
 
   async del(key) {

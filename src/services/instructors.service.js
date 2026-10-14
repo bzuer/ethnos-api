@@ -475,7 +475,7 @@ class InstructorsService {
   }
 
   async getInstructorStatistics(personId) {
-    const cacheKey = `instructor:${personId}:statistics:v2`;
+    const cacheKey = `instructor:${personId}:statistics:v3`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -525,7 +525,6 @@ class InstructorsService {
     const authorshipStatsQuery = `
       SELECT
         p.total_works AS works_authored,
-        p.total_works AS confirmed_authorships,
         CASE WHEN p.signature_id IS NOT NULL THEN 1 ELSE 0 END AS unique_signatures,
         p.first_publication_year,
         p.latest_publication_year
@@ -604,10 +603,6 @@ class InstructorsService {
     `;
 
     const [mostUsedAuthors] = await pool.execute(mostUsedAuthorsQuery, [personId]);
-    mostUsedAuthors.forEach(row => {
-      row.author_string = row.author_name || null;
-      row.first_author_name = row.author_name || null;
-    });
 
     const subjectsExpertiseQuery = `
       SELECT 
@@ -643,12 +638,6 @@ class InstructorsService {
 
     const [collaborators] = await pool.execute(collaboratorsQuery, [personId]);
 
-    for (const author of mostUsedAuthors) {
-      if (author.author_string) {
-        author.authors_array = author.author_string.split(';').map(name => name.trim());
-      }
-    }
-
     const result = {
       person: personInfo[0],
       teaching_profile: {
@@ -660,7 +649,6 @@ class InstructorsService {
       authorship_profile: authorshipStats[0] || {
         works_authored: 0,
         unique_signatures: 0,
-        confirmed_authorships: 0,
         first_publication_year: null,
         latest_publication_year: null
       },
@@ -677,9 +665,7 @@ class InstructorsService {
         ),
         academic_productivity_ratio: authorshipStats[0]?.works_authored && teachingStats[0]?.courses_taught ? 
           (authorshipStats[0].works_authored / teachingStats[0].courses_taught).toFixed(2) : '0.00',
-        bibliography_diversity_score: bibliographyUsage.length,
-        signature_consistency_score: signatures.length > 0 ? 
-          Math.max(...signatures.map(s => s.works_with_signature)) / signatures.length : 0
+        bibliography_diversity_score: bibliographyUsage.length
       }
     };
 

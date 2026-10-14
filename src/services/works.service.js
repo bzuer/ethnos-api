@@ -389,17 +389,19 @@ class WorksService {
       params = [...match.params, ...worksParams];
     }
 
-    try {
-      const [row] = await sequelize.query(withTimeout(sql, WORKS_COUNT_BUDGET_MS), {
-        replacements: params,
-        type: sequelize.QueryTypes.SELECT
-      });
-      return { total: parseInt(row?.total, 10) || 0, exact: true };
-    } catch (error) {
-      if (!isStatementTimeout(error)) throw error;
-      logger.warn('Works count exceeded its budget; serving the corpus estimate', { budget_ms: WORKS_COUNT_BUDGET_MS });
-      return { total: ESTIMATED_WORKS_TOTAL, exact: false };
-    }
+    return cacheService.rememberCount('works:count:v1', sql, params, async () => {
+      try {
+        const [row] = await sequelize.query(withTimeout(sql, WORKS_COUNT_BUDGET_MS), {
+          replacements: params,
+          type: sequelize.QueryTypes.SELECT
+        });
+        return { total: parseInt(row?.total, 10) || 0, exact: true };
+      } catch (error) {
+        if (!isStatementTimeout(error)) throw error;
+        logger.warn('Works count exceeded its budget; serving the corpus estimate', { budget_ms: WORKS_COUNT_BUDGET_MS });
+        return { total: ESTIMATED_WORKS_TOTAL, exact: false };
+      }
+    });
   }
 
   async _getWorksVitrine(f, limit, offset, page) {

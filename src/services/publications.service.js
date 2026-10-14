@@ -533,7 +533,7 @@ class PublicationsService {
         ${/\bw\./.test(whereClause) ? 'INNER JOIN works w ON w.id = p.work_id' : ''}
         ${whereClause}
       `;
-      countPromise = sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
+      countPromise = cacheService.rememberCount('publications:count:v1', countSql, params, () => sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
         replacements: params,
         type: sequelize.QueryTypes.SELECT
       })
@@ -542,7 +542,7 @@ class PublicationsService {
           if (!isStatementTimeout(countError)) throw countError;
           logger.warn('Publications list count exceeded its budget; serving the corpus estimate', { budget_ms: COUNT_BUDGET_MS });
           return { total: ESTIMATED_PUBLICATIONS_TOTAL, exact: false };
-        });
+        }));
     }
 
     const idSelectionSql = useFilesFastPath

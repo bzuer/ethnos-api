@@ -6697,13 +6697,6 @@ module.exports = {
             "type": "string",
             "nullable": true
           },
-          "name_variations": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Always empty (reserved)."
-          },
           "identifiers": {
             "type": "object",
             "properties": {
@@ -6783,10 +6776,6 @@ module.exports = {
           "unique_signatures": {
             "type": "integer",
             "description": "1 if persons.signature_id is set, else 0."
-          },
-          "confirmed_authorships": {
-            "type": "integer",
-            "description": "persons.total_works (same source)."
           },
           "publication_span": {
             "type": "object",
@@ -6900,23 +6889,6 @@ module.exports = {
             },
             "courses_count": {
               "type": "integer"
-            },
-            "author_string": {
-              "type": "string",
-              "nullable": true,
-              "description": "Mirror of author_name."
-            },
-            "first_author_name": {
-              "type": "string",
-              "nullable": true,
-              "description": "Mirror of author_name."
-            },
-            "authors_array": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "author_string split on ';' (present only when author_string is non-empty)."
             }
           }
         }
@@ -6976,10 +6948,6 @@ module.exports = {
           "bibliography_diversity_score": {
             "type": "integer",
             "description": "Number of distinct reading_type groups."
-          },
-          "signature_consistency_score": {
-            "type": "number",
-            "description": "Max works_with_signature divided by signature count; 0 when none."
           }
         }
       }

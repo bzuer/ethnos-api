@@ -122,7 +122,6 @@ const formatInstructorStatistics = (stats) => {
       preferred_name: person.preferred_name || null,
       given_names: person.given_names || null,
       family_name: person.family_name || null,
-      name_variations: [],
       identifiers: {
         orcid: person.orcid || null,
         lattes_id: person.lattes_id || null,
@@ -146,7 +145,6 @@ const formatInstructorStatistics = (stats) => {
     authorship_profile: {
       works_authored: parseInt(authorship.works_authored) || 0,
       unique_signatures: parseInt(authorship.unique_signatures) || 0,
-      confirmed_authorships: parseInt(authorship.confirmed_authorships) || 0,
       publication_span: {
         first_year: authorship.first_publication_year || null,
         latest_year: authorship.latest_publication_year || null
