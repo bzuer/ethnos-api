@@ -10,7 +10,8 @@
 --   2. Operator regenerates the schema snapshot:
 --        mysqldump -d --routines --events --order-by-primary --single-transaction \
 --          --compact --skip-comments --skip-tz-utc --default-character-set=utf8mb4 \
---          data > backups/data.schema.$(date +%Y-%m-%d).sql
+--          data > backups/data.schema.$(date +%Y-%m-%d).sql   (a same-day re-dump may
+--          carry a _HH-MM suffix, e.g. data.schema.2026-10-14_00-40.sql)
 --   3. The API is updated to consult the new snapshot.
 --
 -- Statements are idempotent. Empty a section once the operator confirms it is
@@ -27,6 +28,27 @@
 --     time). These need operator-maintained denormalized venue-level columns
 --     (unique_authors_count / open_access_works_count) refreshed on the stats
 --     cadence. Left as 0 until provided; not blocking.
+
+-- -----------------------------------------------------------------------------
+-- PENDING (2026-10-14, venues index audit): optional redundant-index cleanup.
+-- OPTIONAL — no venues query depends on it either way. Apply only if wanted.
+-- -----------------------------------------------------------------------------
+
+-- (venues) idx_eissn (eissn) duplicates UNIQUE KEY `eissn` (eissn) column for
+--     column and order, so every lookup it could serve is served by the unique
+--     key; it only costs a second B-tree maintained on every venues write. No
+--     routine in the 2026-10-14 snapshot names it. Drop it only if no pipeline
+--     query outside the database names it in an index hint (FORCE/USE INDEX).
+ALTER TABLE venues DROP INDEX IF EXISTS idx_eissn;
+
+-- Audit result recorded for the next reader: the /venues endpoints need NO new
+-- index. Every access path is already indexed (publications.venue_id via
+-- idx_publications_venue_year_oa, venue_subjects PK, venues.publisher_id via
+-- idx_venues_publisher, PK lookups); the 2026-10-14 slowdowns (venue detail up
+-- to 4.9 s) were query-shape defects fixed API-side. A (total_score DESC, name)
+-- index would make the default /venues sort index-ordered, but the narrow
+-- id-selection already answers in ~0.2 s uncached on a 2 h-cached listing, so
+-- it is not requested.
 
 -- Previously applied (recorded in backups/data.schema.<date>.sql):
 --   * metrics_annual_summary (PK year; total_publications, unique_works,

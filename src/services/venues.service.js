@@ -119,6 +119,7 @@ const buildBaseSelect = (summaryExpr) => `
   v.scielo_id,
   v.mag_id,
   v.openlibrary_work,
+  v.mohrsiebeck_category_id,
   v.coverage_start_year,
   v.coverage_end_year,
   v.works_count,
@@ -200,6 +201,7 @@ const mapVenueRow = (row) => {
     scielo_id: row.scielo_id || null,
     mag_id: row.mag_id || null,
     openlibrary_work: row.openlibrary_work || null,
+    mohrsiebeck_category_id: toNullableInt(row.mohrsiebeck_category_id),
     coverage_start_year: toNullableInt(row.coverage_start_year),
     coverage_end_year: toNullableInt(row.coverage_end_year),
     works_count: toInt(row.works_count, 0),
@@ -244,11 +246,11 @@ const mapVenueRow = (row) => {
 };
 
 class VenuesService {
-  async _loadVenueRows(venueIds = []) {
+  async _loadVenueRows(venueIds = [], select = BASE_SELECT_DETAIL) {
     const uniqueIds = Array.from(new Set((venueIds || []).filter(Boolean)));
     if (uniqueIds.length === 0) return [];
     const sql = `
-      SELECT ${BASE_SELECT_DETAIL}
+      SELECT ${select}
       ${BASE_FROM}
       WHERE v.id IN (:venueIds)
     `;
@@ -315,11 +317,11 @@ class VenuesService {
         p.doi,
         p.open_access,
         w.title,
-        w.citation_count
+        p.citation_count
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
       WHERE p.venue_id = :venueId
-      ORDER BY COALESCE(w.citation_count, 0) DESC, p.year DESC, p.id DESC
+      ORDER BY p.citation_count DESC, p.year DESC, p.id DESC
       LIMIT :lim
     `), {
       replacements: { venueId, lim: limit },
@@ -346,9 +348,8 @@ class VenuesService {
         p.year,
         COUNT(*) AS works_count,
         SUM(CASE WHEN p.open_access = 1 THEN 1 ELSE 0 END) AS oa_works_count,
-        SUM(COALESCE(w.citation_count, 0)) AS cited_by_count
+        SUM(p.citation_count) AS cited_by_count
       FROM publications p
-      LEFT JOIN works w ON w.id = p.work_id
       WHERE p.venue_id IN (:venueIds) AND p.year IS NOT NULL
       GROUP BY p.venue_id, p.year
       ORDER BY p.venue_id, p.year DESC
@@ -373,60 +374,48 @@ class VenuesService {
     return map;
   }
 
-  async _loadTopAuthors(venueIds = [], limit = 10) {
-    const uniqueIds = Array.from(new Set((venueIds || []).filter(Boolean)));
-    if (uniqueIds.length === 0) return new Map();
+  async _loadTopAuthors(venueId, limit = 10) {
+    if (!venueId) return [];
 
     const sql = `
       SELECT
-        p.venue_id,
-        a.person_id,
-        COUNT(*) AS works_count,
-        MIN(a.position) AS best_position,
-        MAX(CASE WHEN a.is_corresponding = 1 THEN 1 ELSE 0 END) AS is_corresponding,
+        ranked.person_id,
+        ranked.works_count,
+        ranked.best_position,
+        ranked.is_corresponding,
         COALESCE(
           pr.preferred_name,
           TRIM(CONCAT(COALESCE(pr.given_names, ''), ' ', COALESCE(pr.family_name, '')))
         ) AS name
-      FROM publications p
-      INNER JOIN authorships a ON a.work_id = p.work_id
-      LEFT JOIN persons pr ON pr.id = a.person_id
-      WHERE p.venue_id IN (:venueIds)
-      GROUP BY p.venue_id, a.person_id, name
+      FROM (
+        SELECT
+          a.person_id,
+          COUNT(DISTINCT a.work_id) AS works_count,
+          MIN(a.position) AS best_position,
+          MAX(CASE WHEN a.is_corresponding = 1 THEN 1 ELSE 0 END) AS is_corresponding
+        FROM publications p
+        INNER JOIN authorships a ON a.work_id = p.work_id
+        WHERE p.venue_id = :venueId
+        GROUP BY a.person_id
+        ORDER BY works_count DESC, best_position ASC, a.person_id ASC
+        LIMIT :lim
+      ) ranked
+      LEFT JOIN persons pr ON pr.id = ranked.person_id
+      ORDER BY ranked.works_count DESC, ranked.best_position ASC, ranked.person_id ASC
     `;
 
     const rows = await sequelize.query(withTimeout(sql), {
-      replacements: { venueIds: uniqueIds },
+      replacements: { venueId, lim: limit },
       type: sequelize.QueryTypes.SELECT
     });
 
-    const grouped = new Map();
-    for (const row of rows) {
-      const list = grouped.get(row.venue_id) || [];
-      list.push({
-        person_id: row.person_id ?? null,
-        name: (row.name || '').trim() || null,
-        works_count: toInt(row.works_count, 0),
-        best_position: toNullableInt(row.best_position),
-        is_corresponding: toNullableBoolean(row.is_corresponding)
-      });
-      grouped.set(row.venue_id, list);
-    }
-
-    const map = new Map();
-    for (const [venueId, authors] of grouped.entries()) {
-      const sorted = authors
-        .sort((a, b) => {
-          if (b.works_count !== a.works_count) return b.works_count - a.works_count;
-          if (a.best_position !== null && b.best_position !== null && a.best_position !== b.best_position) {
-            return a.best_position - b.best_position;
-          }
-          return (a.name || '').localeCompare(b.name || '');
-        })
-        .slice(0, limit);
-      map.set(venueId, sorted);
-    }
-    return map;
+    return rows.map((row) => ({
+      person_id: row.person_id ?? null,
+      name: (row.name || '').trim() || null,
+      works_count: toInt(row.works_count, 0),
+      best_position: toNullableInt(row.best_position),
+      is_corresponding: toNullableBoolean(row.is_corresponding)
+    }));
   }
 
   async _loadRecentWorks(venueId, limit = 10) {
@@ -449,7 +438,7 @@ class VenuesService {
       FROM publications p
       INNER JOIN works w ON w.id = p.work_id
       WHERE p.venue_id = :venueId
-      ORDER BY p.year DESC, p.id DESC
+      ORDER BY p.year DESC, p.work_id DESC
       LIMIT :lim
     `;
 
@@ -522,7 +511,7 @@ class VenuesService {
     const currentOffset = Math.max(0, parseInt(pagination.offset, 10) || 0);
     const type = options.type;
 
-    const cacheKey = `venues:search:v7:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
+    const cacheKey = `venues:search:v8:${query}:${JSON.stringify({ currentPage, currentLimit, currentOffset, type })}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info(`Venues search "${query}" retrieved from cache`);
@@ -555,7 +544,7 @@ class VenuesService {
       min_id: Number.isInteger(minId) && minId > 0 ? minId : undefined
     };
 
-    const cacheKey = `venues:list:v9:${JSON.stringify(normalizedOptions)}`;
+    const cacheKey = `venues:list:v10:${JSON.stringify(normalizedOptions)}`;
     const cached = await cacheService.get(cacheKey);
     if (cached) {
       logger.info('Venues list retrieved from cache');
@@ -644,7 +633,11 @@ class VenuesService {
     }
 
     if (search && String(search).trim()) {
-      where.push('(v.name LIKE :term OR v.abbreviated_name LIKE :term OR v.issn LIKE :term OR v.eissn LIKE :term OR pub.name LIKE :term)');
+      where.push(`(v.name LIKE :term OR v.abbreviated_name LIKE :term OR v.issn LIKE :term OR v.eissn LIKE :term
+        OR v.publisher_id IN (
+          SELECT o.id FROM organizations o
+          WHERE o.id IN (SELECT vp.publisher_id FROM venues vp) AND o.name LIKE :term
+        ))`);
       replacements.term = `%${String(search).trim()}%`;
     }
 
@@ -781,26 +774,33 @@ class VenuesService {
     const scoreTiebreaker = scoreSortKeys.has(normalizedSortBy)
       ? ''
       : ', COALESCE(v.total_score, 0) DESC';
+    const orderClause = normalizedSortBy === 'id'
+      ? `v.id ${sortOrderFinal}`
+      : `${sortNullGuard}${sortField} ${sortOrderFinal}${scoreTiebreaker}, v.name ASC, v.id ASC`;
 
-    const listSql = `
-      SELECT ${BASE_SELECT_LIST}
-      ${BASE_FROM}
+    const idSql = `
+      SELECT v.id
+      FROM venues v
       ${whereClause}
-      ORDER BY ${sortNullGuard}${sortField} ${sortOrderFinal}${scoreTiebreaker}, v.name ASC
+      ORDER BY ${orderClause}
       LIMIT :lim OFFSET :off
     `;
-    const countSql = `SELECT COUNT(*) AS total ${BASE_FROM} ${whereClause}`;
+    const countSql = `SELECT COUNT(*) AS total FROM venues v ${whereClause}`;
 
-    const [rows, countRows] = await Promise.all([
-      sequelize.query(withTimeout(listSql), { replacements, type: sequelize.QueryTypes.SELECT }),
+    const [idRows, countRows] = await Promise.all([
+      sequelize.query(withTimeout(idSql), { replacements, type: sequelize.QueryTypes.SELECT }),
       sequelize.query(withTimeout(countSql), { replacements, type: sequelize.QueryTypes.SELECT })
     ]);
 
-    const venueIds = rows.map(r => r.id).filter(Boolean);
-    const subjectsMap = await this._loadTopSubjects(venueIds, 5);
+    const venueIds = idRows.map(r => r.id).filter(Boolean);
+    const [rows, subjectsMap] = await Promise.all([
+      this._loadVenueRows(venueIds, BASE_SELECT_LIST),
+      this._loadTopSubjects(venueIds, 5)
+    ]);
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
 
-    const venues = rows
-      .map(mapVenueRow)
+    const venues = venueIds
+      .map((id) => mapVenueRow(rowsById.get(id)))
       .filter(Boolean)
       .map((venue) => {
         venue.subjects = subjectsMap.get(venue.id) || [];
@@ -869,7 +869,7 @@ class VenuesService {
     const includeTopAuthors = options.includeTopAuthors !== false;
     const includeRecentWorks = options.includeRecentWorks !== false;
 
-    const cacheKey = `venue:v8:${venueId}:${JSON.stringify({
+    const cacheKey = `venue:v9:${venueId}:${JSON.stringify({
       includeSubjects,
       includeYearly,
       includeTopAuthors,
@@ -886,7 +886,7 @@ class VenuesService {
     const venue = venueMap.get(venueId);
     if (!venue) return null;
 
-    const [subjectsMap, yearlyMap, topAuthorsMap, recentWorks, topPublications] = await Promise.all([
+    const [subjectsMap, yearlyMap, topAuthors, recentWorks, topPublications] = await Promise.all([
       includeSubjects ? this._loadTopSubjects([venueId], 10).catch((err) => {
         logger.warn(`Top subjects failed for venue ${venueId}: ${err.message}`);
         return new Map();
@@ -895,10 +895,10 @@ class VenuesService {
         logger.warn(`Yearly stats failed for venue ${venueId}: ${err.message}`);
         return new Map();
       }) : Promise.resolve(new Map()),
-      includeTopAuthors ? this._loadTopAuthors([venueId]).catch((err) => {
+      includeTopAuthors ? this._loadTopAuthors(venueId, 10).catch((err) => {
         logger.warn(`Top authors failed for venue ${venueId}: ${err.message}`);
-        return new Map();
-      }) : Promise.resolve(new Map()),
+        return [];
+      }) : Promise.resolve([]),
       includeRecentWorks ? this._loadRecentWorks(venueId).catch((err) => {
         logger.warn(`Recent works failed for venue ${venueId}: ${err.message}`);
         return [];
@@ -911,7 +911,7 @@ class VenuesService {
 
     venue.subjects = subjectsMap.get(venueId) || [];
     venue.yearly_stats = yearlyMap.get(venueId) || [];
-    venue.top_authors = topAuthorsMap.get(venueId) || [];
+    venue.top_authors = topAuthors;
     venue.top_publications = topPublications;
 
     const formatted = formatVenueDetails(venue, {
@@ -960,18 +960,18 @@ class VenuesService {
       case 'cited_by_count':
       case 'citation_count':
       case 'citations':
-        orderClause = `COALESCE(w.citation_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
+        orderClause = `p.citation_count ${sortDir}, p.year DESC, p.work_id DESC`;
         break;
       case 'references_count':
       case 'reference_count':
-        orderClause = `COALESCE(w.reference_count, 0) ${sortDir}, p.year DESC, w.id DESC`;
+        orderClause = `p.reference_count ${sortDir}, p.year DESC, p.work_id DESC`;
         break;
       case 'publication_year':
       case 'year':
-        orderClause = `p.year ${sortDir}, w.id DESC`;
+        orderClause = `p.year ${sortDir}, p.work_id DESC`;
         break;
       default:
-        orderClause = 'p.year DESC, w.id DESC';
+        orderClause = 'p.year DESC, p.work_id DESC';
     }
 
     const cacheKey = `venue:${venueId}:works:v3:${JSON.stringify({ page, limit, offset, year, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
@@ -1003,11 +1003,11 @@ class VenuesService {
       replacements.yearTo = yearTo;
     }
     if (citedByMin !== null) {
-      where.push('COALESCE(w.citation_count, 0) >= :citedByMin');
+      where.push('p.citation_count >= :citedByMin');
       replacements.citedByMin = citedByMin;
     }
     if (citedByMax !== null) {
-      where.push('COALESCE(w.citation_count, 0) <= :citedByMax');
+      where.push('p.citation_count <= :citedByMax');
       replacements.citedByMax = citedByMax;
     }
 
@@ -1041,7 +1041,6 @@ class VenuesService {
     const countSql = `
       SELECT COUNT(*) AS total
       FROM publications p
-      INNER JOIN works w ON w.id = p.work_id
       ${whereClause}
     `;
 

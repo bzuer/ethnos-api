@@ -50,7 +50,8 @@ const validateVenueFilters = [
  *     description: >-
  *       Retrieve a paginated list of academic venues including journals, conferences, repositories, book series, and
  *       source books. Every row carries the full venue surface: `identifiers` (issn, eissn, isbn13, scopus_id,
- *       wikidata_id, openalex_id, scielo_id, mag_id, openlibrary_work), `indexing` (doaj, scielo, scopus, oa_diamond,
+ *       wikidata_id, openalex_id, scielo_id, mag_id, openlibrary_work, mohrsiebeck_category_id), `indexing` (doaj,
+ *       scielo, scopus, oa_diamond,
  *       validation_status), `metrics` (impact_factor, citescore, sjr, sjr_best_quartile, snip, h_index, i10_index,
  *       two_yr_mean_citedness, overton, female_share), `ranking` (score, components, llm), and the `publisher`
  *       organization with its own identifiers and `_links.self`. `summary` is the editorial presentation of the venue,

@@ -87,7 +87,8 @@ const buildIdentifiers = (venue = {}) => ({
   openalex_id: venue.openalex_id || null,
   scielo_id: venue.scielo_id || null,
   mag_id: venue.mag_id || null,
-  openlibrary_work: venue.openlibrary_work || null
+  openlibrary_work: venue.openlibrary_work || null,
+  mohrsiebeck_category_id: toNullableInt(venue.mohrsiebeck_category_id)
 });
 
 const buildIndexing = (venue = {}) => ({

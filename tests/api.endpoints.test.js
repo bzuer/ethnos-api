@@ -464,6 +464,7 @@ describe('DTOs structure', () => {
       isbn13: '9780000000001',
       mag_id: '112914683',
       openlibrary_work: 'OL123W',
+      mohrsiebeck_category_id: 552,
       impact_factor: 3.2,
       h_index: 42,
       citescore: 2.8,
@@ -493,7 +494,8 @@ describe('DTOs structure', () => {
       openalex_id: 'V123',
       scielo_id: null,
       mag_id: '112914683',
-      openlibrary_work: 'OL123W'
+      openlibrary_work: 'OL123W',
+      mohrsiebeck_category_id: 552
     });
     expect(out.metrics).toMatchObject({
       impact_factor: 3.2,
@@ -527,6 +529,7 @@ describe('DTOs structure', () => {
     expect(out).not.toHaveProperty('isbn13');
     expect(out).not.toHaveProperty('mag_id');
     expect(out).not.toHaveProperty('openlibrary_work');
+    expect(out).not.toHaveProperty('mohrsiebeck_category_id');
     expect(out).not.toHaveProperty('scopus_id');
     expect(out).not.toHaveProperty('impact_factor');
     expect(out).not.toHaveProperty('h_index');

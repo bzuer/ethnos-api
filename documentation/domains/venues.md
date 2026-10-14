@@ -1,8 +1,8 @@
 # Venues — journals, conferences, repositories, book series & source books
 
-The venues domain exposes the venue-level entity: journals, conferences, repositories, book series, "source books", and other publishing outlets. All five endpoints are backed by the MariaDB base table `venues v LEFT JOIN organizations pub ON pub.id = v.publisher_id` (the publisher hydrates from `organizations`). Free-text search here is **MariaDB** — a `LIKE`/`ft_venues_search` scan, **not Manticore** (unlike [works](./works.md) and [persons](./persons.md)). Top subjects come from `venue_subjects + subjects`. Venues relate to [publications](./publications.md) (each publication carries a `venue_id`), to [works](./works.md) via `/venues/{id}/works`, and to [institutions](./institutions.md) via the publisher org.
+The venues domain exposes the venue-level entity: journals, conferences, repositories, book series, "source books", and other publishing outlets. All five endpoints are backed by the MariaDB base table `venues v LEFT JOIN organizations pub ON pub.id = v.publisher_id` (the publisher hydrates from `organizations`). Free-text search here is **MariaDB** — a substring `LIKE` over the venue name, abbreviation and ISSNs plus the publisher name, **not Manticore** (unlike [works](./works.md) and [persons](./persons.md)) and not the `ft_venues_search` FULLTEXT index (that one backs the `venue_name` filter on works/publications). Top subjects come from `venue_subjects + subjects`. Venues relate to [publications](./publications.md) (each publication carries a `venue_id`), to [works](./works.md) via `/venues/{id}/works`, and to [institutions](./institutions.md) via the publisher org.
 
-Corpus scale (live, 2026-07-23): **189,076 venues** — `source_books` ≈ 165,444 (~87%), `journals` = 22,680, the rest a long tail. Any type-filter UI must offer all six types, `SOURCE_BOOK` included.
+Corpus scale (live, 2026-10-14): **359,932 venues** — `SOURCE_BOOK` 334,660 (~93%), `JOURNAL` 23,738, `REPOSITORY` 653, `BOOK_SERIES` 541, `CONFERENCE` 241, `OTHER` 99. Any type-filter UI must offer all six types, `SOURCE_BOOK` included.
 
 Global response envelope, pagination (`page`/`limit` + `offset`/`limit`), rate-limiting, error codes, and boolean/date normalization are described once in [../00-conventions.md](../00-conventions.md) and are **not** repeated here. This chapter covers only what is venue-specific. All venue endpoints are public (no key required).
 
@@ -49,7 +49,7 @@ Paginated list of venues. Default sort is `score DESC` (global ranking, most imp
 | `h_index_min` | integer | — | ≥0 | inclusive lower bound on `h_index` |
 | `score_min` | number | — | any | inclusive lower bound on the ranking score (`venues.total_score`) |
 
-Rows with NULL coverage years are always pushed to the tail regardless of sort direction. When the primary sort is not `score`/`ranking`, `COALESCE(v.total_score,0) DESC` then `v.name ASC` are appended as tiebreakers. `meta.sort` reports the effective `{by,order}`; `meta.filters` appears only when a filter is applied.
+Rows with NULL coverage years are always pushed to the tail regardless of sort direction. When the primary sort is not `score`/`ranking`, `COALESCE(v.total_score,0) DESC` is appended as a tiebreaker; every sort then ends with `v.name ASC, v.id ASC`, so the order is total and adjacent pages never repeat or skip a venue (~50k venues share their score and name with another, e.g. six `Encyclopedia of World Cultures` volumes at score 10). `sortBy=id` sorts by the id alone. `meta.sort` reports the effective `{by,order}`; `meta.filters` appears only when a filter is applied.
 
 ### Example requests
 
@@ -98,7 +98,7 @@ GET /venues?is_oa_diamond=true&sortBy=cited_by_count
       "identifiers": {
         "issn": "0084-6570", "eissn": "1545-4290", "isbn13": null, "scopus_id": "68623",
         "wikidata_id": "Q4769665", "openalex_id": "S195167216", "scielo_id": null,
-        "mag_id": "195167216", "openlibrary_work": null
+        "mag_id": "195167216", "openlibrary_work": null, "mohrsiebeck_category_id": null
       },
       "indexing": {
         "is_in_doaj": false, "is_in_scielo": false, "is_indexed_in_scopus": true, "is_oa_diamond": false,
@@ -118,7 +118,7 @@ GET /venues?is_oa_diamond=true&sortBy=cited_by_count
       ]
     }
   ],
-  "pagination": { "page": 1, "limit": 2, "total": 189076, "totalPages": 94538, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 359932, "totalPages": 179966, "hasNext": true, "hasPrev": false },
   "meta": {
     "source": "venues",
     "sort": { "by": "score", "order": "DESC" },
@@ -166,6 +166,7 @@ The `subjects[]` array is trimmed above; **list rows carry up to 5 subjects**. `
 | `identifiers.scielo_id` | string\|null | column exists but is empty corpus-wide (always null today) |
 | `identifiers.mag_id` | string\|null | legacy Microsoft Academic Graph id (~12.5k venues) |
 | `identifiers.openlibrary_work` | string\|null | **OpenLibrary work key (`OL…W`) — populated on ~239k venues (74%)** |
+| `identifiers.mohrsiebeck_category_id` | integer\|null | Mohr Siebeck catalogue category id — set on the 183 `BOOK_SERIES` venues ingested from the Mohr Siebeck catalogue, null elsewhere |
 | `indexing.is_in_doaj` | boolean\|null | |
 | `indexing.is_in_scielo` | boolean\|null | |
 | `indexing.is_indexed_in_scopus` | boolean\|null | |
@@ -201,7 +202,7 @@ Only four `venues` columns are withheld: the generated `name_dedup_key` (interna
 
 ### Notes / caveats
 
-- `pagination.total` on the unfiltered list is the full corpus count (189,076); it is computed under a bounded budget — treat as authoritative for venues but see [../00-conventions.md](../00-conventions.md) for the shared `pagination_total_exact` semantics on heavier listings.
+- `pagination.total` on the unfiltered list is the full corpus count (359,932); it is computed under a bounded budget — treat as authoritative for venues but see [../00-conventions.md](../00-conventions.md) for the shared `pagination_total_exact` semantics on heavier listings.
 - Root-list free-text is `search=`; the dedicated endpoint below is `q=`. Mixing them 400s.
 - `coverage_end_year` can be a garbage future year — do not trust it as a hard "still active" signal.
 - `summary` is presentation copy, not searchable: `search=` / `q=` never match against it (there is no index on the column). It is safe to render as plain text on cards; when `summary_truncated` is `true`, link to `/venues/{id}` for the whole text.
@@ -210,13 +211,13 @@ Only four `venues` columns are withheld: the generated `name_dedup_key` (interna
 
 ## `GET /venues/search`
 
-Dedicated venue search. Same MariaDB `LIKE` surface as `/venues?search=` but **requires `q`** and returns a search-flavoured `meta` (`source` + echoed `query`, no `sort`). Rows are fixed-ordered by `COALESCE(total_score,0) DESC, name ASC` — there is no sort parameter.
+Dedicated venue search. Same MariaDB `LIKE` surface as `/venues?search=` but **requires `q`** and returns a search-flavoured `meta` (`source` + echoed `query`, no `sort`). Rows are fixed-ordered by `COALESCE(total_score,0) DESC, name ASC, id ASC` — there is no sort parameter.
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `q` | string | — (**required**) | 1..200 chars | search term; matched via `LIKE` over `name`, `abbreviated_name`, `issn`, `eissn`, publisher name. Missing/empty → 400 |
+| `q` | string | — (**required**) | 1..200 chars | search term; matched as a substring (`LIKE '%q%'`) over `name`, `abbreviated_name`, `issn`, `eissn`, and the name of the venue's publisher. Missing/empty → 400 |
 | `type` | string | — | six venue types (as above) | optional type filter |
 | `limit` | integer | 20 | 1..100 | page size |
 | `offset` | integer | 0 | ≥0 | items to skip |
@@ -258,7 +259,7 @@ GET /venues/search?q=anthropology&offset=20&limit=20
         "identifiers": { "ror_id": null, "grid_id": null, "wikidata_id": null, "openalex_id": null },
         "_links": { "self": "/institutions/2903095" }
       },
-      "identifiers": { "issn": "0104-9313", "eissn": "1678-4944", "isbn13": null, "scopus_id": "5100154602", "wikidata_id": "Q15759471", "openalex_id": "S4210222159", "scielo_id": null, "mag_id": "4210222159", "openlibrary_work": null },
+      "identifiers": { "issn": "0104-9313", "eissn": "1678-4944", "isbn13": null, "scopus_id": "5100154602", "wikidata_id": "Q15759471", "openalex_id": "S4210222159", "scielo_id": null, "mag_id": "4210222159", "openlibrary_work": null, "mohrsiebeck_category_id": null },
       "indexing": { "is_in_doaj": true, "is_in_scielo": true, "is_indexed_in_scopus": true, "is_oa_diamond": true, "validation_status": "VALIDATED" },
       "metrics": { "impact_factor": 0.348, "citescore": 0.8, "sjr": 0.142, "sjr_best_quartile": "Q3", "snip": 0.844, "h_index": 34, "i10_index": 136, "two_yr_mean_citedness": 0, "overton": 0, "female_share": 0 },
       "ranking": { "score": 21.332, "components": { "subject": 10, "oa": 0.05, "impact": 1.282, "llm": 10 }, "llm": { "relevance": 5, "justification": "Mana is a prominent Brazilian journal ..." } },
@@ -293,14 +294,14 @@ There is **no** `meta.sort` here (fixed ordering).
 
 ### Notes / caveats
 
-- This is an implementation alias of `/venues?search=` with the same LIKE surface and `COALESCE(total_score,0) DESC, name ASC` ordering, differing only in that `q` is required and the search `meta` is restored.
+- This is an implementation alias of `/venues?search=` with the same LIKE surface and `COALESCE(total_score,0) DESC, name ASC, id ASC` ordering, differing only in that `q` is required and the search `meta` is restored.
 - 400 example (missing `q`): `{"status":"error","message":"Validation failed","code":"VALIDATION_ERROR","errors":[{"path":"q",...}]}`.
 
 ---
 
 ## `GET /venues/statistics`
 
-Aggregate venue counts and metric summaries. Returns a **single flat object** (no `by_type` nesting, no pagination). Cache key `venues:statistics:v4`.
+Aggregate venue counts and metric summaries. Returns a **single flat object** (no `by_type` nesting, no pagination). One full scan of `venues` (~0.65 s uncached), cached 24 h under `venues:statistics:v6`.
 
 ### Query parameters
 
@@ -444,7 +445,7 @@ GET /venues/1012128?include_top_authors=false
       "identifiers": { "ror_id": null, "grid_id": null, "wikidata_id": null, "openalex_id": null },
       "_links": { "self": "/institutions/2428364" }
     },
-    "identifiers": { "issn": "0084-6570", "eissn": "1545-4290", "isbn13": null, "scopus_id": "68623", "wikidata_id": "Q4769665", "openalex_id": "S195167216", "scielo_id": null, "mag_id": "195167216", "openlibrary_work": null },
+    "identifiers": { "issn": "0084-6570", "eissn": "1545-4290", "isbn13": null, "scopus_id": "68623", "wikidata_id": "Q4769665", "openalex_id": "S195167216", "scielo_id": null, "mag_id": "195167216", "openlibrary_work": null, "mohrsiebeck_category_id": null },
     "indexing": { "is_in_doaj": false, "is_in_scielo": false, "is_indexed_in_scopus": true, "is_oa_diamond": false, "validation_status": "VALIDATED" },
     "metrics": { "impact_factor": 4.163, "citescore": 6.4, "sjr": 1.341, "sjr_best_quartile": "Q1", "snip": 4.007, "h_index": 114, "i10_index": 768, "two_yr_mean_citedness": 0.2903, "overton": 0, "female_share": 63.16 },
     "ranking": { "score": 25.006, "components": { "subject": 10, "oa": 0, "impact": 5.006, "llm": 10 }, "llm": { "relevance": 5, "justification": "The Annual Review of Anthropology is a premier publication ..." } },
@@ -536,10 +537,10 @@ Everything in the `/venues` list-item table above applies unchanged (same `ident
 | `yearly_stats[].works_count` | integer | |
 | `yearly_stats[].oa_works_count` | integer | |
 | `yearly_stats[].cited_by_count` | integer | citations accrued to that year's works |
-| **`top_authors[]`** | array | gated by `include_top_authors`; up to 10 |
+| **`top_authors[]`** | array | gated by `include_top_authors`; up to 10, ordered by `works_count` DESC, `best_position` ASC, `person_id` ASC |
 | `top_authors[].person_id` | integer | → [persons](./persons.md) |
 | `top_authors[].name` | string | |
-| `top_authors[].works_count` | integer | works in this venue |
+| `top_authors[].works_count` | integer | **distinct** works this person contributed to in the venue — a second role on the same work, or a second publication of the same work in the venue, is not counted twice |
 | `top_authors[].best_position` | integer\|null | best (lowest) author position achieved |
 | `top_authors[].is_corresponding` | boolean\|null | ever corresponding author here |
 | **`top_publications[]`** | array | **no include flag**; present when non-empty; up to 10 |
@@ -550,7 +551,7 @@ Everything in the `/venues` list-item table above applies unchanged (same `ident
 | `top_publications[].doi` | string\|null | |
 | `top_publications[].open_access` | boolean\|null | |
 | `top_publications[].citation_count` | integer | |
-| **`recent_works[]`** | array | gated by `include_recent_works`; rich work rows, newest-first |
+| **`recent_works[]`** | array | gated by `include_recent_works`; rich work rows ordered by publication year DESC, then work id DESC — exactly page 1 of `/venues/{id}/works` |
 | `recent_works[].id` | integer | work id |
 | `recent_works[].title` | string\|null | |
 | `recent_works[].subtitle` | string\|null | |
@@ -600,7 +601,7 @@ Works published in the venue. Honours the standard work sort/citation-filter con
 | `sort_by` / `sortBy` | string | — | `cited_by_count`,`references_count`,`publication_year` (+ aliases `citation_count`=`cited_by_count`, `reference_count`=`references_count`, `year`=`publication_year`) | primary sort key |
 | `sort_order` / `sortOrder` | string | `DESC` | `ASC`,`DESC` | direction |
 
-These are the shared citation/sort params documented in [../00-conventions.md](../00-conventions.md); this endpoint's specific enum is above. Default order when `sort_by` is omitted is most-cited/most-recent first.
+These are the shared citation/sort params documented in [../00-conventions.md](../00-conventions.md); this endpoint's specific enum is above. Default order when `sort_by` is omitted is most recent first: publication year DESC, then work id DESC. Every sort ends with the work id, so pages are stable.
 
 ### Example requests
 
@@ -667,7 +668,7 @@ GET /venues/1012121/works?year=2024
 | `open_access` | boolean\|null | |
 | `peer_reviewed` | boolean\|null | |
 | `publication_date` | string(ISO)\|null | |
-| `cited_by_count` | integer | from `works.citation_count` |
+| `cited_by_count` | integer | from `works.citation_count`. The `cited_by_*` filters and the citation/reference sorts run on the publication-level mirror (`publications.citation_count` / `reference_count`), which holds the same value for every row |
 | `references_count` | integer | outgoing references |
 | `author_count` | integer | |
 | `authors[]` | array | `{person_id:int, name:string, position:int, is_corresponding:bool\|null}` — note duplicate rows can share `position` (name variants of the same author) |
@@ -678,3 +679,22 @@ GET /venues/1012121/works?year=2024
 - Unknown venue id → 404 `NOT_FOUND` (existence guard runs before listing).
 - Row shape differs from the generic Work schema — do not reuse a shared Work component blindly; in particular the year field name (`year`) differs from most other work surfaces.
 - `pagination.total` here is the venue's total work count; standard shared `pagination_total_exact` degradation may apply on very large venues — see [../00-conventions.md](../00-conventions.md) and ../API_ISSUES.md.
+
+---
+
+## Performance and database access
+
+Measured on the development server (MariaDB master) on 2026-10-14, uncached first request through the full HTTP stack, before → after the 2026-10-14 query rework. No new index was needed; every access path below was already indexed.
+
+| request | before | after | access path |
+|---|---|---|---|
+| `GET /venues?limit=20` (default `score` sort) | 0.97 s | 0.20 s | id-only selection (filesort of `total_score`, `name`, `id` over `venues`), then hydrate the page by primary key |
+| `GET /venues?sortBy=id` | 0.70 s | 0.04 s | primary-key order, no filesort |
+| `GET /venues?search=anthropology` | 0.75 s | 0.36 s | substring scan of `venues`; the publisher-name arm is a semi-join over the ~17k organizations venues actually reference (index scan of `idx_venues_publisher`), not a join to all 1.08M organizations |
+| `GET /venues/1074172` (55,552 publications) | 4.91 s | 0.30 s | see the detail blocks below |
+| `GET /venues/1012326` (24,764 publications) | 4.51 s, `recent_works` empty | 0.07 s | the old `recent_works` plan read 588k rows of `idx_publications_year` and hit the statement budget, so the block silently degraded to `[]` |
+| `GET /venues/1074172/works?sort_by=cited_by_count` | 0.54 s | 0.06 s | publication-level citation mirror, sorted before the `works` join |
+| `GET /venues/statistics` | 0.66 s | 0.67 s | one full scan of `venues`, cached 24 h |
+
+Detail blocks: `top_authors` aggregates `publications ⋈ authorships` per person and keeps the top 10 **before** joining `persons` (it used to resolve a name for every authorship row of the venue — 3.1 s on the largest venue); `recent_works` orders by publication year then work id, which the `(venue_id, year, open_access)` index serves directly; `top_publications`, `yearly_stats` and the `/venues/{id}/works` count read the publication-level `citation_count` mirror and never touch `works` for sorting or counting.
+

@@ -489,6 +489,43 @@ describe('Integration smoke (real DB)', () => {
       assert.ok(oaPct === null || (typeof oaPct === 'number' && oaPct >= 0 && oaPct <= 100), 'open_access_percentage in [0,100] or null');
       assert.ok('summary' in body.data, 'detail summary field present');
       assert.equal(body.data.summary_truncated, false, 'detail summary is never truncated');
+      const authorCounts = body.data.top_authors.map((a) => a.works_count);
+      for (let i = 1; i < authorCounts.length; i += 1) {
+        assert.ok(authorCounts[i - 1] >= authorCounts[i], `top_authors ordered by works_count DESC (got ${authorCounts.join(', ')})`);
+      }
+      assert.ok(Array.isArray(body.data.recent_works) && body.data.recent_works.length > 0, 'recent_works populated on the largest venue (must not degrade to [])');
+      const years = body.data.recent_works.map((w) => w.publication_year).filter((y) => y !== null);
+      for (let i = 1; i < years.length; i += 1) {
+        assert.ok(years[i - 1] >= years[i], `recent_works ordered by publication_year DESC (got ${years.join(', ')})`);
+      }
+      const firstPage = assertSuccess(await fetchJson(`/venues/${venueId}/works?limit=${body.data.recent_works.length}`), 'venue works page 1');
+      assert.deepEqual(
+        body.data.recent_works.map((w) => w.id),
+        firstPage.data.map((w) => w.id),
+        'recent_works matches page 1 of /venues/{id}/works'
+      );
+    });
+
+    test('GET /venues?search matches the publisher name', async () => {
+      const seed = assertSuccess(await fetchJson('/venues?type=JOURNAL&limit=20'), 'journal list for publisher search');
+      const withPublisher = seed.data.find((v) => v.publisher && v.publisher.id && /^[\p{L}\p{N} .,-]{3,120}$/u.test(v.publisher.name || ''));
+      if (!withPublisher) return;
+      const { id: publisherId, name: publisherName } = withPublisher.publisher;
+      const all = assertSuccess(await fetchJson(`/venues?publisher_id=${publisherId}&limit=1`), 'venues by publisher_id');
+      const matched = assertSuccess(
+        await fetchJson(`/venues?publisher_id=${publisherId}&search=${encodeURIComponent(publisherName)}&limit=1`),
+        'venues by publisher name'
+      );
+      assert.equal(matched.pagination.total, all.pagination.total, 'every venue of the publisher matches its publisher name');
+    });
+
+    test('GET /venues pages are disjoint across score/name ties', async () => {
+      const first = assertSuccess(await fetchJson('/venues?limit=50&page=200'), 'venues page 200');
+      const second = assertSuccess(await fetchJson('/venues?limit=50&page=201'), 'venues page 201');
+      const seen = new Set(first.data.map((v) => v.id));
+      for (const v of second.data) {
+        assert.ok(!seen.has(v.id), `venue ${v.id} repeated across adjacent pages`);
+      }
     });
 
     test('GET /venues/statistics reports coverage, quartiles and identifiers', async () => {
@@ -510,7 +547,7 @@ describe('Integration smoke (real DB)', () => {
       const body = assertSuccess(await fetchJson('/venues?type=SOURCE_BOOK&has_isbn13=true&limit=3'), 'GET /venues?has_isbn13');
       assert.ok(body.data.length > 0, 'source books with isbn13 exist');
       const venue = body.data[0];
-      for (const key of ['issn', 'eissn', 'isbn13', 'scopus_id', 'wikidata_id', 'openalex_id', 'scielo_id', 'mag_id', 'openlibrary_work']) {
+      for (const key of ['issn', 'eissn', 'isbn13', 'scopus_id', 'wikidata_id', 'openalex_id', 'scielo_id', 'mag_id', 'openlibrary_work', 'mohrsiebeck_category_id']) {
         assert.ok(key in venue.identifiers, `identifiers.${key} present`);
       }
       assert.ok(venue.identifiers.isbn13, 'has_isbn13 filter guarantees an isbn13');

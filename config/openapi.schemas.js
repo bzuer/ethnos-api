@@ -3641,6 +3641,11 @@ module.exports = {
             "type": "string",
             "nullable": true,
             "description": "OpenLibrary work key (OL...W), populated for book venues."
+          },
+          "mohrsiebeck_category_id": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Mohr Siebeck catalogue category id (venues.mohrsiebeck_category_id); set on the BOOK_SERIES venues ingested from the Mohr Siebeck catalogue."
           }
         }
       },
@@ -3903,7 +3908,7 @@ module.exports = {
           },
           "top_authors": {
             "type": "array",
-            "description": "Top authors in the venue (gated by include_top_authors; up to 10).",
+            "description": "Top contributors in the venue (gated by include_top_authors; up to 10), ordered by works_count DESC, best_position ASC, person_id ASC.",
             "items": {
               "type": "object",
               "properties": {
@@ -3915,7 +3920,8 @@ module.exports = {
                   "nullable": true
                 },
                 "works_count": {
-                  "type": "integer"
+                  "type": "integer",
+                  "description": "Distinct works this person contributed to in the venue (COUNT(DISTINCT work_id); a second role or a second publication of the same work is not counted twice)."
                 },
                 "best_position": {
                   "type": "integer",
@@ -3964,7 +3970,7 @@ module.exports = {
           },
           "recent_works": {
             "type": "array",
-            "description": "Most recent works in the venue (gated by include_recent_works).",
+            "description": "Most recent works in the venue (gated by include_recent_works), ordered by publication year DESC then work id DESC — the same order as page 1 of /venues/{id}/works.",
             "items": {
               "type": "object",
               "properties": {
