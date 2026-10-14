@@ -385,35 +385,8 @@ class CitationsService {
       
       return result;
     } catch (error) {
-      logger.error(`Error fetching metrics for work ${workId}:`, error);
-      try {
-        const fallback = {
-          work_id: parseInt(workId),
-          title: null,
-          type: null,
-          publication_year: null,
-          citation_metrics: {
-            total_citations_received: 0,
-            total_references_made: 0,
-            unique_citing_works: 0,
-            citations_per_year: 0,
-            citation_types: { positive: 0, neutral: 0, negative: 0, self: 0 }
-          },
-          temporal_metrics: {
-            first_citation_year: null,
-            latest_citation_year: null,
-            citation_span_years: null
-          },
-          impact_indicators: {
-            highly_cited: false,
-            citation_velocity: 'unknown'
-          }
-        };
-        await cacheService.set(cacheKey, fallback, 300);
-        return fallback;
-      } catch (_) {
-        return null;
-      }
+      logger.error(`Error fetching metrics for work ${workId}`, { error: error.message });
+      throw error;
     }
   }
 
@@ -558,18 +531,8 @@ class CitationsService {
       
       return result;
     } catch (error) {
-      logger.error(`Error fetching citation network for work ${workId}:`, error);
-      return {
-        central_work_id: parseInt(workId),
-        network_depth: parseInt(depth),
-        nodes: {},
-        edges: [],
-        network_stats: {
-          total_nodes: 0,
-          total_edges: 0,
-          max_depth: 0
-        }
-      };
+      logger.error(`Error fetching citation network for work ${workId}`, { error: error.message });
+      throw error;
     }
   }
 }

@@ -7,28 +7,25 @@ const formatDashboardOverview = (data) => {
   return {
     timestamp: new Date().toISOString(),
     search_performance: {
-      engine_status: data.search_performance?.engine || 'unknown',
+      engine_status: data.search_performance?.engine
+        ? `${data.search_performance.engine} (${data.search_performance.engine_reachable ? 'reachable' : 'unreachable'})`
+        : 'unknown',
       current_metrics: {
         queries_per_second: parseFloat(data.search_performance?.queries_per_second) || 0,
         avg_response_time: parseFloat(data.search_performance?.avg_response_time) || 0,
-        error_rate: parseFloat(data.search_performance?.error_rate) || 0,
-        index_size_mb: parseFloat(data.search_performance?.index_size_mb) || 0
+        p95_response_time: parseFloat(data.search_performance?.p95_response_time) || 0,
+        error_rate: parseFloat(data.search_performance?.error_rate) || 0
       },
       performance_distribution: data.search_performance?.performance_distribution || null
     },
     system_health: {
-      rollback_active: Boolean(data.system_health?.rollback_active),
       uptime_seconds: parseInt(data.system_health?.uptime_seconds) || 0,
-      consecutive_failures: parseInt(data.system_health?.consecutive_failures) || 0,
-      last_successful_check: data.system_health?.last_successful_check || null,
       memory_usage: data.system_health?.memory_usage || null,
-      active_connections: parseInt(data.system_health?.connections) || 0,
-      health_status: determineHealthStatus(data.system_health)
+      dependencies: data.system_health?.dependencies || {},
+      health_status: determineHealthStatus(data.system_health?.dependencies)
     },
     recent_activity: {
-      queries_last_hour: parseInt(data.recent_activity?.queries_last_hour) || 0,
-      queries_last_minute: parseInt(data.recent_activity?.queries_last_minute) || 0,
-      recent_queries: (data.recent_activity?.recent_queries || []).slice(0, 10),
+      requests_last_10_minutes: parseInt(data.recent_activity?.requests_last_10_minutes) || 0,
       search_analytics: data.recent_activity?.search_analytics || {},
       activity_level: determineActivityLevel(data.recent_activity)
     },
@@ -75,7 +72,7 @@ const formatSearchTrends = (trendsData) => {
       total_searches: parseInt(day.total_searches) || 0,
       unique_queries: parseInt(day.unique_queries) || 0,
       avg_results: parseFloat(day.avg_results) || 0,
-      top_terms: day.top_terms || []
+      top_terms: (day.top_queries || []).map((entry) => ({ term: entry.query, count: parseInt(entry.count, 10) || 0 }))
     })),
     analytics_period: trendsData.analytics_period || '7 days',
     generated_at: new Date().toISOString()
@@ -104,23 +101,21 @@ const formatSystemAlerts = (alerts) => {
 
 
 
-const determineHealthStatus = (healthData) => {
-  if (!healthData) return 'unknown';
-  
-  if (healthData.rollback_active) return 'degraded';
-  if (healthData.consecutive_failures > 5) return 'unhealthy';
-  if (healthData.consecutive_failures > 0) return 'warning';
+const determineHealthStatus = (dependencies) => {
+  if (!dependencies || Object.keys(dependencies).length === 0) return 'unknown';
+  if (dependencies.database === false) return 'unhealthy';
+  if (Object.values(dependencies).some((state) => state === false)) return 'degraded';
   return 'healthy';
 };
 
 const determineActivityLevel = (activityData) => {
   if (!activityData) return 'unknown';
-  
-  const queriesLastHour = parseInt(activityData.queries_last_hour) || 0;
-  if (queriesLastHour > 1000) return 'very_high';
-  if (queriesLastHour > 500) return 'high';
-  if (queriesLastHour > 100) return 'moderate';
-  if (queriesLastHour > 10) return 'low';
+
+  const recentRequests = parseInt(activityData.requests_last_10_minutes) || 0;
+  if (recentRequests > 170) return 'very_high';
+  if (recentRequests > 85) return 'high';
+  if (recentRequests > 17) return 'moderate';
+  if (recentRequests > 2) return 'low';
   return 'minimal';
 };
 
@@ -133,19 +128,19 @@ const calculatePerformanceScore = (point) => {
   else if (responseTime > 25) score -= 10;
   
   const errorRate = parseFloat(point.error_rate) || 0;
-  if (errorRate > 0.1) score -= 50;
-  else if (errorRate > 5) score -= 25;
-  else if (errorRate > 0.01) score -= 10;
+  if (errorRate > 5) score -= 50;
+  else if (errorRate > 1) score -= 25;
+  else if (errorRate > 0.1) score -= 10;
   
   return Math.max(0, Math.min(100, Math.round(score)));
 };
 
 const formatTrendIndicator = (trend) => {
-  if (!trend) return { trend: 'unknown', change_percent: 0 };
-  
+  if (!trend) return { trend: 'unknown', change_percent: null };
+
   return {
     trend: trend.trend || 'stable',
-    change_percent: parseFloat(trend.change_percent) || 0,
+    change_percent: trend.change_percent === null || trend.change_percent === undefined ? null : parseFloat(trend.change_percent),
     recent_average: parseFloat(trend.recent_average) || 0,
     historical_average: parseFloat(trend.historical_average) || 0,
     is_significant: Math.abs(parseFloat(trend.change_percent) || 0) > 10
@@ -161,23 +156,6 @@ const generateAlertId = (alert) => {
   return `alert_${hash}`;
 };
 
-const formatRelativeTime = (timestamp) => {
-  if (!timestamp) return 'Unknown time';
-  
-  const now = new Date();
-  const time = new Date(timestamp);
-  const diffMs = now - time;
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-  
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-  if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-  if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-  return time.toISOString().split('T')[0];
-};
-
 module.exports = {
   formatDashboardOverview,
   formatPerformanceChart,
@@ -186,6 +164,5 @@ module.exports = {
   determineHealthStatus,
   determineActivityLevel,
   calculatePerformanceScore,
-  formatTrendIndicator,
-  formatRelativeTime
+  formatTrendIndicator
 };

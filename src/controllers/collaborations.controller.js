@@ -143,7 +143,8 @@ class CollaborationsController {
           query_time_ms: queryTime,
           source: 'collaboration_ranking',
           summary: result.summary,
-          filters: result.filters
+          filters: result.filters,
+          ...(result.meta || {})
         }
       });
     } catch (error) {

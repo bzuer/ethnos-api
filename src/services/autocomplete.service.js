@@ -341,36 +341,36 @@ class AutocompleteService {
 
     async getSearchAnalytics(days = 7) {
         if (!redis.connected) {
-            return { analytics: [], message: 'Redis not available' };
+            return {};
         }
 
         try {
-            const analytics = {};
             const today = new Date();
-
-            for (let i = 0; i < days; i++) {
+            const dateKeys = Array.from({ length: days }, (_, i) => {
                 const date = new Date(today);
                 date.setDate(date.getDate() - i);
-                const dateKey = date.toISOString().slice(0, 10);
-                const key = `search_analytics:${dateKey}`;
+                return date.toISOString().slice(0, 10);
+            });
+            const lists = await Promise.all(dateKeys.map((dateKey) => redis.lrange(`search_analytics:${dateKey}`, 0, -1)));
 
-                const queries = await redis.lrange(key, 0, -1);
-                const dayData = queries.map(q => JSON.parse(q));
-
+            const analytics = {};
+            dateKeys.forEach((dateKey, index) => {
+                const dayData = (lists[index] || []).map((raw) => {
+                    try { return JSON.parse(raw); } catch (_) { return null; }
+                }).filter(Boolean);
                 analytics[dateKey] = {
                     total_searches: dayData.length,
                     unique_queries: new Set(dayData.map(d => d.query)).size,
-                    avg_results: dayData.length > 0 ?
-                        dayData.reduce((sum, d) => sum + d.result_count, 0) / dayData.length : 0,
+                    avg_results: dayData.length > 0
+                        ? dayData.reduce((sum, d) => sum + (Number(d.result_count) || 0), 0) / dayData.length
+                        : 0,
                     top_queries: this.getTopQueries(dayData, 10)
                 };
-            }
-
+            });
             return analytics;
-
         } catch (error) {
-            logger.error('Search analytics retrieval failed', error);
-            return { analytics: {}, error: error.message };
+            logger.error('Search analytics retrieval failed', { error: error.message });
+            return {};
         }
     }
 
@@ -387,25 +387,6 @@ class AutocompleteService {
     }
 
 
-    async clearCache() {
-        if (!redis.connected) {
-            return { cleared: false, message: 'Redis not available' };
-        }
-
-        try {
-            const keys = await redis.keys(`${this.cachePrefix}*`);
-            if (keys.length > 0) {
-                await redis.del(...keys);
-            }
-
-            logger.info('Autocomplete cache cleared', { keys_cleared: keys.length });
-            return { cleared: true, keys_cleared: keys.length };
-
-        } catch (error) {
-            logger.error('Autocomplete cache clear failed', error);
-            return { cleared: false, error: error.message };
-        }
-    }
 }
 
 module.exports = new AutocompleteService();

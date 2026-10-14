@@ -42,6 +42,9 @@ const handleValidation = (req, res) => {
 };
 
 const monitoring = require('../middleware/monitoring');
+const { sequelize } = require('../config/database');
+const manticore = require('../config/manticore');
+const redis = require('../config/redis');
 
 const liveMetrics = () => {
   const m = monitoring.getMetrics();
@@ -51,11 +54,8 @@ const liveMetrics = () => {
     avg_response_time: m.requests?.performance?.avg_response_time_ms || 0,
     p95_response_time: m.requests?.performance?.p95_response_time_ms || 0,
     error_rate: m.errors?.error_rate || 0,
-    index_size_mb: 0,
     uptime_seconds: uptimeSeconds,
-    queries_last_hour: m.requests?.performance?.total_samples || 0,
-    queries_last_minute: 0,
-    connections: 0,
+    requests_last_10_minutes: m.requests?.performance?.total_samples || 0,
     total_queries: m.requests?.total || 0,
     by_status: m.requests?.by_status || {},
     top_endpoints: m.requests?.top_endpoints || [],
@@ -63,14 +63,27 @@ const liveMetrics = () => {
   };
 };
 
-const liveHealthStatus = () => ({
-  searchEngine: 'Manticore',
-  rollbackActive: false,
-  metrics: {
-    consecutiveFailures: 0,
-    lastSuccessfulCheck: new Date().toISOString()
+const probe = async (check) => {
+  try {
+    return Boolean(await check());
+  } catch (_) {
+    return false;
   }
-});
+};
+
+const liveHealthStatus = async () => {
+  const [database, searchEngine, cache] = await Promise.all([
+    probe(() => sequelize.query('SELECT 1', { type: sequelize.QueryTypes.SELECT })),
+    probe(() => manticore.ping()),
+    redis.isRedisDisabled()
+      ? Promise.resolve('disabled')
+      : probe(async () => {
+          const client = await redis.getActiveRedisClient();
+          return client ? (await client.ping()) === 'PONG' : false;
+        })
+  ]);
+  return { database, search_engine: searchEngine, cache };
+};
 
 /**
  * @swagger
@@ -109,18 +122,20 @@ const liveHealthStatus = () => ({
 router.get('/overview', async (req, res) => {
     try {
         const t0 = Date.now();
-        const searchAnalytics = await autocompleteService.getSearchAnalytics(7);
+        const [searchAnalytics, healthStatus] = await Promise.all([
+            autocompleteService.getSearchAnalytics(7),
+            liveHealthStatus()
+        ]);
         const metrics = liveMetrics();
-        const healthStatus = liveHealthStatus();
 
         const rawOverview = {
             search_performance: {
-                engine: healthStatus.searchEngine,
+                engine: 'Manticore',
+                engine_reachable: healthStatus.search_engine,
                 queries_per_second: metrics.queries_per_second,
                 avg_response_time: metrics.avg_response_time,
                 p95_response_time: metrics.p95_response_time,
                 error_rate: metrics.error_rate,
-                index_size_mb: metrics.index_size_mb,
                 performance_distribution: {
                     total_queries: metrics.total_queries,
                     by_status: metrics.by_status,
@@ -128,19 +143,13 @@ router.get('/overview', async (req, res) => {
                 }
             },
             system_health: {
-                rollback_active: healthStatus.rollbackActive,
                 uptime_seconds: metrics.uptime_seconds,
-                consecutive_failures: healthStatus.metrics.consecutiveFailures,
-                last_successful_check: healthStatus.metrics.lastSuccessfulCheck,
                 memory_usage: `${metrics.memory_usage_mb}MB rss`,
-                connections: metrics.connections
+                dependencies: healthStatus
             },
             recent_activity: {
-                queries_last_hour: metrics.queries_last_hour,
-                queries_last_minute: metrics.queries_last_minute,
-                recent_queries: [],
-                search_analytics: Object.keys(searchAnalytics).length > 0 ?
-                    searchAnalytics : { message: 'No analytics data available' }
+                requests_last_10_minutes: metrics.requests_last_10_minutes,
+                search_analytics: searchAnalytics
             },
             alerts: await router.checkSystemAlerts(metrics, healthStatus)
         };
@@ -227,7 +236,7 @@ router.get('/performance', validatePerformanceParams, async (req, res) => {
                 total_queries: m.total_queries,
                 avg_response_time: m.avg_response_time,
                 p95_response_time: m.p95_response_time,
-                error_count: m.error_rate,
+                error_rate: m.error_rate,
                 uptime_seconds: m.uptime_seconds
             },
             distribution: {
@@ -375,7 +384,7 @@ router.get('/search-trends', validateTrendParams, async (req, res) => {
 router.get('/alerts', async (req, res) => {
     try {
         const t0 = Date.now();
-        const rawAlerts = await router.checkSystemAlerts(liveMetrics(), liveHealthStatus());
+        const rawAlerts = await router.checkSystemAlerts(liveMetrics(), await liveHealthStatus());
         const formattedAlerts = formatSystemAlerts(rawAlerts);
 
         return res.success({
@@ -402,6 +411,18 @@ router.get('/alerts', async (req, res) => {
 
 router.checkSystemAlerts = async function(metrics, healthStatus) {
     const alerts = [];
+
+    for (const [dependency, reachable] of Object.entries(healthStatus || {})) {
+        if (reachable === false) {
+            alerts.push({
+                type: 'dependency',
+                severity: dependency === 'database' ? 'critical' : 'high',
+                message: `${dependency} is unreachable`,
+                threshold: 'reachable',
+                current_value: 'unreachable'
+            });
+        }
+    }
 
     if (metrics.error_rate > 5) {
         alerts.push({
@@ -456,14 +477,18 @@ router.analyzeTrends = function(searchAnalytics, days) {
 router.calculateTrend = function(values) {
     if (values.length < 2) return { trend: 'insufficient_data' };
 
-    const recent = values.slice(-3).reduce((sum, v) => sum + v, 0) / 3;
-    const older = values.slice(0, 3).reduce((sum, v) => sum + v, 0) / 3;
-
-    const change = older === 0 ? 0 : ((recent - older) / older) * 100;
+    const window = Math.min(3, Math.floor(values.length / 2));
+    const mean = (list) => list.reduce((sum, v) => sum + v, 0) / list.length;
+    const recent = mean(values.slice(-window));
+    const older = mean(values.slice(0, window));
+    const change = older === 0 ? null : ((recent - older) / older) * 100;
+    const trend = change === null
+        ? (recent > 0 ? 'increasing' : 'stable')
+        : change > 10 ? 'increasing' : change < -10 ? 'decreasing' : 'stable';
 
     return {
-        trend: change > 10 ? 'increasing' : change < -10 ? 'decreasing' : 'stable',
-        change_percent: Math.round(change * 100) / 100,
+        trend,
+        change_percent: change === null ? null : Math.round(change * 100) / 100,
         recent_average: Math.round(recent * 100) / 100,
         historical_average: Math.round(older * 100) / 100
     };

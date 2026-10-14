@@ -2,7 +2,6 @@ const organizationsService = require('../services/organizations.service');
 const { logger } = require('../middleware/errorHandler');
 const { validationResult } = require('express-validator');
 const { ERROR_CODES } = require('../utils/responseBuilder');
-const { createPagination } = require('../utils/pagination');
 
 function clean(value) {
   if (value === undefined || value === null) return undefined;
@@ -59,8 +58,8 @@ class OrganizationsController {
         works_min: clean(req.query.works_min),
         works_max: clean(req.query.works_max),
         researchers_min: clean(req.query.researchers_min),
-        cited_by_min: clean(req.query.cited_by_min),
-        cited_by_max: clean(req.query.cited_by_max),
+        cited_by_min: clean(req.query.cited_by_min ?? req.query.citation_count_min),
+        cited_by_max: clean(req.query.cited_by_max ?? req.query.citation_count_max),
         h_index_min: clean(req.query.h_index_min),
         sort_by: clean(req.query.sort_by ?? req.query.sortBy),
         sort_order: clean(req.query.sort_order ?? req.query.sortOrder)
@@ -76,15 +75,7 @@ class OrganizationsController {
         meta: Object.keys(meta).length ? meta : undefined
       });
     } catch (error) {
-      logger.error('Error retrieving organizations list:', error);
-      if (process.env.NODE_ENV === 'test') {
-        const page = parseInt(req.query.page || 1, 10);
-        const limit = parseInt(req.query.limit || 20, 10);
-        return res.success([], {
-          pagination: createPagination(page, limit, 0),
-          meta: { fallback: 'test-empty' }
-        });
-      }
+      logger.error('Error retrieving organizations list:', { error: error.message });
       return res.error(error);
     }
   }

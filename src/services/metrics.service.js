@@ -7,16 +7,17 @@ const {
   formatAnnualStats,
   formatVenueRanking,
   formatInstitutionProductivity,
-  formatPersonProduction,
-  formatCollaboration
+  formatPersonProduction
 } = require('../dto/metrics.dto');
+const { formatTopCollaboration } = require('../dto/collaborations.dto');
+const collaborationsService = require('./collaborations.service');
 
 class MetricsService {
   async getAnnualStats(filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { year_from, year_to } = filters;
-    const cacheKey = `metrics:annual:v5:${JSON.stringify({ page, limit, offset, year_from, year_to })}`;
+    const cacheKey = `metrics:annual:v6:${JSON.stringify({ page, limit, offset, year_from, year_to })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -38,7 +39,7 @@ class MetricsService {
         }
       }
 
-      const result = buildAnnualResult(source.stats, source.total, page, limit);
+      const result = buildAnnualResult(source, page, limit);
       await cacheService.set(cacheKey, result, 86400);
       logger.info(`Annual stats cached: ${source.stats.length} years (${source.engine})`);
       return result;
@@ -51,8 +52,8 @@ class MetricsService {
           summary: {
             total_years: 0,
             date_range: null,
-            total_works_all_years: 0,
-            avg_works_per_year: 0,
+            total_publications_all_years: 0,
+            avg_publications_per_year: 0,
             growth_trend: null,
             degraded: true
           }
@@ -65,7 +66,7 @@ class MetricsService {
 
   async _getAnnualStatsFromSummary({ limit, offset, year_from, year_to }) {
     const whereConditions = ['s.year >= 1000', 's.year <= YEAR(CURDATE()) + 1'];
-    const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
+    const replacements = {};
     if (year_from) {
       whereConditions.push('s.year >= :year_from');
       replacements.year_from = parseInt(year_from);
@@ -74,34 +75,32 @@ class MetricsService {
       whereConditions.push('s.year <= :year_to');
       replacements.year_to = parseInt(year_to);
     }
-    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
-    const [stats, countRows] = await Promise.all([
-      sequelize.query(withTimeout(`
-        SELECT
-          s.year AS year,
-          s.total_publications AS total_publications,
-          s.unique_works AS unique_works,
-          s.open_access_count AS open_access_count,
-          ROUND(s.open_access_count * 100.0 / NULLIF(s.total_publications, 0), 2) AS open_access_percentage,
-          s.articles AS articles,
-          s.books AS books,
-          s.avg_citations AS avg_citations,
-          s.unique_organizations AS unique_organizations
-        FROM metrics_annual_summary s
-        ${whereClause}
-        ORDER BY s.year DESC
-        LIMIT :limit OFFSET :offset
-      `), { replacements, type: sequelize.QueryTypes.SELECT }),
-      sequelize.query(withTimeout(`
-        SELECT COUNT(*) AS total
-        FROM metrics_annual_summary s
-        ${whereClause}
-      `), { replacements, type: sequelize.QueryTypes.SELECT })
-    ]);
+    const rows = await sequelize.query(withTimeout(`
+      SELECT
+        s.year AS year,
+        s.total_publications AS total_publications,
+        s.unique_works AS unique_works,
+        s.open_access_count AS open_access_count,
+        ROUND(s.open_access_count * 100.0 / NULLIF(s.total_publications, 0), 2) AS open_access_percentage,
+        s.articles AS articles,
+        s.books AS books,
+        s.avg_citations AS avg_citations,
+        s.unique_organizations AS unique_organizations,
+        s.refreshed_at AS refreshed_at
+      FROM metrics_annual_summary s
+      WHERE ${whereConditions.join(' AND ')}
+      ORDER BY s.year DESC
+    `), { replacements, type: sequelize.QueryTypes.SELECT });
 
-    const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
-    return { stats: stats || [], total, engine: 'metrics_annual_summary' };
+    const refreshedAt = rows.reduce((latest, row) => (row.refreshed_at && (!latest || row.refreshed_at > latest) ? row.refreshed_at : latest), null);
+    return {
+      stats: rows.slice(parseInt(offset), parseInt(offset) + parseInt(limit)),
+      total: rows.length,
+      aggregate: rows,
+      refreshedAt,
+      engine: 'metrics_annual_summary'
+    };
   }
 
   async _getAnnualStatsLive({ limit, offset, year_from, year_to }) {
@@ -162,7 +161,7 @@ class MetricsService {
   async getTopVenues(filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const cacheKey = `metrics:venues:v3:${JSON.stringify({ page, limit, offset })}`;
+    const cacheKey = `metrics:venues:v4:${JSON.stringify({ page, limit, offset })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -200,7 +199,7 @@ class MetricsService {
       ]);
       const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
-      const formattedVenues = venues.map((venue, index) => formatVenueRanking(venue, index + 1));
+      const formattedVenues = venues.map((venue, index) => formatVenueRanking(venue, offset + index + 1));
 
       const result = {
         data: formattedVenues,
@@ -229,7 +228,7 @@ class MetricsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
     const { country_code } = filters;
-    const cacheKey = `metrics:institutions:v3:${JSON.stringify({ page, limit, offset, country_code })}`;
+    const cacheKey = `metrics:institutions:v4:${JSON.stringify({ page, limit, offset, country_code })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -317,7 +316,7 @@ class MetricsService {
       } catch (error) {
         logger.warn('Institution productivity count fallback used', { error: error.message });
       }
-      const formattedInstitutions = institutions.map((inst, index) => formatInstitutionProductivity(inst, index + 1));
+      const formattedInstitutions = institutions.map((inst, index) => formatInstitutionProductivity(inst, offset + index + 1));
 
       const result = {
         data: formattedInstitutions,
@@ -349,7 +348,7 @@ class MetricsService {
     const minWorks = filters.min_works !== undefined && filters.min_works !== null && filters.min_works !== ''
       ? parseInt(filters.min_works, 10)
       : null;
-    const cacheKey = `metrics:persons:v5:${JSON.stringify({ page, limit, offset, organization_id, minWorks })}`;
+    const cacheKey = `metrics:persons:v6:${JSON.stringify({ page, limit, offset, organization_id, minWorks })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -376,26 +375,12 @@ class MetricsService {
 
       const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
 
-      const [persons, countRows] = await Promise.all([
+      const [idRows, countRows] = await Promise.all([
         sequelize.query(withTimeout(`
-          SELECT
-            p.id AS person_id,
-            p.preferred_name AS person_name,
-            p.orcid,
-            p.is_verified,
-            p.total_works AS total_works,
-            p.total_citations AS total_citations,
-            ROUND(
-              CASE WHEN p.total_works > 0
-                   THEN p.total_citations / p.total_works
-                   ELSE NULL END,
-              2
-            ) AS avg_citations,
-            p.first_publication_year,
-            p.latest_publication_year
+          SELECT p.id
           FROM persons p
           ${whereClause}
-          ORDER BY p.total_works DESC
+          ORDER BY p.total_works DESC, p.id DESC
           LIMIT :limit OFFSET :offset
         `), {
           replacements,
@@ -412,7 +397,32 @@ class MetricsService {
       ]);
       const total = countRows?.[0]?.total ? parseInt(countRows[0].total, 10) : 0;
 
-      const formattedPersons = persons.map((person, index) => formatPersonProduction(person, index + 1));
+      const ids = idRows.map((row) => row.id);
+      const persons = ids.length === 0 ? [] : await sequelize.query(withTimeout(`
+        SELECT
+          p.id AS person_id,
+          p.preferred_name AS person_name,
+          p.orcid,
+          p.is_verified,
+          p.total_works AS total_works,
+          p.total_citations AS total_citations,
+          ROUND(
+            CASE WHEN p.total_works > 0
+                 THEN p.total_citations / p.total_works
+                 ELSE NULL END,
+            2
+          ) AS avg_citations,
+          p.first_publication_year,
+          p.latest_publication_year
+        FROM persons p
+        WHERE p.id IN (:ids)
+        ORDER BY p.total_works DESC, p.id DESC
+      `), {
+        replacements: { ids },
+        type: sequelize.QueryTypes.SELECT
+      });
+
+      const formattedPersons = persons.map((person, index) => formatPersonProduction(person, offset + index + 1));
 
       const result = {
         data: formattedPersons,
@@ -439,163 +449,33 @@ class MetricsService {
   async getCollaborations(filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { min_collaborations = 2 } = filters;
-    const cacheKey = `metrics:collaborations:v4:${JSON.stringify({ page, limit, offset, min_collaborations })}`;
+    const minCollaborations = parseInt(filters.min_collaborations, 10) || 2;
+    const cacheKey = `metrics:collaborations:v5:${JSON.stringify({ page, limit, offset, minCollaborations })}`;
 
-    try {
-      const cached = await cacheService.get(cacheKey);
-      if (cached) {
-        logger.info('Collaborations retrieved from cache');
-        return cached;
-      }
+    const cached = await cacheService.get(cacheKey);
+    if (cached) return cached;
 
-      const topPersons = await sequelize.query(withTimeout(`
-        SELECT id
-        FROM persons
-        WHERE total_works >= 30
-        ORDER BY total_works DESC
-        LIMIT 2000
-      `), { type: sequelize.QueryTypes.SELECT });
+    const ranked = await collaborationsService.rankCollaborationPairs({ minCollaborations, limit, offset });
+    const formattedCollaborations = ranked.pairs.map((pair, index) => formatTopCollaboration(pair, offset + index + 1));
+    const total = ranked.total ?? offset;
 
-      const topPersonIds = topPersons.map(r => r.id);
-      if (topPersonIds.length === 0) {
-        return {
-          data: [],
-          pagination: createPagination(page, limit, 0),
-          summary: {
-            total_collaboration_pairs: 0,
-            strongest_collaboration_count: 0,
-            avg_collaboration_years: 0,
-            collaboration_strength_distribution: { very_strong: 0, strong: 0, moderate: 0, weak: 0 }
-          },
-          filters: {
-            min_collaborations: parseInt(min_collaborations),
-            scope: 'top_authors_only'
-          }
-        };
-      }
+    const result = {
+      data: formattedCollaborations,
+      pagination: createPagination(page, limit, total),
+      summary: {
+        total_collaboration_pairs: total,
+        strongest_collaboration_count: formattedCollaborations.length > 0 ? formattedCollaborations[0].metrics.shared_works : 0,
+        avg_collaboration_years: formattedCollaborations.length > 0
+          ? Math.round(formattedCollaborations.reduce((sum, c) => sum + c.timespan.collaboration_years, 0) / formattedCollaborations.length)
+          : 0,
+        collaboration_strength_distribution: calculateCollaborationStrengthDistribution(formattedCollaborations)
+      },
+      filters: { min_collaborations: minCollaborations },
+      meta: ranked.degraded ? { degraded: true, pagination_total_exact: false } : { pagination_total_exact: true }
+    };
 
-      const pairs = await sequelize.query(withTimeout(`
-        SELECT
-          LEAST(a1.person_id, a2.person_id) AS person1_id,
-          GREATEST(a1.person_id, a2.person_id) AS person2_id,
-          COUNT(DISTINCT a1.work_id) AS collaboration_count,
-          ROUND(AVG(COALESCE(w.citation_count, 0)), 2) AS avg_citations_together,
-          MIN(pub.year) AS first_collaboration_year,
-          MAX(pub.year) AS latest_collaboration_year
-        FROM authorships a1
-        INNER JOIN authorships a2
-          ON a1.work_id = a2.work_id
-          AND a1.person_id < a2.person_id
-        LEFT JOIN works w ON w.id = a1.work_id
-        LEFT JOIN publications pub ON pub.work_id = a1.work_id
-        WHERE a1.person_id IN (:topPersonIds)
-          AND a2.person_id IN (:topPersonIds)
-        GROUP BY person1_id, person2_id
-        HAVING collaboration_count >= :min_collaborations
-        ORDER BY collaboration_count DESC, avg_citations_together DESC
-        LIMIT :limit OFFSET :offset
-      `), {
-        replacements: {
-          topPersonIds,
-          limit: parseInt(limit),
-          offset: parseInt(offset),
-          min_collaborations: parseInt(min_collaborations)
-        },
-        type: sequelize.QueryTypes.SELECT
-      });
-
-      const personIds = Array.from(new Set([
-        ...pairs.map(p => p.person1_id),
-        ...pairs.map(p => p.person2_id)
-      ]));
-
-      const nameMap = Object.create(null);
-      if (personIds.length > 0) {
-        const names = await sequelize.query(`
-          SELECT id, preferred_name FROM persons WHERE id IN (:personIds)
-        `, {
-          replacements: { personIds },
-          type: sequelize.QueryTypes.SELECT
-        });
-        for (const row of names) {
-          nameMap[row.id] = row.preferred_name;
-        }
-      }
-
-      const collaborations = pairs.map(p => ({
-        person1_id: p.person1_id,
-        person1_name: nameMap[p.person1_id] || null,
-        person2_id: p.person2_id,
-        person2_name: nameMap[p.person2_id] || null,
-        collaboration_count: parseInt(p.collaboration_count, 10) || 0,
-        avg_citations_together: parseFloat(p.avg_citations_together) || 0,
-        first_collaboration_year: p.first_collaboration_year,
-        latest_collaboration_year: p.latest_collaboration_year
-      }));
-
-      let total = collaborations.length + parseInt(offset);
-      try {
-        const [countRow] = await sequelize.query(withTimeout(`
-          SELECT COUNT(*) AS total FROM (
-            SELECT 1
-            FROM authorships a1
-            INNER JOIN authorships a2
-              ON a1.work_id = a2.work_id
-              AND a1.person_id < a2.person_id
-            WHERE a1.person_id IN (:topPersonIds)
-              AND a2.person_id IN (:topPersonIds)
-            GROUP BY LEAST(a1.person_id, a2.person_id), GREATEST(a1.person_id, a2.person_id)
-            HAVING COUNT(DISTINCT a1.work_id) >= :min_collaborations
-          ) pairs
-        `), {
-          replacements: { topPersonIds, min_collaborations: parseInt(min_collaborations) },
-          type: sequelize.QueryTypes.SELECT
-        });
-        if (countRow && countRow.total !== undefined) total = parseInt(countRow.total, 10);
-      } catch (error) {
-        logger.warn('Collaborations metrics count fallback used', { error: error.message });
-      }
-      const formattedCollaborations = collaborations.map((collab, index) => formatCollaboration(collab, index + 1));
-
-      const result = {
-        data: formattedCollaborations,
-        pagination: createPagination(page, limit, total),
-        summary: {
-          total_collaboration_pairs: total,
-          strongest_collaboration_count: formattedCollaborations.length > 0 ? formattedCollaborations[0].metrics.shared_works : 0,
-          avg_collaboration_years: formattedCollaborations.length > 0
-            ? Math.round(formattedCollaborations.reduce((sum, c) => sum + c.timespan.collaboration_years, 0) / formattedCollaborations.length)
-            : 0,
-          collaboration_strength_distribution: calculateCollaborationStrengthDistribution(formattedCollaborations)
-        },
-        filters: {
-          min_collaborations: parseInt(min_collaborations)
-        }
-      };
-
-      await cacheService.set(cacheKey, result, 86400);
-      logger.info(`Collaborations cached: ${collaborations.length} pairs`);
-      return result;
-    } catch (error) {
-      if (isStatementTimeout(error)) {
-        logger.warn('Collaboration metrics degraded (statement timeout)', { error: error.message });
-        return {
-          data: [],
-          pagination: createPagination(page, limit, 0),
-          summary: {
-            total_collaboration_pairs: 0,
-            strongest_collaboration_count: 0,
-            avg_collaboration_years: 0,
-            collaboration_strength_distribution: { very_strong: 0, strong: 0, moderate: 0, weak: 0 }
-          },
-          filters: { min_collaborations: parseInt(min_collaborations) },
-          meta: { degraded: true }
-        };
-      }
-      logger.error('Error fetching collaborations:', error);
-      throw error;
-    }
+    if (!ranked.degraded) await cacheService.set(cacheKey, result, 86400);
+    return result;
   }
 }
 
@@ -607,34 +487,41 @@ const isMissingTable = (error) => {
   return code === 'ER_NO_SUCH_TABLE' || errno === 1146 || /doesn't exist/i.test(String(error.message || ''));
 };
 
-const buildAnnualResult = (stats, total, page, limit) => {
-  const formattedStats = stats.map(formatAnnualStats);
+const buildAnnualResult = (source, page, limit) => {
+  const formattedStats = source.stats.map(formatAnnualStats);
+  const scope = (source.aggregate || source.stats).map((row) => ({
+    year: parseInt(row.year, 10),
+    total_publications: parseInt(row.total_publications, 10) || 0
+  }));
+  const years = scope.map((row) => row.year).filter(Number.isFinite);
+  const totalPublications = scope.reduce((sum, row) => sum + row.total_publications, 0);
   return {
     data: formattedStats,
-    pagination: createPagination(page, limit, total),
+    pagination: createPagination(page, limit, source.total),
     summary: {
-      total_years: total,
-      date_range: stats.length > 0
-        ? `${stats[stats.length - 1].year}-${stats[0].year}`
-        : null,
-      total_works_all_years: formattedStats.reduce((sum, s) => sum + s.metrics.total_publications, 0),
-      avg_works_per_year: stats.length > 0
-        ? Math.round(formattedStats.reduce((sum, s) => sum + s.metrics.total_publications, 0) / stats.length)
-        : 0,
-      growth_trend: stats.length >= 2
-        ? calculateGrowthTrend(formattedStats.map(s => s.metrics.total_publications))
-        : null
+      scope: source.aggregate ? 'all_years_in_range' : 'current_page',
+      total_years: source.total,
+      date_range: years.length > 0 ? `${Math.min(...years)}-${Math.max(...years)}` : null,
+      total_publications_all_years: totalPublications,
+      avg_publications_per_year: scope.length > 0 ? Math.round(totalPublications / scope.length) : 0,
+      growth_trend: calculateGrowthTrend(scope),
+      source: source.engine,
+      refreshed_at: source.refreshedAt || null
     }
   };
 };
 
-const calculateGrowthTrend = (values) => {
-  if (values.length < 2) return 'insufficient_data';
-
-  const recent = values.slice(0, 3).reduce((sum, v) => sum + v, 0) / Math.min(3, values.length);
-  const older = values.slice(-3).reduce((sum, v) => sum + v, 0) / Math.min(3, values.slice(-3).length);
-  const change = ((recent - older) / older) * 100;
-
+const calculateGrowthTrend = (rows) => {
+  const currentYear = new Date().getFullYear();
+  const complete = rows
+    .filter((row) => row.year < currentYear)
+    .sort((a, b) => b.year - a.year);
+  if (complete.length < 6) return 'insufficient_data';
+  const mean = (list) => list.reduce((sum, row) => sum + row.total_publications, 0) / list.length;
+  const recent = mean(complete.slice(0, 3));
+  const previous = mean(complete.slice(3, 6));
+  if (previous === 0) return recent > 0 ? 'increasing' : 'stable';
+  const change = ((recent - previous) / previous) * 100;
   if (change > 10) return 'increasing';
   if (change < -10) return 'decreasing';
   return 'stable';

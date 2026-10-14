@@ -2,7 +2,7 @@ const personsService = require('../services/persons.service');
 const { logger } = require('../middleware/errorHandler');
 const { validationResult } = require('express-validator');
 const { ERROR_CODES } = require('../utils/responseBuilder');
-const { createPagination, normalizePagination } = require('../utils/pagination');
+const { normalizePagination } = require('../utils/pagination');
 
 class PersonsController {
   async getPerson(req, res, next) {
@@ -78,15 +78,7 @@ class PersonsController {
         meta: Object.keys(meta).length ? meta : undefined
       });
     } catch (error) {
-      logger.error('Error retrieving persons list:', error);
-      if (process.env.NODE_ENV === 'test') {
-        const page = parseInt(req.query.page || 1, 10);
-        const limit = parseInt(req.query.limit || 20, 10);
-        return res.success([], {
-          pagination: createPagination(page, limit, 0),
-          meta: { fallback: 'test-empty' }
-        });
-      }
+      logger.error('Error retrieving persons list:', { error: error.message });
       return res.error(error);
     }
   }

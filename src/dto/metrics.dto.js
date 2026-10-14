@@ -108,47 +108,9 @@ const formatPersonProduction = (person, rank = null) => {
 };
 
 
-const formatCollaboration = (collaboration, rank = null) => {
-  if (!collaboration) return null;
-
-  const collaborationStrength = (shared_works) => {
-    if (shared_works >= 10) return 'very_strong';
-    if (shared_works >= 5) return 'strong';
-    if (shared_works >= 3) return 'moderate';
-    return 'weak';
-  };
-
-  return {
-    ranking: rank || null,
-    collaborators: {
-      person_1: {
-        id: parseInt(collaboration.person1_id),
-        name: collaboration.person1_name || null
-      },
-      person_2: {
-        id: parseInt(collaboration.person2_id),
-        name: collaboration.person2_name || null
-      }
-    },
-    metrics: {
-      shared_works: parseInt(collaboration.collaboration_count) || 0,
-      avg_shared_citations: parseFloat(collaboration.avg_citations_together) || 0,
-      collaboration_strength: collaborationStrength(parseInt(collaboration.collaboration_count) || 0)
-    },
-    timespan: {
-      first_collaboration_year: parseInt(collaboration.first_collaboration_year) || null,
-      latest_collaboration_year: parseInt(collaboration.latest_collaboration_year) || null,
-      collaboration_years: collaboration.latest_collaboration_year && collaboration.first_collaboration_year
-        ? parseInt(collaboration.latest_collaboration_year) - parseInt(collaboration.first_collaboration_year) + 1
-        : 0
-    }
-  };
-};
-
 module.exports = {
   formatAnnualStats,
   formatVenueRanking,
   formatInstitutionProductivity,
-  formatPersonProduction,
-  formatCollaboration
+  formatPersonProduction
 };

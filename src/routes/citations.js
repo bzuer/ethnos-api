@@ -29,6 +29,7 @@ const validatePagination = [
 const validateCitationType = [
   query('type')
     .optional({ values: 'falsy' })
+    .customSanitizer(value => (typeof value === 'string' && value.toLowerCase() !== 'all' ? value.toUpperCase() : value))
     .isIn(['all', 'POSITIVE', 'NEUTRAL', 'NEGATIVE', 'SELF'])
     .withMessage('Type must be one of: all, POSITIVE, NEUTRAL, NEGATIVE, SELF')
 ];

@@ -215,7 +215,8 @@ class MetricsController {
             min_collaborations: filters.min_collaborations
           },
           generated_at: new Date().toISOString(),
-          performance: { controller_time_ms: Date.now() - t0 }
+          performance: { controller_time_ms: Date.now() - t0 },
+          ...(result.meta || {})
         }
       });
     } catch (error) {

@@ -18,6 +18,8 @@ const validatePagination = [
   query('offset').optional({ values: 'falsy' }).isInt({ min: 0 }).withMessage('Offset must be a non-negative integer')
 ];
 
+const WORK_TYPES = ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'];
+
 const validateOrganizationsQuery = [
   ...validatePagination,
   query('search').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 255 }).withMessage('Search term must be between 2 and 255 characters'),
@@ -40,7 +42,7 @@ const validateOrganizationsQuery = [
 
 const validateOrganizationWorksQuery = [
   ...validatePagination,
-  query('type').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 50 }).withMessage('Work type must be between 2 and 50 characters'),
+  query('type').optional({ values: 'falsy' }).trim().toUpperCase().isIn(WORK_TYPES).withMessage(`type must be one of: ${WORK_TYPES.join(', ')}`),
   query('year_from').optional({ values: 'falsy' }).isInt({ min: 1500 }).withMessage('year_from must be a valid year'),
   query('year_to').optional({ values: 'falsy' }).isInt({ min: 1500 }).withMessage('year_to must be a valid year'),
   query('language').optional({ values: 'falsy' }).trim().isLength({ min: 2, max: 10 }).withMessage('Language must be between 2 and 10 characters'),
@@ -218,7 +220,13 @@ router.get('/', validateOrganizationsQuery, organizationsController.getOrganizat
  *       429: { $ref: '#/components/responses/RateLimitExceeded' }
  *       500: { $ref: '#/components/responses/InternalError' }
  */
-router.get('/:id', validateOrganizationId, organizationsController.getOrganization);
+router.get('/:id', [
+  ...validateOrganizationId,
+  ...['include_production', 'include_authors', 'include_works', 'include_relationships'].map((flag) => query(flag)
+    .optional({ values: 'falsy' })
+    .isIn(['true', 'false', '1', '0'])
+    .withMessage(`${flag} must be boolean-like (1/0/true/false)`))
+], organizationsController.getOrganization);
 
 /**
  * @swagger

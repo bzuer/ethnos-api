@@ -1,5 +1,6 @@
 const { buildSuccessResponse, buildErrorResponse, ERROR_CODES, normalizeData } = require('../utils/responseBuilder');
 const { logger } = require('./errorHandler');
+const { isStatementTimeout } = require('../utils/db');
 
 const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
 
@@ -104,8 +105,18 @@ const responseFormatter = (req, res, next) => {
       });
     }
 
-    const statusCode = err.statusCode || err.status || options.statusCode || 500;
-    let code = err.code || options.code || (statusCode === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.INTERNAL);
+    if (isStatementTimeout(err)) {
+      return res.fail('The query exceeded its time budget; narrow the filters or request a shallower page', {
+        statusCode: 503,
+        code: ERROR_CODES.TIMEOUT,
+        meta: options.meta
+      });
+    }
+
+    const statusCode = Number.isInteger(err.statusCode) ? err.statusCode
+      : (Number.isInteger(err.status) ? err.status : (options.statusCode || 500));
+    let code = (typeof err.code === 'string' && Object.values(ERROR_CODES).includes(err.code) ? err.code : null)
+      || options.code || (statusCode === 404 ? ERROR_CODES.NOT_FOUND : ERROR_CODES.INTERNAL);
     let message = err.message || options.message || 'Unexpected error';
     let errors = err.errors || options.errors;
     let meta = mergeMeta(options.meta, err.meta);

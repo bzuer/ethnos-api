@@ -49,6 +49,9 @@ function toBooleanFlag(value, fallback) {
   return fallback;
 }
 
+const FULLTEXT_MIN_TOKEN = 3;
+const FULLTEXT_STOPWORDS = new Set(['a', 'about', 'an', 'are', 'as', 'at', 'be', 'by', 'com', 'de', 'en', 'for', 'from', 'how', 'i', 'in', 'is', 'it', 'la', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'was', 'what', 'when', 'where', 'who', 'will', 'with', 'und', 'www']);
+
 class OrganizationsService {
   resolveListSort(filters = {}) {
     const rawKey = (typeof filters.sort_by === 'string'
@@ -141,8 +144,18 @@ class OrganizationsService {
     if (term) {
       replacements.q = term;
       replacements.qupper = term.toUpperCase();
-      where.push(`(MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE)
-        OR JSON_CONTAINS(o.acronyms, JSON_QUOTE(:qupper)))`);
+      const required = term
+        .replace(/[+\-<>()~*"@]/g, ' ')
+        .split(/\s+/)
+        .filter((token) => [...token].length >= FULLTEXT_MIN_TOKEN && !FULLTEXT_STOPWORDS.has(token.toLowerCase()))
+        .map((token) => `+${token}*`);
+      const acronymMatch = 'JSON_CONTAINS(UPPER(o.acronyms), JSON_QUOTE(:qupper))';
+      if (required.length > 0) {
+        replacements.qbool = required.join(' ');
+        where.push(`(MATCH(o.name) AGAINST(:qbool IN BOOLEAN MODE) OR ${acronymMatch})`);
+      } else {
+        where.push(acronymMatch);
+      }
     }
 
     return { where, replacements, term };
@@ -166,7 +179,7 @@ class OrganizationsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
 
-    const cacheKey = `organizations:v6:${JSON.stringify({ ...filters, page, limit, offset })}`;
+    const cacheKey = `organizations:v7:${JSON.stringify({ ...filters, page, limit, offset })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -183,9 +196,10 @@ class OrganizationsService {
       let relevanceSelect = '';
       if (sort.by === 'relevance' && term) {
         relevanceSelect = `,
-            COALESCE(JSON_CONTAINS(o.acronyms, JSON_QUOTE(:qupper)), 0) AS acronym_exact,
+            COALESCE(JSON_CONTAINS(UPPER(o.acronyms), JSON_QUOTE(:qupper)), 0) AS acronym_exact,
+            (o.name = :q) AS name_exact,
             MATCH(o.name) AGAINST(:q IN NATURAL LANGUAGE MODE) AS relevance`;
-        orderClause = 'acronym_exact DESC, o.publication_count DESC, relevance DESC, o.id ASC';
+        orderClause = 'acronym_exact DESC, name_exact DESC, o.publication_count DESC, relevance DESC, o.id ASC';
       } else {
         const column = sort.column || 'o.publication_count';
         const tieBreak = column === 'o.id' ? '' : ', o.id ASC';
@@ -257,7 +271,7 @@ class OrganizationsService {
     const includeWorks = toBooleanFlag(options.include_works, true);
     const includeRelationships = toBooleanFlag(options.include_relationships, true);
 
-    const cacheKey = `organization:v6:${id}:${[
+    const cacheKey = `organization:v7:${id}:${[
       includeProduction ? 1 : 0,
       includeAuthors ? 1 : 0,
       includeWorks ? 1 : 0,
@@ -350,7 +364,7 @@ class OrganizationsService {
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]),
 
         sequelize.query(withTimeout(`
-          SELECT COUNT(*) AS funded_works_count, COUNT(DISTINCT grant_number) AS grants_count
+          SELECT COUNT(DISTINCT work_id) AS funded_works_count, COUNT(DISTINCT grant_number) AS grants_count
           FROM funding WHERE funder_id = :id
         `), { replacements: { id }, type: sequelize.QueryTypes.SELECT }),
 
@@ -474,11 +488,12 @@ class OrganizationsService {
 
   buildWorkFilters(options = {}) {
     const where = [];
+    const publicationMatch = [];
     const replacements = {};
 
     const type = (options.type || '').trim();
     if (type) {
-      where.push('EXISTS (SELECT 1 FROM publications ptype WHERE ptype.work_id = w.id AND ptype.type = :type)');
+      publicationMatch.push('p2.type = :type');
       replacements.type = type.toUpperCase();
     }
     const language = (options.language || '').trim();
@@ -488,36 +503,38 @@ class OrganizationsService {
     }
     const yearFrom = toNonNegativeInt(options.year_from);
     if (yearFrom !== null) {
-      where.push('COALESCE(pub.year, 0) >= :yearFrom');
+      publicationMatch.push('p2.year >= :yearFrom');
       replacements.yearFrom = yearFrom;
     }
     const yearTo = toNonNegativeInt(options.year_to);
     if (yearTo !== null) {
-      where.push('COALESCE(pub.year, 0) <= :yearTo');
+      publicationMatch.push('p2.year <= :yearTo');
       replacements.yearTo = yearTo;
     }
     const citedByMin = toNonNegativeInt(options.cited_by_min ?? options.citation_count_min);
     if (citedByMin !== null) {
-      where.push('COALESCE(w.citation_count, 0) >= :citedByMin');
+      where.push('w.citation_count >= :citedByMin');
       replacements.citedByMin = citedByMin;
     }
     const citedByMax = toNonNegativeInt(options.cited_by_max ?? options.citation_count_max);
     if (citedByMax !== null) {
-      where.push('COALESCE(w.citation_count, 0) <= :citedByMax');
+      where.push('w.citation_count <= :citedByMax');
       replacements.citedByMax = citedByMax;
     }
     const openAccess = toBooleanFlag(options.open_access, null);
     if (openAccess !== null) {
-      where.push('pub.open_access = :openAccess');
+      publicationMatch.push('p2.open_access = :openAccess');
       replacements.openAccess = openAccess ? 1 : 0;
     }
     const peerReviewed = toBooleanFlag(options.peer_reviewed, null);
     if (peerReviewed !== null) {
-      where.push('pub.peer_reviewed = :peerReviewed');
+      publicationMatch.push('p2.peer_reviewed = :peerReviewed');
       replacements.peerReviewed = peerReviewed ? 1 : 0;
     }
 
-    return { where, replacements };
+    const matchSql = publicationMatch.join(' AND ');
+    const publicationJoin = latestPublicationJoin('pub', matchSql ? 'INNER' : 'LEFT', matchSql);
+    return { where, replacements, publicationJoin };
   }
 
   async hydrateAuthors(workIds) {
@@ -530,9 +547,9 @@ class OrganizationsService {
     const { page, limit, offset } = pagination;
 
     const sort = this.buildWorksSort(filters);
-    const { where, replacements } = this.buildWorkFilters(filters);
+    const { where, replacements, publicationJoin } = this.buildWorkFilters(filters);
 
-    const cacheKey = `organization:${organizationId}:works:v2:${JSON.stringify({ page, limit, offset, filters })}`;
+    const cacheKey = `organization:${organizationId}:works:v3:${JSON.stringify({ page, limit, offset, filters })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -563,7 +580,7 @@ class OrganizationsService {
             (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM works w
           INNER JOIN authorships a ON a.work_id = w.id
-          ${latestPublicationJoin('pub', 'LEFT')}
+          ${publicationJoin}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE ${whereClause}
           GROUP BY w.id
@@ -574,7 +591,7 @@ class OrganizationsService {
           SELECT COUNT(DISTINCT w.id) AS total
           FROM works w
           INNER JOIN authorships a ON a.work_id = w.id
-          ${latestPublicationJoin('pub', 'LEFT')}
+          ${publicationJoin}
           WHERE ${whereClause}
         `, countReplacements)
       ]);
@@ -596,7 +613,7 @@ class OrganizationsService {
       const result = {
         data,
         pagination: createPagination(page, limit, total),
-        performance: { engine: 'MariaDB', query_type: 'organization_works', elapsed_ms: 0 },
+        performance: { engine: 'MariaDB', query_type: 'organization_works' },
         meta: {
           match_mode: 'affiliation',
           sort: { by: sort.by, order: sort.order },
@@ -618,9 +635,9 @@ class OrganizationsService {
     const { page, limit, offset } = pagination;
 
     const sort = this.buildWorksSort(filters);
-    const { where, replacements } = this.buildWorkFilters(filters);
+    const { where, replacements, publicationJoin } = this.buildWorkFilters(filters);
 
-    const cacheKey = `organization:${organizationId}:funded:v1:${JSON.stringify({ page, limit, offset, filters })}`;
+    const cacheKey = `organization:${organizationId}:funded:v3:${JSON.stringify({ page, limit, offset, filters })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -645,14 +662,15 @@ class OrganizationsService {
           SELECT
             w.id, w.title, w.subtitle, pub.type AS work_type, w.language,
             w.citation_count, w.reference_count,
-            MAX(f.grant_number) AS grant_number,
+            MIN(f.grant_number) AS grant_number,
+            GROUP_CONCAT(DISTINCT f.grant_number ORDER BY f.grant_number SEPARATOR '\u001f') AS grant_numbers,
             pub.id AS publication_id, pub.year, pub.doi, pub.volume, pub.issue, pub.pages,
             pub.open_access, pub.peer_reviewed,
             v.id AS venue_id, v.name AS venue_name, v.abbreviated_name AS venue_abbreviated_name, v.type AS venue_type,
             (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS author_count
           FROM funding f
           INNER JOIN works w ON w.id = f.work_id
-          ${latestPublicationJoin('pub', 'LEFT')}
+          ${publicationJoin}
           LEFT JOIN venues v ON v.id = pub.venue_id
           WHERE ${whereClause}
           GROUP BY w.id
@@ -663,7 +681,7 @@ class OrganizationsService {
           SELECT COUNT(DISTINCT w.id) AS total
           FROM funding f
           INNER JOIN works w ON w.id = f.work_id
-          ${latestPublicationJoin('pub', 'LEFT')}
+          ${publicationJoin}
           WHERE ${whereClause}
         `, countReplacements)
       ]);

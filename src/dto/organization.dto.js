@@ -215,6 +215,9 @@ function formatAffiliatedWork(work = {}) {
       authors_preview: authorNames.slice(0, 3)
     },
     grant_number: work.grant_number !== undefined ? normalizeString(work.grant_number) : undefined,
+    grant_numbers: work.grant_numbers !== undefined
+      ? String(work.grant_numbers || '').split('\u001f').map(normalizeString).filter(Boolean)
+      : undefined,
     _links: { self: toOptionalInteger(work.id) === null ? null : `/works/${toOptionalInteger(work.id)}` }
   };
 }

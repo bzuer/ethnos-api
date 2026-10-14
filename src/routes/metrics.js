@@ -47,7 +47,12 @@ const validatePersonProduction = [
   query('organization_id')
     .optional({ values: 'falsy' })
     .isInt({ min: 1 })
-    .withMessage('Organization ID must be a positive integer')
+    .withMessage('Organization ID must be a positive integer'),
+
+  query('min_works')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 0 })
+    .withMessage('min_works must be a non-negative integer')
 ];
 
 const validateCollaborations = [
