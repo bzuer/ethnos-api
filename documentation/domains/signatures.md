@@ -34,7 +34,7 @@ Substring (default) or exact search over the normalized signature string. Matchi
 
 **Totals.** The count runs under a 2 s budget. When it finishes, `pagination.total` is exact and `meta.pagination_total_exact` is `true`. When it does not, `meta.pagination_total_exact` is `false` and `pagination.total` is only a lower bound: rows seen so far, plus one when the page is full. Paginate with `data.length < limit` as the terminator in that case.
 
-**Cost.** Measured 2026-10-14: common terms took 0.5–0.7 s (`silva`: 7,900 matches), exact searches 2 ms. A term that matches few or no signatures walks the whole index (`ZZQX`, no match: 3.2 s). A page that exceeds its statement budget returns **503** `REQUEST_TIMEOUT`.
+**Cost.** Measured 2026-10-14: about 0.5 s for any substring term, frequent or absent (`silva`, 7,900 matches: 0.67 s; `ZZQX`, no match: 0.52 s), exact searches 2 ms. (Before that day's index cleanup a term matching nothing took 3.2 s.) A page that exceeds its statement budget returns **503** `REQUEST_TIMEOUT`.
 
 **Example requests**
 

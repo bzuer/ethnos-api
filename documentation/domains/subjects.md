@@ -292,7 +292,7 @@ Works tagged with this subject (via `work_subjects`), newest work id first. Cach
 | Filtered, count exceeds its budget | the stored unfiltered `total_works` | `false` |
 | The page selection itself exceeds its statement budget | the stored unfiltered `total_works`, with `data: []`, `meta.page_degraded: true` and a `meta.note` | `false` |
 
-On multi-million-work subjects a filtered count usually exhausts its budget. Measured 2026-10-14: `/subjects/2035503/works?language=pt` took 2.0 s and reported `total: 1714321, pagination_total_exact: false`. A filter that matches almost nothing on such a subject (e.g. `language=zz` on `341907`) can exhaust the page budget instead; that took 4.5 s and returned a degraded page. Treat `pagination_total_exact: false` as "no usable total" and stop paging on `data.length < limit`, unless `page_degraded` is set. A degraded page means: narrow the filters or request a shallower page.
+On multi-million-work subjects a filtered count usually exhausts its budget. Measured 2026-10-14: `/subjects/2035503/works?language=pt` took 2.0 s and reported `total: 1714321, pagination_total_exact: false`. The count outcome is cached per subject and filter set (10 minutes for an estimate, 1 hour for an exact count), so later pages of the same filter skip that wait. A filter that matches almost nothing on such a subject (e.g. `language=zz` on `341907`) can exhaust the page budget instead; that took 4.5 s and returned a degraded page. Treat `pagination_total_exact: false` as "no usable total" and stop paging on `data.length < limit`, unless `page_degraded` is set. A degraded page means: narrow the filters or request a shallower page.
 
 **Example requests**
 

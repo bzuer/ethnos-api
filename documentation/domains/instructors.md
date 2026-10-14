@@ -255,7 +255,6 @@ Combined teaching and authorship analytics for one instructor. Returns **404 `IN
       "preferred_name": "Bruno Cesar Cunha Cruz",
       "given_names": "Bruno Cesar Cunha",
       "family_name": "Cruz",
-      "name_variations": [],
       "identifiers": { "orcid": "0000-0001-8652-2333", "lattes_id": null, "scopus_id": null },
       "is_verified": true,
       "created_at": "2026-07-18T20:52:01.000Z"
@@ -271,7 +270,6 @@ Combined teaching and authorship analytics for one instructor. Returns **404 `IN
     "authorship_profile": {
       "works_authored": 0,
       "unique_signatures": 1,
-      "confirmed_authorships": 0,
       "publication_span": { "first_year": null, "latest_year": null }
     },
     "signatures": [ { "id": 11111, "signature": "CRUZ B C C", "works_with_signature": 0 } ],
@@ -283,8 +281,7 @@ Combined teaching and authorship analytics for one instructor. Returns **404 `IN
     "combined_statistics": {
       "total_academic_span_years": 1,
       "academic_productivity_ratio": "0.00",
-      "bibliography_diversity_score": 0,
-      "signature_consistency_score": 0
+      "bibliography_diversity_score": 0
     }
   },
   "meta": { "request": { "method": "GET", "path": "/instructors/11111/statistics" } }
@@ -296,7 +293,6 @@ Combined teaching and authorship analytics for one instructor. Returns **404 `IN
 | field (dot-path) | type | notes |
 |---|---|---|
 | `data.person.id` / names / `identifiers.{orcid,lattes_id,scopus_id}` / `is_verified` / `created_at` | — | From `persons`. |
-| `data.person.name_variations` | array | Always `[]`. |
 
 **Fields: `teaching_profile`**
 
@@ -313,7 +309,6 @@ Combined teaching and authorship analytics for one instructor. Returns **404 `IN
 | field (dot-path) | type | notes |
 |---|---|---|
 | `works_authored` | integer | `persons.total_works`. |
-| `confirmed_authorships` | integer | Same value as `works_authored`. |
 | `unique_signatures` | integer | `1` if `persons.signature_id` is set, else `0`. |
 | `publication_span.{first_year,latest_year}` | integer \| null | `persons.first/latest_publication_year`. |
 
@@ -324,7 +319,7 @@ Combined teaching and authorship analytics for one instructor. Returns **404 `IN
 | `signatures[]` | `{ id, signature, works_with_signature }`: the person's signature, with the number of distinct works the person contributed to. |
 | `recent_authored_works[]` | Up to 10 distinct works the person contributed to (any role): `{ id, title, year, work_type, language, open_access, signature_text }`. `year`, `work_type` and `open_access` come from the work's latest publication; works without a year come last. `signature_text` is the person's current signature. |
 | `bibliography_usage_patterns[]` | Per reading type: `{ reading_type, works_count, courses_count }`. |
-| `most_used_authors_in_courses[]` | Top 15 contributors (any role) of the works in the instructor's bibliographies: `{ person_id, author_name, usage_count, courses_count, author_string, first_author_name, authors_array }`. The last three only repeat `author_name`. |
+| `most_used_authors_in_courses[]` | Top 15 contributors (any role) of the works in the instructor's bibliographies: `{ person_id, author_name, usage_count, courses_count }`. |
 | `subject_expertise[]` | Per vocabulary: `{ vocabulary, subjects_count, works_count, courses_count }`. |
 | `teaching_collaborators[]` | Top 10 co-instructors: `{ collaborator_id, collaborator_name, shared_courses }`. |
 
@@ -335,7 +330,8 @@ Combined teaching and authorship analytics for one instructor. Returns **404 `IN
 | `total_academic_span_years` | integer | Larger of the teaching span and the publication span. |
 | `academic_productivity_ratio` | string | `(works_authored / courses_taught).toFixed(2)`, e.g. `"0.00"`. |
 | `bibliography_diversity_score` | integer | Number of reading-type groups in `bibliography_usage_patterns`. |
-| `signature_consistency_score` | number | Largest `works_with_signature` divided by the number of signatures; with one signature this equals that signature's work count. |
+
+Until 2026-10-14 this payload also carried `person.name_variations` (always `[]`), `authorship_profile.confirmed_authorships` (a copy of `works_authored`), `author_string` / `first_author_name` / `authors_array` on `most_used_authors_in_courses[]` (copies of `author_name`) and `combined_statistics.signature_consistency_score` (a person has one signature, so it was just that signature's work count). They were removed.
 
 ---
 

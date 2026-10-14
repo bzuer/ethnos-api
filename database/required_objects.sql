@@ -10,8 +10,10 @@
 --   2. Operator regenerates the schema snapshot:
 --        mysqldump -d --routines --events --order-by-primary --single-transaction \
 --          --compact --skip-comments --skip-tz-utc --default-character-set=utf8mb4 \
---          data > backups/data.schema.$(date +%Y-%m-%d).sql   (a same-day re-dump may
---          carry a _HH-MM suffix, e.g. data.schema.2026-10-14_00-40.sql)
+--          data > backups/data.schema.$(date +%Y-%m-%d).sql   (or run
+--          scripts/maintenance/publications/regenerate_schema_dump.sh; give it an
+--          explicit path such as data.schema.2026-10-14_00-40.sql to keep an
+--          earlier same-day dump)
 --   3. The API is updated to consult the new snapshot.
 --
 -- Statements are idempotent. Empty a section once the operator confirms it is
@@ -30,35 +32,6 @@
 --     cadence. Left as 0 until provided; not blocking.
 
 -- -----------------------------------------------------------------------------
--- PENDING (2026-10-14, full API review): optional redundant-index cleanup.
--- OPTIONAL — no API query depends on any of these indexes. Each one duplicates
--- an index that serves every lookup it could serve, and only costs a second
--- B-tree maintained on every write. No routine in the 2026-10-14 snapshot
--- names them; drop one only if no pipeline query outside the database names it
--- in an index hint (FORCE/USE INDEX). Dropping a secondary index is in place.
--- -----------------------------------------------------------------------------
-
--- (venues) idx_eissn (eissn) duplicates UNIQUE KEY `eissn` (eissn).
-ALTER TABLE venues DROP INDEX IF EXISTS idx_eissn;
-
--- (persons) idx_persons_preferred_name duplicates UNIQUE uq_preferred_name;
---     idx_family_name (family_name) is the prefix of idx_persons_family_given.
-ALTER TABLE persons DROP INDEX IF EXISTS idx_persons_preferred_name;
-ALTER TABLE persons DROP INDEX IF EXISTS idx_family_name;
-
--- (signatures) idx_signatures_signature (signature) and idx_signature_search
---     (signature(20)) both duplicate UNIQUE uq_signature (signature).
-ALTER TABLE signatures DROP INDEX IF EXISTS idx_signatures_signature;
-ALTER TABLE signatures DROP INDEX IF EXISTS idx_signature_search;
-
--- (work_subjects) idx_subject (subject_id) is the prefix of
---     idx_work_subjects_subject_work (subject_id, work_id), which also backs the
---     subject_id foreign key. Beyond being redundant it is harmful: with both
---     present MariaDB picks an index_merge intersection of the two for any
---     subject query that reads a non-indexed column (3.7 s on subject 341907).
-ALTER TABLE work_subjects DROP INDEX IF EXISTS idx_subject;
-
--- -----------------------------------------------------------------------------
 -- PENDING (2026-10-14, full API review): read-only database account.
 -- RECOMMENDED. The API connects as `dev`, which holds GRANT ALL PRIVILEGES ON
 -- *.* WITH GRANT OPTION on the replication master; the consumer-only contract is
@@ -68,8 +41,6 @@ ALTER TABLE work_subjects DROP INDEX IF EXISTS idx_subject;
 -- again. The statements need a secret, so they are described rather than listed:
 --   CREATE USER 'ethnos_api_ro'@'localhost' IDENTIFIED BY '<secret>';
 --   GRANT SELECT ON data.* TO 'ethnos_api_ro'@'localhost';
--- /etc/node-backend.env should also be chmod 640 (it is 0655 today, readable by
--- every local account, and holds the database password and eight API keys).
 
 -- Audit result recorded for the next reader: no API endpoint needs a new index.
 -- Every slow path found in the 2026-10-14 review (venue detail 4.9 s, works and
@@ -80,6 +51,16 @@ ALTER TABLE work_subjects DROP INDEX IF EXISTS idx_subject;
 -- listing, so it is not requested.
 
 -- Previously applied (recorded in backups/data.schema.<date>.sql):
+--   * Redundant-index cleanup, applied 2026-10-14: dropped venues.idx_eissn
+--     (duplicated UNIQUE eissn), persons.idx_persons_preferred_name (duplicated
+--     UNIQUE uq_preferred_name), persons.idx_family_name (prefix of
+--     idx_persons_family_given), signatures.idx_signatures_signature and
+--     signatures.idx_signature_search (duplicated UNIQUE uq_signature), and
+--     work_subjects.idx_subject (prefix of idx_work_subjects_subject_work; its
+--     index_merge intersection cost 3.7 s on subject 341907). Measured after:
+--     /signatures/search for a term matching nothing 3.2 s -> 0.52 s (the count
+--     now scans uq_signature index-only); every other affected endpoint unchanged
+--     or faster.
 --   * metrics_annual_summary (PK year; total_publications, unique_works,
 --     open_access_count, articles, books, avg_citations, unique_organizations,
 --     refreshed_at), refreshed on the stats cadence over publications. Applied

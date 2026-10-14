@@ -146,7 +146,9 @@ Every response passes through a normalizer, so clients can rely on stable types:
 - **Dates**: fields matching `*_at`, `*_date`, `*timestamp`, `created_at`, `updated_at`, `publication_date`, etc. are ISO-8601 UTC strings (`YYYY-MM-DDT...Z`). Date-only values become `T00:00:00.000Z`.
 - **Absent values**: missing values are JSON `null` (never `""`). Stored text is presented verbatim — a work titled `Null` keeps its title.
 
-So: booleans are booleans, dates are ISO strings, and absent values are `null`.
+- **Text is never HTML-escaped**, in either direction. Query values reach the API exactly as sent (a DOI such as `10.1002/(sici)1096-8644(1996)23+<1::aid-ajpa1>3.0.co;2-9` matches `/publications?doi=`), echoes such as `meta.query` return them verbatim, and stored titles keep their characters. Escape on display.
+
+So: booleans are booleans, dates are ISO strings, absent values are `null`, and text is raw.
 
 ---
 
@@ -179,7 +181,7 @@ In OpenAPI the security scheme `XAccessKey` is declared globally as **optional**
 | Flag | Where | Meaning |
 |---|---|---|
 | `request.{method,path}` | everywhere | echo of the request |
-| `pagination_total_exact` | work/publication/institution/subject/person/signature listings, search, collaborations | `false` → `pagination.total` is an estimate (unfiltered browse, a count that exceeded its ~2 s budget, or a capped full-text set); gate on this before trusting `total` |
+| `pagination_total_exact` | work/publication/institution/subject/person/signature listings, search, collaborations | `false` → `pagination.total` is an estimate (unfiltered browse, a count that exceeded its ~2 s budget, or a capped full-text set); gate on this before trusting `total`. Count outcomes are cached per filter set (an estimate for 10 minutes, an exact count for 1 hour), so only the first request for a filter pays the count budget |
 | `match_mode` | work listings / affiliated works | `"any_publication"` on `/works`; `"affiliation"` / `"funder"` on institution nested works |
 | `engine` / `performance.engine` | works, publications, search | `"Manticore"` when a full-text term participated, else `"MariaDB"` |
 | `performance.*` | works, publications | server-side timing (`primary_query_ms`, `total_rows_examined`, `query_type`) |
