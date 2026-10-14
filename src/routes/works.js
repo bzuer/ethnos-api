@@ -3,6 +3,8 @@ const router = express.Router();
 const { param, query } = require('express-validator');
 const worksController = require('../controllers/works.controller');
 
+const WORK_TYPES = ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'];
+
 const validateWorkId = [
   param('id')
     .isInt({ min: 1 })
@@ -26,10 +28,38 @@ const validateWorksQuery = [
     .withMessage('Offset must be a non-negative integer'),
   
   query('search')
-    .optional({ values: 'falsy' }),
-  
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ min: 2, max: 200 })
+    .withMessage('search must be between 2 and 200 characters'),
+
+  query('q')
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ min: 2, max: 200 })
+    .withMessage('q must be between 2 and 200 characters'),
+
   query('type')
-    .optional({ values: 'falsy' }),
+    .optional({ values: 'falsy' })
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+    .isIn(WORK_TYPES)
+    .withMessage(`type must be one of: ${WORK_TYPES.join(', ')}`),
+
+  query('work_type')
+    .optional({ values: 'falsy' })
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+    .isIn(WORK_TYPES)
+    .withMessage(`work_type must be one of: ${WORK_TYPES.join(', ')}`),
+
+  query('peer_reviewed')
+    .optional({ values: 'falsy' })
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('peer_reviewed must be boolean-like (1/0/true/false)'),
+
+  query('venue_id')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1 })
+    .withMessage('venue_id must be a positive integer'),
 
   query('language')
     .optional({ values: 'falsy' })

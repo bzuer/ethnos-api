@@ -18,8 +18,9 @@ class WorksController {
       }
 
       const { id } = req.params;
-      const includeCitations = String(req.query.include_citations ?? 'true').toLowerCase() !== 'false';
-      const includeReferences = String(req.query.include_references ?? 'true').toLowerCase() !== 'false';
+      const isDisabled = (value) => ['false', '0', 'no'].includes(String(value ?? '').trim().toLowerCase());
+      const includeCitations = !isDisabled(req.query.include_citations);
+      const includeReferences = !isDisabled(req.query.include_references);
       const work = await worksService.getWorkById(id, { includeCitations, includeReferences });
       
       if (!work) {
@@ -103,10 +104,13 @@ class WorksController {
         page: req.query.page,
         limit: req.query.limit,
         offset: req.query.offset,
-        type: req.query.type,
+        type: req.query.type || req.query.work_type,
         year_from: req.query.year_from,
         year_to: req.query.year_to,
         language: req.query.language,
+        open_access: req.query.open_access,
+        peer_reviewed: req.query.peer_reviewed,
+        venue_id: req.query.venue_id,
         cited_by_min: req.query.cited_by_min ?? req.query.citation_count_min,
         cited_by_max: req.query.cited_by_max ?? req.query.citation_count_max,
         sort_by: req.query.sort_by ?? req.query.sortBy,

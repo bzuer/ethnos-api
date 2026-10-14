@@ -283,7 +283,7 @@ function formatWorkDetails(work = {}) {
 
   const citations = work.citations || {};
   const processedCitations = {
-    cited_by: Array.isArray(citations.cited_by) && citations.cited_by.length > 0
+    cited_by: citations.cited_by === null ? null : Array.isArray(citations.cited_by) && citations.cited_by.length > 0
       ? citations.cited_by.map(citation => ({
           work_id: toOptionalInteger(citation.work_id),
           title: citation.title || null,
@@ -297,7 +297,7 @@ function formatWorkDetails(work = {}) {
           citation_context: citation.citation_context || null
         }))
       : [],
-    references: Array.isArray(citations.references) && citations.references.length > 0
+    references: citations.references === null ? null : Array.isArray(citations.references) && citations.references.length > 0
       ? citations.references.map(ref => ({
           work_id: toOptionalInteger(ref.work_id),
           title: ref.title || null,
@@ -311,7 +311,7 @@ function formatWorkDetails(work = {}) {
           citation_context: ref.citation_context || null
         }))
       : [],
-    unresolved_references: Array.isArray(citations.unresolved_references) && citations.unresolved_references.length > 0
+    unresolved_references: citations.unresolved_references === null ? null : Array.isArray(citations.unresolved_references) && citations.unresolved_references.length > 0
       ? citations.unresolved_references.map(unres => ({
           cited_doi: unres.cited_doi || null,
           status: unres.status || 'PENDING',

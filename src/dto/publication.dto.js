@@ -128,21 +128,19 @@ function buildFirstAuthor(authors) {
 }
 
 function publicationIdentifiers(row) {
-  const parsed = parseJsonColumn(row.identifiers_json);
-  const fromJson = parsed && typeof parsed === 'object' ? parsed : {};
   return {
     doi: row.doi || null,
-    pmid: row.pmid ?? fromJson.pmid ?? null,
-    pmcid: row.pmcid ?? fromJson.pmcid ?? null,
-    arxiv: row.arxiv ?? fromJson.arxiv ?? null,
-    wos_id: row.wos_id ?? fromJson.wos_id ?? null,
-    handle: row.handle ?? fromJson.handle ?? null,
-    wikidata_id: row.wikidata_id ?? fromJson.wikidata_id ?? null,
-    openalex_id: row.openalex_id ?? fromJson.openalex_id ?? null,
-    isbn: row.isbn ?? fromJson.isbn ?? null,
-    openlibrary_id: row.openlibrary_id ?? fromJson.openlibrary_id ?? null,
-    scielo_pid: row.scielo_pid ?? fromJson.scielo_pid ?? null,
-    google_book_id: row.google_book_id ?? fromJson.google_book_id ?? null
+    pmid: row.pmid ?? null,
+    pmcid: row.pmcid ?? null,
+    arxiv: row.arxiv ?? null,
+    wos_id: row.wos_id ?? null,
+    handle: row.handle ?? null,
+    wikidata_id: row.wikidata_id ?? null,
+    openalex_id: row.openalex_id ?? null,
+    isbn: row.isbn ?? null,
+    openlibrary_id: row.openlibrary_id ?? null,
+    scielo_pid: row.scielo_pid ?? null,
+    google_book_id: row.google_book_id ?? null
   };
 }
 
@@ -152,15 +150,15 @@ function formatPublicationListItem(row = {}) {
     id: toOptionalInteger(row.publication_id || row.id),
     work_id: toOptionalInteger(row.work_id),
     doi: row.doi || null,
-    title: row.title || row.title_search || null,
-    abstract: row.abstract || row.abstract_search || null,
+    title: row.title || null,
+    abstract: row.abstract || null,
     type: normalizeType(row.work_type || row.type),
     language: row.language || null,
     publication_year: toOptionalInteger(row.publication_year || row.year),
     publication_date: row.publication_date || null,
     volume: row.volume || null,
     issue: row.issue || null,
-    pages: row.pages || row.pages_text || null,
+    pages: row.pages || null,
     source: row.source || null,
     license_url: row.license_url || null,
     license_version: row.license_version || null,
@@ -176,7 +174,9 @@ function formatPublicationListItem(row = {}) {
     author_count: countDistinctContributors(authors),
     citation_count: toOptionalInteger(row.work_citation_count || row.citation_count) || 0,
     reference_count: toOptionalInteger(row.work_reference_count || row.reference_count) || 0,
-    download_count: toOptionalInteger(row.publication_download_count || row.download_count) || 0
+    _links: toOptionalInteger(row.publication_id || row.id) !== null
+      ? { self: `/publications/${toOptionalInteger(row.publication_id || row.id)}` }
+      : null
   };
 }
 
@@ -185,11 +185,12 @@ function formatPublicationSibling(row = {}) {
   return {
     id,
     doi: row.doi || null,
+    type: normalizeType(row.type),
     publication_year: toOptionalInteger(row.publication_year || row.year),
     publication_date: row.publication_date || null,
     volume: row.volume || null,
     issue: row.issue || null,
-    pages: row.pages || row.pages_text || null,
+    pages: row.pages || null,
     open_access: toOptionalBoolean(row.open_access),
     peer_reviewed: toOptionalBoolean(row.peer_reviewed),
     has_files: toOptionalBoolean(row.has_files),
@@ -205,9 +206,9 @@ function formatPublicationDetails(row = {}, extras = {}) {
 
   const work = {
     id: toOptionalInteger(row.work_id),
-    title: row.title || row.title_search || null,
+    title: row.title || null,
     subtitle: row.subtitle || null,
-    abstract: row.abstract || row.abstract_search || null,
+    abstract: row.abstract || null,
     type: normalizeType(row.work_type || row.type),
     language: row.language || null,
     citation_count: toOptionalInteger(row.work_citation_count) || 0,
@@ -218,19 +219,19 @@ function formatPublicationDetails(row = {}, extras = {}) {
 
   return {
     id: toOptionalInteger(row.publication_id || row.id),
+    type: normalizeType(row.work_type || row.type),
     identifiers: publicationIdentifiers(row),
     publication_date: row.publication_date || null,
     publication_year: toOptionalInteger(row.publication_year || row.year),
     volume: row.volume || null,
     issue: row.issue || null,
-    pages: row.pages || row.pages_text || null,
+    pages: row.pages || null,
     language: row.language || null,
     open_access: toOptionalBoolean(row.open_access),
     peer_reviewed: toOptionalBoolean(row.peer_reviewed),
     has_files: toOptionalBoolean(row.has_files),
     has_scimag_file: toOptionalBoolean(row.has_scimag_file),
     has_libgen_file: toOptionalBoolean(row.has_libgen_file),
-    download_count: toOptionalInteger(row.publication_download_count || row.download_count) || 0,
     license_url: row.license_url || null,
     license_version: row.license_version || null,
     source: row.source || null,
@@ -247,7 +248,7 @@ function formatPublicationDetails(row = {}, extras = {}) {
     citations: extras.citations || null,
     references: extras.references || null,
     created_at: row.created_at || null,
-    updated_at: row.updated_at || row.summary_updated_at || null
+    updated_at: row.updated_at || null
   };
 }
 

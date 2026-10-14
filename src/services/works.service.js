@@ -12,7 +12,9 @@ const {
   pickPrimaryAuthor
 } = require('../dto/helpers');
 const { formatPublicationEntry } = require('../dto/publication.dto');
-const { withTimeout, latestPublicationJoin } = require('../utils/db');
+const { withTimeout, isStatementTimeout, latestPublicationJoin } = require('../utils/db');
+const { AppError } = require('../middleware/errorHandler');
+const { ERROR_CODES } = require('../utils/responseBuilder');
 const { hydrateAuthorsForWorks, hydrateAuthorCountsByWork } = require('../utils/hydration');
 const { fetchReviewRelations } = require('../utils/reviewRelations');
 const searchEngine = require('./searchEngine.service');
@@ -35,24 +37,6 @@ const toBoolFlag = (value) => {
   if (['1', 'true', 'yes', 'y'].includes(normalized)) return 1;
   if (['0', 'false', 'no', 'n'].includes(normalized)) return 0;
   return null;
-};
-
-const sanitizeBooleanTokens = (input) => {
-  if (typeof input !== 'string') return [];
-  return input
-    .replace(/["\\]/g, '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(token => `+${token}`);
-};
-
-const buildBooleanExpr = (...values) => {
-  const tokens = [];
-  for (const value of values) {
-    if (!value) continue;
-    tokens.push(...sanitizeBooleanTokens(value));
-  }
-  return tokens.length > 0 ? tokens.join(' ') : null;
 };
 
 const normalizeDoiValue = (value) => {
@@ -93,7 +77,7 @@ const resolveWorksOrderClause = (sortBy, sortOrder) => {
       return { withPub: `w.citation_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.citation_count ${dir}, w.id ${dir === 'ASC' ? 'DESC' : 'ASC'}`, needsPub: false };
     case 'references_count':
     case 'reference_count':
-      return { withPub: `w.reference_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.reference_count ${dir}, w.id DESC`, needsPub: false };
+      return { withPub: `w.reference_count ${dir}, MAX(p.year) DESC, w.id DESC`, noPub: `w.reference_count ${dir}, w.id ${dir}`, needsPub: false };
     case 'publication_year':
     case 'year':
       return { withPub: `MAX(p.year) ${dir}, w.id DESC`, noPub: `w.latest_publication_year ${dir}, w.id ${dir}`, needsPub: false };
@@ -103,6 +87,54 @@ const resolveWorksOrderClause = (sortBy, sortOrder) => {
     default:
       return null;
   }
+};
+
+const ESTIMATED_WORKS_TOTAL = 7657142;
+const WORKS_COUNT_BUDGET_MS = 2000;
+
+const normalizeWorksListFilters = (filters = {}) => {
+  const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+  const year = (value) => {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const venueId = parseInt(filters.venue_id, 10);
+  return {
+    search: text(filters.search),
+    type: text(filters.type) ? text(filters.type).toUpperCase() : null,
+    language: text(filters.language),
+    year_from: year(filters.year_from),
+    year_to: year(filters.year_to),
+    open_access: toBoolFlag(filters.open_access),
+    peer_reviewed: toBoolFlag(filters.peer_reviewed),
+    venue_id: Number.isFinite(venueId) && venueId > 0 ? venueId : null,
+    venue_name: text(filters.venue_name),
+    author: text(filters.author),
+    subject: text(filters.subject),
+    cited_by_min: toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min),
+    cited_by_max: toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max),
+    sort_by: text(filters.sort_by ?? filters.sortBy),
+    sort_order: text(filters.sort_order ?? filters.sortOrder) ? text(filters.sort_order ?? filters.sortOrder).toUpperCase() : null
+  };
+};
+
+const worksListCacheKey = (prefix, page, limit, f) => [
+  prefix, `p${page}`, `l${limit}`,
+  ...['search', 'type', 'language', 'year_from', 'year_to', 'open_access', 'peer_reviewed', 'venue_id',
+    'venue_name', 'author', 'subject', 'cited_by_min', 'cited_by_max', 'sort_by', 'sort_order']
+    .map((key) => `${key}=${f[key] ?? ''}`)
+].join(':');
+
+const buildPublicationMatch = (f, alias) => {
+  const conds = [];
+  const params = [];
+  if (f.type) { conds.push(`${alias}.type = ?`); params.push(f.type); }
+  if (f.year_from !== null) { conds.push(`${alias}.year >= ?`); params.push(f.year_from); }
+  if (f.year_to !== null) { conds.push(`${alias}.year <= ?`); params.push(f.year_to); }
+  if (f.open_access !== null) { conds.push(`${alias}.open_access = ?`); params.push(f.open_access); }
+  if (f.peer_reviewed !== null) { conds.push(`${alias}.peer_reviewed = ?`); params.push(f.peer_reviewed); }
+  if (f.venue_id !== null) { conds.push(`${alias}.venue_id = ?`); params.push(f.venue_id); }
+  return { conds, params, sql: conds.join(' AND ') };
 };
 
 const FILE_SELECT_COLUMNS = `
@@ -172,43 +204,6 @@ const pickPrimaryPublicationRow = (rows = []) => {
 };
 
 
-const hydrateSubjectsForWorks = async (workIds, perWorkCap = 30) => {
-  const map = new Map();
-  if (!Array.isArray(workIds) || workIds.length === 0) return map;
-  const placeholders = workIds.map(() => '?').join(',');
-  const rows = await sequelize.query(`
-    SELECT
-      ws.work_id,
-      s.id AS subject_id,
-      s.term,
-      s.vocabulary,
-      s.lang,
-      ws.relevance_score,
-      ws.assigned_by
-    FROM work_subjects ws
-    INNER JOIN subjects s ON s.id = ws.subject_id
-    WHERE ws.work_id IN (${placeholders})
-    ORDER BY ws.work_id, ws.relevance_score DESC, s.term ASC
-  `, {
-    replacements: workIds,
-    type: sequelize.QueryTypes.SELECT
-  });
-  for (const row of rows) {
-    const bucket = map.get(row.work_id) || [];
-    if (bucket.length >= perWorkCap) continue;
-    bucket.push({
-      subject_id: toOptionalInteger(row.subject_id),
-      term: row.term,
-      vocabulary: row.vocabulary || null,
-      lang: row.lang || null,
-      relevance_score: row.relevance_score === null || row.relevance_score === undefined ? 1.0 : Number(row.relevance_score),
-      assigned_by: normalizeType(row.assigned_by) || 'SYSTEM'
-    });
-    map.set(row.work_id, bucket);
-  }
-  return map;
-};
-
 const hydrateFilesForPublications = async (publicationIds, cap = 500) => {
   const map = new Map();
   if (!Array.isArray(publicationIds) || publicationIds.length === 0) return map;
@@ -270,23 +265,6 @@ const buildVenuePayloadFromRow = (row) => {
   };
 };
 
-const buildPublisherPayloadFromRow = (row) => {
-  if (!row) return null;
-  const id = row.publisher_id || row.publisher_v_id;
-  const name = row.publisher_name;
-  if (!id && !name) return null;
-  return {
-    id: toOptionalInteger(id),
-    name: name || null,
-    type: normalizeType(row.publisher_type),
-    country: row.publisher_country || row.publisher_country_code || null,
-    ror_id: row.publisher_ror_id || null,
-    wikidata_id: row.publisher_wikidata_id || null,
-    openalex_id: row.publisher_openalex_id || null,
-    url: row.publisher_url || null
-  };
-};
-
 const PUBLICATION_LIST_COLUMNS = `
   p.id AS publication_id,
   p.work_id,
@@ -314,6 +292,9 @@ const PUBLICATION_LIST_COLUMNS = `
   p.openalex_id,
   p.openlibrary_id,
   p.google_book_id,
+  p.source_indexed_at,
+  p.created_at,
+  p.updated_at,
   w.title,
   w.subtitle,
   w.abstract,
@@ -345,338 +326,217 @@ const PUBLICATION_LIST_COLUMNS = `
 class WorksService {
   async getWorks(filters = {}) {
     const t0 = Date.now();
-    const pagination = normalizePagination(filters);
-    const { page, limit, offset } = pagination;
-    const { search, type, year_from, year_to, open_access, language, peer_reviewed, venue_name, author, subject } = filters;
-    const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
-    const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
-    const sortBy = filters.sort_by ?? filters.sortBy ?? null;
-    const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
+    const { page, limit, offset } = normalizePagination(filters);
     const effectiveLimit = Math.min(limit, 100);
-    const cacheKey = `works:list:v7:p${page}:l${effectiveLimit}:s${search || 'all'}:t${type || 'all'}:y${year_from || 'all'}-${year_to || 'all'}:oa${open_access || 'all'}:lang${language || 'all'}:pr${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:vn${venue_name || 'all'}:au${author || 'all'}:su${subject || 'all'}:cb${citedByMin ?? 'all'}-${citedByMax ?? 'all'}:sb${sortBy || 'default'}:so${sortOrder || 'desc'}`;
+    const f = normalizeWorksListFilters(filters);
+    const hasFulltext = Boolean(f.search || f.venue_name || f.author || f.subject);
 
-    try {
-      const cached = await cacheService.get(cacheKey);
-      if (cached) return cached;
-
-      const trimmedSearch = (search || '').trim();
-      const hasFulltext = Boolean(trimmedSearch || venue_name || author || subject);
-
-      const enrichedFilters = {
-        ...filters,
-        cited_by_min: citedByMin,
-        cited_by_max: citedByMax,
-        sort_by: sortBy,
-        sort_order: sortOrder
-      };
-
-      const result = hasFulltext
-        ? await this._getWorksSearch(trimmedSearch, enrichedFilters, effectiveLimit, offset, page)
-        : await this._getWorksVitrine(enrichedFilters, effectiveLimit, offset, page);
-
-      result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
-      await cacheService.set(cacheKey, result, 1800);
-      return result;
-    } catch (error) {
-      throw new Error(`Works query failed: ${error.message}`);
+    if (hasFulltext && f.venue_id !== null) {
+      throw new AppError('venue_id cannot be combined with full-text terms (q, author, subject, venue_name); use venue_name instead', 400, ERROR_CODES.VALIDATION);
     }
+
+    const cacheKey = worksListCacheKey('works:list:v8', page, effectiveLimit, f);
+    const cached = await cacheService.get(cacheKey);
+    if (cached) return cached;
+
+    const result = hasFulltext
+      ? await this._getWorksSearch(f, effectiveLimit, offset, page)
+      : await this._getWorksVitrine(f, effectiveLimit, offset, page);
+
+    result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
+    if (!result.meta?.page_degraded) {
+      await cacheService.set(cacheKey, result, 1800);
+    }
+    return result;
   }
 
   async getWorksVitrine(filters = {}) {
-    const pagination = normalizePagination(filters);
-    const { page, limit, offset } = pagination;
+    const t0 = Date.now();
+    const { page, limit, offset } = normalizePagination(filters);
     const effectiveLimit = Math.min(limit, 100);
-    const enriched = {
-      ...filters,
-      cited_by_min: toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min),
-      cited_by_max: toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max)
-    };
-    const cacheKey = `works:vitrine:v6:p${page}:l${effectiveLimit}:t${filters.type || 'all'}:y${filters.year_from || 'all'}-${filters.year_to || 'all'}:lang${filters.language || 'all'}:cb${enriched.cited_by_min ?? 'all'}-${enriched.cited_by_max ?? 'all'}:sb${filters.sort_by || filters.sortBy || 'default'}:so${filters.sort_order || filters.sortOrder || 'desc'}`;
+    const f = normalizeWorksListFilters({ ...filters, search: null, venue_name: null, author: null, subject: null });
+    const cacheKey = worksListCacheKey('works:vitrine:v7', page, effectiveLimit, f);
 
     const cached = await cacheService.get(cacheKey);
     if (cached) return cached;
 
-    const t0 = Date.now();
-    const result = await this._getWorksVitrine(enriched, effectiveLimit, offset, page);
+    const result = await this._getWorksVitrine(f, effectiveLimit, offset, page);
     result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0, query_type: 'showcase_optimized' };
-    await cacheService.set(cacheKey, result, 1800);
+    if (!result.meta?.page_degraded) {
+      await cacheService.set(cacheKey, result, 1800);
+    }
     return result;
   }
 
-  async _getWorksVitrine(filters, limit, offset, page) {
-    const { type, year_from, year_to, language, open_access, peer_reviewed } = filters;
-    const citedByMin = toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min);
-    const citedByMax = toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max);
-    const customOrder = resolveWorksOrderClause(filters.sort_by ?? filters.sortBy, filters.sort_order ?? filters.sortOrder);
-
-    const innerWhere = [];
-    const innerParams = [];
-    const publicationConds = [];
-    const publicationParams = [];
-
-    if (language) {
-      innerWhere.push('w.language = ?');
-      innerParams.push(language);
-    }
-    if (citedByMin !== null) {
-      innerWhere.push('w.citation_count >= ?');
-      innerParams.push(citedByMin);
-    }
-    if (citedByMax !== null) {
-      innerWhere.push('w.citation_count <= ?');
-      innerParams.push(citedByMax);
+  async _countWorks(worksConds, worksParams, f) {
+    const match = buildPublicationMatch(f, 'p');
+    if (worksConds.length === 0 && match.conds.length === 0) {
+      return { total: ESTIMATED_WORKS_TOTAL, exact: false };
     }
 
-    if (type) {
-      publicationConds.push('p.type = ?');
-      publicationParams.push(type);
-    }
-    if (year_from !== undefined && year_from !== null && year_from !== '') {
-      publicationConds.push('p.year >= ?');
-      publicationParams.push(parseInt(year_from, 10));
-    }
-    if (year_to !== undefined && year_to !== null && year_to !== '') {
-      publicationConds.push('p.year <= ?');
-      publicationParams.push(parseInt(year_to, 10));
-    }
-    const oaFlag = toBoolFlag(open_access);
-    if (oaFlag !== null) {
-      publicationConds.push('p.open_access = ?');
-      publicationParams.push(oaFlag);
-    }
-    const peerFlag = toBoolFlag(peer_reviewed);
-    if (peerFlag !== null) {
-      publicationConds.push('p.peer_reviewed = ?');
-      publicationParams.push(peerFlag);
-    }
-
-    const hasPubFilters = publicationConds.length > 0;
-    const orderNeedsPub = customOrder ? customOrder.needsPub : false;
-    const isDefaultBrowse = innerWhere.length === 0 && !hasPubFilters && !customOrder;
-    const innerJoin = hasPubFilters
-      ? `INNER JOIN publications p ON p.work_id = w.id AND ${publicationConds.join(' AND ')}`
-      : (orderNeedsPub ? 'LEFT JOIN publications p ON p.work_id = w.id' : '');
-    const innerJoinParams = hasPubFilters ? publicationParams : [];
-    const groupByClause = (hasPubFilters || orderNeedsPub) ? 'GROUP BY w.id' : '';
-
-    const innerWhereClause = innerWhere.length ? `WHERE ${innerWhere.join(' AND ')}` : '';
-    const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000', 10);
-    const COUNT_BUDGET_MS = 2000;
-    const ESTIMATED_WORKS_TOTAL = 7657142;
-
-    let totalItems;
-    let totalIsExact = true;
-    if (innerWhere.length === 0 && !hasPubFilters) {
-      totalItems = ESTIMATED_WORKS_TOTAL;
-      totalIsExact = false;
+    let sql;
+    let params;
+    if (match.conds.length === 0) {
+      sql = `SELECT COUNT(*) AS total FROM works w WHERE ${worksConds.join(' AND ')}`;
+      params = worksParams;
+    } else if (worksConds.length === 0) {
+      sql = `SELECT COUNT(DISTINCT p.work_id) AS total FROM publications p WHERE ${match.sql}`;
+      params = match.params;
     } else {
-      try {
-        const countSql = hasPubFilters
-          ? `SELECT COUNT(DISTINCT w.id) AS total FROM works w ${innerJoin} ${innerWhereClause}`
-          : `SELECT COUNT(*) AS total FROM works w ${innerWhereClause}`;
-        const [countRow] = await sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
-          replacements: [...innerJoinParams, ...innerParams],
-          type: sequelize.QueryTypes.SELECT
-        });
-        totalItems = parseInt(countRow?.total, 10) || 0;
-      } catch (countError) {
-        logger.warn('Works vitrine count query exceeded budget; using estimate', { error: countError.message });
-        totalItems = ESTIMATED_WORKS_TOTAL;
-        totalIsExact = false;
-      }
+      sql = `SELECT COUNT(DISTINCT p.work_id) AS total FROM publications p INNER JOIN works w ON w.id = p.work_id WHERE ${match.sql} AND ${worksConds.join(' AND ')}`;
+      params = [...match.params, ...worksParams];
     }
 
-    const innerOrderClause = customOrder
-      ? ((hasPubFilters || orderNeedsPub) ? customOrder.withPub : customOrder.noPub)
-      : 'w.id DESC';
-    const innerSql = isDefaultBrowse
+    try {
+      const [row] = await sequelize.query(withTimeout(sql, WORKS_COUNT_BUDGET_MS), {
+        replacements: params,
+        type: sequelize.QueryTypes.SELECT
+      });
+      return { total: parseInt(row?.total, 10) || 0, exact: true };
+    } catch (error) {
+      if (!isStatementTimeout(error)) throw error;
+      logger.warn('Works count exceeded its budget; serving the corpus estimate', { budget_ms: WORKS_COUNT_BUDGET_MS });
+      return { total: ESTIMATED_WORKS_TOTAL, exact: false };
+    }
+  }
+
+  async _getWorksVitrine(f, limit, offset, page) {
+    const customOrder = resolveWorksOrderClause(f.sort_by, f.sort_order);
+    const worksConds = [];
+    const worksParams = [];
+    if (f.language) { worksConds.push('w.language = ?'); worksParams.push(f.language); }
+    if (f.cited_by_min !== null) { worksConds.push('w.citation_count >= ?'); worksParams.push(f.cited_by_min); }
+    if (f.cited_by_max !== null) { worksConds.push('w.citation_count <= ?'); worksParams.push(f.cited_by_max); }
+
+    const selectionMatch = buildPublicationMatch(f, 'fp');
+    const idConds = [...worksConds];
+    const idParams = [...worksParams];
+    if (selectionMatch.conds.length > 0) {
+      idConds.push(`(SELECT 1 FROM publications fp WHERE fp.work_id = w.id AND ${selectionMatch.sql} LIMIT 1) IS NOT NULL`);
+      idParams.push(...selectionMatch.params);
+    }
+
+    const isDefaultBrowse = idConds.length === 0 && !customOrder;
+    const idSql = isDefaultBrowse
       ? 'SELECT DISTINCT work_id FROM publications ORDER BY work_id DESC LIMIT ? OFFSET ?'
-      : `
-      SELECT w.id AS work_id
-      FROM works w
-      ${innerJoin}
-      ${innerWhereClause}
-      ${groupByClause}
-      ORDER BY ${innerOrderClause}
-      LIMIT ? OFFSET ?
-    `;
-    const innerReplacements = isDefaultBrowse
-      ? [limit, offset]
-      : [...innerJoinParams, ...innerParams, limit, offset];
+      : `SELECT w.id AS work_id FROM works w ${idConds.length ? `WHERE ${idConds.join(' AND ')}` : ''} ORDER BY ${customOrder ? customOrder.noPub : 'w.id DESC'} LIMIT ? OFFSET ?`;
+    const idReplacements = isDefaultBrowse ? [limit, offset] : [...idParams, limit, offset];
 
     const primaryStart = process.hrtime.bigint();
-    const innerRows = await sequelize.query(withTimeout(innerSql, dbTimeoutMs), {
-      replacements: innerReplacements,
-      type: sequelize.QueryTypes.SELECT
-    });
-    const innerQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
-
-    const workIds = innerRows.map(r => r.work_id).filter(Boolean);
-    if (workIds.length === 0) {
+    const selectionPromise = sequelize.query(withTimeout(idSql), { replacements: idReplacements, type: sequelize.QueryTypes.SELECT })
+      .then((rows) => ({ rows }))
+      .catch((error) => {
+        if (isStatementTimeout(error)) return { degraded: true };
+        throw error;
+      });
+    let counted;
+    try {
+      counted = await this._countWorks(worksConds, worksParams, f);
+    } catch (countError) {
+      selectionPromise.catch(() => {});
+      throw countError;
+    }
+    if (counted.exact && counted.total === 0) {
+      selectionPromise.catch(() => {});
       return {
         data: [],
-        pagination: createPagination(page, limit, totalItems),
+        pagination: createPagination(page, limit, 0),
+        meta: { match_mode: 'any_publication', pagination_total_exact: true },
+        performance: { engine: 'MariaDB', query_type: 'showcase_optimized' }
+      };
+    }
+    const selection = await selectionPromise;
+
+    if (selection.degraded) {
+      return {
+        data: [],
+        pagination: createPagination(page, limit, counted.total),
         meta: {
           match_mode: 'any_publication',
-          pagination_total_exact: totalIsExact,
-          performance: { engine: 'MariaDB', query_type: 'showcase_optimized', primary_query_ms: innerQueryMs }
+          pagination_total_exact: false,
+          page_degraded: true,
+          note: 'This filter, sort and page combination exceeded the statement budget; narrow the filters or request a shallower page.'
         },
-        performance: { engine: 'MariaDB', query_type: 'showcase_optimized', match_mode: 'any_publication', primary_query_ms: innerQueryMs }
+        performance: { engine: 'MariaDB', query_type: 'showcase_optimized' }
       };
     }
 
-    const detailPlaceholders = workIds.map(() => '?').join(',');
-    const detailSql = `
-      SELECT
-        w.id AS id,
-        ${PUBLICATION_LIST_COLUMNS}
-      FROM works w
-      ${latestPublicationJoin('p', 'INNER')}
-      LEFT JOIN venues v ON v.id = p.venue_id
-      LEFT JOIN organizations publisher ON publisher.id = p.publisher_id
-      WHERE w.id IN (${detailPlaceholders})
-    `;
-    const rawRows = await sequelize.query(detailSql, {
-      replacements: workIds,
-      type: sequelize.QueryTypes.SELECT
-    });
-    const byId = new Map(rawRows.map(r => [r.id, r]));
-    const rows = workIds.map(id => byId.get(id)).filter(Boolean);
+    const workIds = selection.rows.map((r) => r.work_id).filter(Boolean);
+    const data = await this._hydrateWorkList(workIds, buildPublicationMatch(f, 'p2'), { dataSource: 'full_api', engine: 'MariaDB' });
     const primaryQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
-
-    const [authorsMap, publicationCounts, authorCounts] = await Promise.all([
-      hydrateAuthorsForWorks(workIds, 5),
-      hydratePublicationCountsByWork(workIds),
-      hydrateAuthorCountsByWork(workIds)
-    ]);
-
-    const data = rows.map(row => {
-      const authors = authorsMap.get(row.id) || [];
-      const authorsPreview = contributorNames(authors, 3);
-      const first = pickPrimaryAuthor(authors);
-      return formatWorkListItem({
-        id: row.id,
-        publication_id: row.publication_id || null,
-        publications_count: publicationCounts.get(row.id) || 1,
-        title: row.title,
-        subtitle: row.subtitle,
-        abstract: row.abstract,
-        work_type: row.work_type,
-        language: row.language,
-        publication_year: row.publication_year,
-        doi: row.doi,
-        open_access: row.open_access,
-        peer_reviewed: row.peer_reviewed,
-        venue: buildVenuePayloadFromRow(row),
-        authors_preview: authorsPreview,
-        contributors_preview: authors,
-        author_count: authorCounts.get(row.id) ?? countDistinctContributors(authors),
-        first_author: first ? first.preferred_name : null,
-        first_author_id: first ? first.person_id : null,
-        first_author_identifiers: null,
-        cited_by_count: row.work_citation_count,
-        references_count: row.work_reference_count,
-        added_to_database: row.work_created_at,
-        data_source: 'full_api',
-        search_engine: 'MariaDB'
-      });
-    });
 
     return {
       data,
-      pagination: createPagination(page, limit, totalItems),
+      pagination: createPagination(page, limit, counted.total),
       meta: {
         match_mode: 'any_publication',
-        pagination_total_exact: totalIsExact,
-        performance: {
-          engine: 'MariaDB',
-          query_type: 'showcase_optimized',
-          primary_query_ms: primaryQueryMs,
-          total_rows_examined: rows.length
-        }
+        pagination_total_exact: counted.exact,
+        performance: { engine: 'MariaDB', query_type: 'showcase_optimized', primary_query_ms: primaryQueryMs }
       },
-      performance: {
-        engine: 'MariaDB',
-        query_type: 'showcase_optimized',
-        match_mode: 'any_publication',
-        primary_query_ms: primaryQueryMs
-      }
+      performance: { engine: 'MariaDB', query_type: 'showcase_optimized', match_mode: 'any_publication', primary_query_ms: primaryQueryMs }
     };
   }
 
-  async _getWorksSearch(search, filters, limit, offset, page) {
-    const { type, language, year_from, year_to, open_access, peer_reviewed, venue_name, author, subject } = filters || {};
-    const citedByMin = toNonNegativeInt(filters?.cited_by_min ?? filters?.citation_count_min);
-    const citedByMax = toNonNegativeInt(filters?.cited_by_max ?? filters?.citation_count_max);
-    const trimmed = (search || '').trim();
-    const hasContent = Boolean(trimmed);
-    const metadataExpr = buildBooleanExpr(author, subject);
-    const venueExpr = buildBooleanExpr(venue_name);
-    const hasMetadata = Boolean(metadataExpr);
-    const hasVenue = Boolean(venueExpr);
-
-    if (!hasContent && !hasMetadata && !hasVenue) {
-      return { data: [], pagination: createPagination(page, limit, 0) };
-    }
-
-    const manticoreStart = process.hrtime.bigint();
+  async _getWorksSearch(f, limit, offset, page) {
+    const primaryStart = process.hrtime.bigint();
     const mres = await searchEngine.searchWorkIds({
-      q: trimmed,
-      author,
-      subject,
-      venue_name,
-      type,
-      language,
-      year_from,
-      year_to,
-      open_access,
-      peer_reviewed,
-      cited_by_min: citedByMin,
-      cited_by_max: citedByMax,
-      sort_by: filters?.sort_by ?? filters?.sortBy,
-      sort_order: filters?.sort_order ?? filters?.sortOrder
+      q: f.search,
+      author: f.author,
+      subject: f.subject,
+      venue_name: f.venue_name,
+      type: f.type,
+      language: f.language,
+      year_from: f.year_from,
+      year_to: f.year_to,
+      open_access: f.open_access,
+      peer_reviewed: f.peer_reviewed,
+      cited_by_min: f.cited_by_min,
+      cited_by_max: f.cited_by_max,
+      sort_by: f.sort_by,
+      sort_order: f.sort_order
     }, limit, offset);
-    return this._hydrateWorkSearchResults(mres.ids, page, limit, mres.total, mres.exact, 'Manticore', manticoreStart);
+
+    const data = await this._hydrateWorkList(mres.ids, buildPublicationMatch(f, 'p2'), { dataSource: 'search', engine: 'Manticore' });
+    const primaryQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
+
+    return {
+      data,
+      pagination: createPagination(page, limit, mres.total),
+      meta: {
+        match_mode: 'any_publication',
+        pagination_total_exact: mres.exact,
+        performance: { engine: 'Manticore', query_type: 'search', primary_query_ms: primaryQueryMs }
+      },
+      performance: { engine: 'Manticore', query_type: 'search', match_mode: 'any_publication', primary_query_ms: primaryQueryMs }
+    };
   }
 
-  async _hydrateWorkSearchResults(workIds, page, limit, totalItems, totalIsExact, engine, primaryStart) {
-    if (!workIds || workIds.length === 0) {
-      return {
-        data: [],
-        pagination: createPagination(page, limit, totalItems),
-        meta: { match_mode: 'any_publication', pagination_total_exact: totalIsExact },
-        performance: { engine, query_type: 'search', match_mode: 'any_publication', primary_query_ms: Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString()) }
-      };
-    }
+  async _hydrateWorkList(workIds, displayMatch, { dataSource, engine }) {
+    if (!workIds || workIds.length === 0) return [];
 
-    const detailPlaceholders = workIds.map(() => '?').join(',');
     const detailSql = `
       SELECT
         w.id AS id,
         ${PUBLICATION_LIST_COLUMNS}
       FROM works w
-      ${latestPublicationJoin('p', 'INNER')}
+      ${latestPublicationJoin('p', 'INNER', displayMatch.sql)}
       LEFT JOIN venues v ON v.id = p.venue_id
       LEFT JOIN organizations publisher ON publisher.id = p.publisher_id
-      WHERE w.id IN (${detailPlaceholders})
+      WHERE w.id IN (${workIds.map(() => '?').join(',')})
     `;
-    const rawRows = await sequelize.query(detailSql, {
-      replacements: workIds,
-      type: sequelize.QueryTypes.SELECT
-    });
-    const byId = new Map(rawRows.map(r => [r.id, r]));
-    const rows = workIds.map(id => byId.get(id)).filter(Boolean);
-    const primaryQueryMs = Number(((process.hrtime.bigint() - primaryStart) / BigInt(1e6)).toString());
-
-    const [authorsMap, publicationCounts, authorCounts] = await Promise.all([
+    const [rawRows, authorsMap, publicationCounts, authorCounts] = await Promise.all([
+      sequelize.query(withTimeout(detailSql), {
+        replacements: [...displayMatch.params, ...workIds],
+        type: sequelize.QueryTypes.SELECT
+      }),
       hydrateAuthorsForWorks(workIds, 5),
       hydratePublicationCountsByWork(workIds),
       hydrateAuthorCountsByWork(workIds)
     ]);
+    const byId = new Map(rawRows.map((r) => [r.id, r]));
 
-    const data = rows.map(row => {
+    return workIds.map((id) => byId.get(id)).filter(Boolean).map((row) => {
       const authors = authorsMap.get(row.id) || [];
-      const authorsPreview = contributorNames(authors, 3);
       const first = pickPrimaryAuthor(authors);
       return formatWorkListItem({
         id: row.id,
@@ -692,7 +552,7 @@ class WorksService {
         open_access: row.open_access,
         peer_reviewed: row.peer_reviewed,
         venue: buildVenuePayloadFromRow(row),
-        authors_preview: authorsPreview,
+        authors_preview: contributorNames(authors, 3),
         contributors_preview: authors,
         author_count: authorCounts.get(row.id) ?? countDistinctContributors(authors),
         first_author: first ? first.preferred_name : null,
@@ -701,36 +561,16 @@ class WorksService {
         cited_by_count: row.work_citation_count,
         references_count: row.work_reference_count,
         added_to_database: row.work_created_at,
-        data_source: 'search',
+        data_source: dataSource,
         search_engine: engine
       });
     });
-
-    return {
-      data,
-      pagination: createPagination(page, limit, totalItems),
-      meta: {
-        match_mode: 'any_publication',
-        pagination_total_exact: totalIsExact,
-        performance: {
-          engine,
-          query_type: 'search',
-          primary_query_ms: primaryQueryMs
-        }
-      },
-      performance: {
-        engine,
-        query_type: 'search',
-        match_mode: 'any_publication',
-        primary_query_ms: primaryQueryMs
-      }
-    };
   }
 
   async getWorkById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
-    const cacheKey = `work:v6:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `work:v7:${id}:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -1138,10 +978,10 @@ class WorksService {
       subjects: subjectsData,
 
       citations: {
-        cited_by: citationData.cited_by,
-        references: citationData.references,
-        unresolved_references: citationData.unresolved_references,
-        unsolved: citationData.unresolved_references
+        cited_by: includeCitations ? citationData.cited_by : null,
+        references: includeReferences ? citationData.references : null,
+        unresolved_references: includeReferences ? citationData.unresolved_references : null,
+        unsolved: includeReferences ? citationData.unresolved_references : null
       },
 
       metrics: metricsData,

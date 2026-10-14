@@ -12,7 +12,7 @@ const normalizeOptional = (value) => {
 
 const parseBooleanFlag = (value, defaultValue = true) => {
   if (value === undefined || value === null || value === '') return defaultValue;
-  return String(value).toLowerCase() !== 'false';
+  return !['false', '0', 'no'].includes(String(value).trim().toLowerCase());
 };
 
 class PublicationsController {
@@ -69,7 +69,7 @@ class PublicationsController {
         page: req.query.page,
         limit: req.query.limit,
         offset: req.query.offset,
-        q: normalizeOptional(req.query.q),
+        q: normalizeOptional(req.query.q) ?? normalizeOptional(req.query.search),
         type: normalizeOptional(req.query.type),
         language: normalizeOptional(req.query.language),
         year_from: normalizeOptional(req.query.year_from),
@@ -77,7 +77,7 @@ class PublicationsController {
         open_access: normalizeOptional(req.query.open_access),
         peer_reviewed: normalizeOptional(req.query.peer_reviewed),
         has_files: normalizeOptional(req.query.has_files),
-        venue: normalizeOptional(req.query.venue),
+        venue: normalizeOptional(req.query.venue) ?? normalizeOptional(req.query.venue_name),
         venue_id: normalizeOptional(req.query.venue_id),
         publisher_id: normalizeOptional(req.query.publisher_id),
         work_id: normalizeOptional(req.query.work_id),

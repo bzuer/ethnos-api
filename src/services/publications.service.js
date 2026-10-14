@@ -128,6 +128,7 @@ const PUBLICATION_BASE_COLUMNS = `
   p.openalex_id,
   p.openlibrary_id,
   p.google_book_id,
+  p.source_indexed_at,
   p.created_at,
   p.updated_at,
   w.title,
@@ -232,7 +233,7 @@ class PublicationsService {
   async getPublicationById(id, options = {}) {
     const includeCitations = options.includeCitations !== false;
     const includeReferences = options.includeReferences !== false;
-    const cacheKey = `publication:${id}:v4:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
+    const cacheKey = `publication:${id}:v5:c${includeCitations ? 1 : 0}:r${includeReferences ? 1 : 0}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -287,6 +288,7 @@ class PublicationsService {
         p.work_id,
         p.venue_id,
         p.year AS publication_year,
+        p.type,
         p.publication_date,
         p.volume,
         p.issue,
@@ -318,11 +320,10 @@ class PublicationsService {
           includeCitations,
           includeReferences
         });
-        extras.citations = citationData.cited_by;
-        extras.references = {
-          resolved: citationData.references,
-          unresolved: citationData.unresolved_references
-        };
+        extras.citations = includeCitations ? citationData.cited_by : null;
+        extras.references = includeReferences
+          ? { resolved: citationData.references, unresolved: citationData.unresolved_references }
+          : null;
       } catch (citationError) {
         logger.warn('Publication citations fetch failed', {
           id,
@@ -398,7 +399,7 @@ class PublicationsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
 
-    const cacheKey = `publications:list:v4:p${page}:l${limit}:o${offset}:${JSON.stringify(filters)}`;
+    const cacheKey = `publications:list:v5:p${page}:l${limit}:o${offset}:${JSON.stringify(filters)}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -450,14 +451,6 @@ class PublicationsService {
       params.push(peerFlag);
     }
     const filesFlag = toBoolFlag(filters.has_files);
-    let requireHasFiles = false;
-    if (filesFlag !== null) {
-      if (filesFlag === 1) {
-        requireHasFiles = true;
-      } else {
-        where.push('NOT EXISTS (SELECT 1 FROM files f WHERE f.publication_id = p.id)');
-      }
-    }
 
     if (filters.venue_id) {
       where.push('p.venue_id = ?');
@@ -512,24 +505,32 @@ class PublicationsService {
     const COUNT_BUDGET_MS = 2000;
     const ESTIMATED_PUBLICATIONS_TOTAL = 7744534;
 
-    const useFilesFastPath = requireHasFiles
-      && !searchTerm && !authorFilter && !subjectFilter
-      && !venueExpr
-      && orderClause === 'p.id DESC';
+    const useFilesFastPath = filesFlag === 1 && where.length === 0 && orderClause === 'p.id DESC';
+    if (filesFlag !== null && !useFilesFastPath) {
+      where.push(`(SELECT 1 FROM files f WHERE f.publication_id = p.id LIMIT 1) IS ${filesFlag === 1 ? 'NOT NULL' : 'NULL'}`);
+    }
 
-    const hasFilesExists = 'EXISTS (SELECT 1 FROM files f WHERE f.publication_id = p.id)';
-    const effectiveWhere = (requireHasFiles && !useFilesFastPath) ? [...where, hasFilesExists] : where;
+    const effectiveWhere = where;
     const whereClause = effectiveWhere.length ? `WHERE ${effectiveWhere.join(' AND ')}` : '';
     const idSelectionNeedsWorks = /\bw\./.test(whereClause) || /\bw\./.test(orderClause);
 
     let countPromise;
-    if (effectiveWhere.length === 0) {
+    if (useFilesFastPath) {
+      countPromise = sequelize.query(withTimeout('SELECT COUNT(DISTINCT f.publication_id) AS total FROM files f', COUNT_BUDGET_MS), {
+        type: sequelize.QueryTypes.SELECT
+      })
+        .then(([countRow]) => ({ total: parseInt(countRow?.total, 10) || 0, exact: true }))
+        .catch((countError) => {
+          if (!isStatementTimeout(countError)) throw countError;
+          return { total: ESTIMATED_PUBLICATIONS_TOTAL, exact: false };
+        });
+    } else if (effectiveWhere.length === 0) {
       countPromise = Promise.resolve({ total: ESTIMATED_PUBLICATIONS_TOTAL, exact: false });
     } else {
       const countSql = `
         SELECT COUNT(*) AS total
         FROM publications p
-        INNER JOIN works w ON w.id = p.work_id
+        ${/\bw\./.test(whereClause) ? 'INNER JOIN works w ON w.id = p.work_id' : ''}
         ${whereClause}
       `;
       countPromise = sequelize.query(withTimeout(countSql, COUNT_BUDGET_MS), {
@@ -538,9 +539,8 @@ class PublicationsService {
       })
         .then(([countRow]) => ({ total: parseInt(countRow?.total, 10) || 0, exact: true }))
         .catch((countError) => {
-          logger.warn('Publications list count query exceeded budget; returning estimate', {
-            error: countError.message
-          });
+          if (!isStatementTimeout(countError)) throw countError;
+          logger.warn('Publications list count exceeded its budget; serving the corpus estimate', { budget_ms: COUNT_BUDGET_MS });
           return { total: ESTIMATED_PUBLICATIONS_TOTAL, exact: false };
         });
     }
@@ -555,8 +555,6 @@ class PublicationsService {
           LIMIT ? OFFSET ?
         ) ff
         JOIN publications p ON p.id = ff.pid
-        ${idSelectionNeedsWorks ? 'INNER JOIN works w ON w.id = p.work_id' : ''}
-        ${whereClause}
         ORDER BY p.id DESC
       `
       : `
@@ -567,7 +565,7 @@ class PublicationsService {
         ORDER BY ${orderClause}
         LIMIT ? OFFSET ?
       `;
-    const idSelectionParams = useFilesFastPath ? [limit, offset, ...params] : [...params, limit, offset];
+    const idSelectionParams = useFilesFastPath ? [limit, offset] : [...params, limit, offset];
 
     const idPromise = sequelize.query(withTimeout(idSelectionSql), {
       replacements: idSelectionParams,
@@ -583,14 +581,14 @@ class PublicationsService {
       });
 
     const [countOutcome, idOutcome] = await Promise.all([countPromise, idPromise]);
-    let totalItems = countOutcome.total;
-    let totalIsExact = countOutcome.exact;
+    const totalItems = countOutcome.total;
+    let totalIsExact = countOutcome.exact && !ftCapped;
     const idRows = idOutcome.rows;
     const pageDegraded = idOutcome.degraded;
     if (pageDegraded) totalIsExact = false;
 
     const pageIds = idRows.map(r => parseInt(r.id, 10)).filter(Number.isFinite);
-    const rows = pageIds.length === 0 ? [] : await sequelize.query(`
+    const rows = pageIds.length === 0 ? [] : await sequelize.query(withTimeout(`
       SELECT
         ${PUBLICATION_BASE_COLUMNS}
       FROM publications p
@@ -599,7 +597,7 @@ class PublicationsService {
       LEFT JOIN organizations publisher ON publisher.id = p.publisher_id
       WHERE p.id IN (${pageIds.map(() => '?').join(',')})
       ORDER BY ${orderClause}
-    `, {
+    `), {
       replacements: pageIds,
       type: sequelize.QueryTypes.SELECT
     });
@@ -631,7 +629,7 @@ class PublicationsService {
         pagination_total_exact: totalIsExact,
         ...(pageDegraded ? { page_degraded: true, note: 'This sort exceeded the statement budget; try a narrower filter or a different sort.' } : {}),
         ...(ftCapped ? { fulltext_truncated: true, fulltext_work_cap: parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10) } : {}),
-        ...(useFilesFastPath ? { has_files_source: 'files_index', ...(where.length ? { has_files_note: 'has_files paginates over the files index; extra filters are applied after, so a page may under-fill.' } : {}) } : {}),
+        ...(useFilesFastPath ? { has_files_source: 'files_index' } : {}),
         elapsed_ms: Date.now() - t0
       }
     };

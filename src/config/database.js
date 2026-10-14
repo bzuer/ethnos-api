@@ -2,6 +2,9 @@ const { Sequelize } = require('sequelize');
 const fs = require('fs');
 const path = require('path');
 try { require('dotenv').config({ path: '/etc/node-backend.env' }); } catch (_) {}
+const { DEFAULT_MS } = require('../utils/db');
+
+const SESSION_STATEMENT_BUDGET = `SET SESSION max_statement_time = ${(DEFAULT_MS / 1000).toFixed(1)}`;
 
 const config = {
   host: process.env.DB_HOST || 'localhost',
@@ -13,6 +16,7 @@ const config = {
   keepDefaultTimezone: true,
   dialectOptions: {
     timezone: 'local',
+    initSql: SESSION_STATEMENT_BUDGET,
     ...(process.env.DB_SSL === 'true' && fs.existsSync(path.join(__dirname, '../../ssl/mysql-client-cert.pem')) ? {
       ssl: {
         cert: fs.readFileSync(path.join(__dirname, '../../ssl/mysql-client-cert.pem')),
@@ -63,6 +67,10 @@ const pool = mysql.createPool({
   idleTimeout: 300000,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0
+});
+
+pool.pool.on('connection', (connection) => {
+  connection.query(SESSION_STATEMENT_BUDGET);
 });
 
 const closePool = async () => {
