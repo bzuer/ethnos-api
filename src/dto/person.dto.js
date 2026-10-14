@@ -162,6 +162,7 @@ function formatRecentWorks(items = []) {
     doi: work.doi || null,
     open_access: toOptionalBoolean(work.open_access),
     role: work.role || null,
+    roles: Array.isArray(work.roles) ? work.roles : [work.role].filter(Boolean),
     position: toOptionalInteger(work.position),
     venue: work.venue
       ? {

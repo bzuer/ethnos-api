@@ -88,31 +88,23 @@ const commonValidations = {
 
   searchQuery: [
     query('q')
+      .trim()
       .notEmpty()
       .withMessage('Search query is required')
       .isLength({ min: 2, max: 200 })
-      .withMessage('Search query must be between 2 and 200 characters')
-      .custom(value => {
-        const suspiciousPatterns = [
-          /[<>]/,
-          /javascript:/i,
-          /(\b(select|insert|update|delete|drop|create|alter|exec|execute|union|declare)\b)/i,
-        ];
-        
-        for (const pattern of suspiciousPatterns) {
-          if (pattern.test(value)) {
-            throw new Error('Search query contains invalid characters');
-          }
-        }
-        return true;
-      })
-      .customSanitizer(sanitizeInput),
+      .withMessage('Search query must be between 2 and 200 characters'),
     query('year')
       .optional({ values: 'falsy' })
-      .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
-      .withMessage('Year must be between 1900 and next year')
+      .isInt({ min: 1000, max: new Date().getFullYear() + 1 })
+      .withMessage('Year must be between 1000 and next year')
       .toInt(),
   ],
+
+  optionalSearchText: (field = 'q') => query(field)
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ min: 2, max: 200 })
+    .withMessage(`${field} must be between 2 and 200 characters`),
 
   email: body('email')
     .isEmail()

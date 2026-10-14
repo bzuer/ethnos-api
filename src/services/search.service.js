@@ -16,7 +16,7 @@ class SearchService {
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
     const trimmedQuery = (query || '').trim();
 
-    const cacheKey = `search:works:v4:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}`;
+    const cacheKey = `search:works:v5:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -57,7 +57,9 @@ class SearchService {
         pagination: worksResult.pagination || createPagination(page, limit, data.length),
         meta: {
           query: trimmedQuery,
-          search_type: 'fulltext'
+          search_type: 'fulltext',
+          ...(worksResult.meta?.match_mode ? { match_mode: worksResult.meta.match_mode } : {}),
+          pagination_total_exact: worksResult.meta?.pagination_total_exact ?? true
         },
         performance: {
           ...((worksResult && worksResult.performance) || (worksResult && worksResult.meta && worksResult.meta.performance) || {}),
@@ -77,9 +79,11 @@ class SearchService {
   async searchPersons(query, filters = {}) {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
-    const { verified } = filters;
+    const verified = filters.verified === 'true' || filters.verified === '1' || filters.verified === true
+      ? true
+      : (filters.verified === 'false' || filters.verified === '0' || filters.verified === false ? false : undefined);
     const trimmedQuery = (query || '').trim();
-    const cacheKey = `search:persons:${trimmedQuery}:${page}:${limit}:${offset}:${verified ?? 'all'}`;
+    const cacheKey = `search:persons:v2:${trimmedQuery}:${page}:${limit}:${offset}:${verified ?? 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -127,10 +131,10 @@ class SearchService {
 
 
   async globalSearch(query, filters = {}) {
-    const { limit = 5 } = filters;
+    const limit = Math.min(Math.max(parseInt(filters.limit, 10) || 5, 1), 20);
     const trimmedQuery = (query || '').trim();
 
-    const cacheKey = `search:global:v2:${trimmedQuery}:${limit}`;
+    const cacheKey = `search:global:v3:${trimmedQuery}:${limit}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -159,9 +163,9 @@ class SearchService {
             results: persons.data.slice(0, limit)
           },
           institutions: {
-            total: 0,
+            total: null,
             results: [],
-            note: "Institutions search disabled for performance optimization"
+            note: 'Institutions are not part of the global search; query /institutions?q= instead'
           }
         },
         meta: {

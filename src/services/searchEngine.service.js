@@ -1,7 +1,8 @@
 const manticore = require('../config/manticore');
-const { logger } = require('../middleware/errorHandler');
+const { logger, AppError } = require('../middleware/errorHandler');
+const { ERROR_CODES } = require('../utils/responseBuilder');
 
-const BACKEND = (process.env.SEARCH_BACKEND || 'mariadb').toLowerCase();
+const BACKEND = (process.env.SEARCH_BACKEND || 'manticore').toLowerCase();
 
 const WORKS_TABLE = process.env.MANTICORE_WORKS_TABLE || 'works';
 const PERSONS_TABLE = process.env.MANTICORE_PERSONS_TABLE || 'persons';
@@ -35,7 +36,8 @@ function workTypeCode(value) {
 
 const WORKS_RELEVANCE_RANKER = "ranker=expr('sum((word_count + if(min_gaps == 0, word_count, 0))*user_weight)*500 + bm25 + min(citation_count,1000)*50')";
 const PERSONS_RELEVANCE_RANKER = "ranker=expr('sum(lcs*user_weight)*1000 + bm25 + min(total_works,500)*20')";
-const UNRANKED = 'ranker=none';
+const MAX_QUERY_TIME_MS = parseInt(process.env.MANTICORE_MAX_QUERY_TIME_MS, 10) || 4000;
+const UNRANKED = `ranker=none, max_query_time=${MAX_QUERY_TIME_MS}`;
 
 const PREFIX_FIELDS = new Set(['title', 'authors', 'venue']);
 const MIN_PREFIX_LENGTH = 3;
@@ -43,6 +45,16 @@ const PREFIX_EXPANSION_LIMIT = 128;
 
 const MAX_MATCHES_CEILING = 100000;
 const YEAR_ENUM_MAX_SPAN = 150;
+
+function assertWithinMatchWindow(offset, limit) {
+  if (offset + limit > MAX_MATCHES_CEILING) {
+    throw new AppError(
+      `Full-text results can be paged up to the first ${MAX_MATCHES_CEILING} matches; narrow the query or use a different sort`,
+      400,
+      ERROR_CODES.VALIDATION
+    );
+  }
+}
 
 function isEnabled() {
   return BACKEND === 'manticore';
@@ -161,12 +173,13 @@ async function searchWorkIds(filters = {}, limit, offset) {
   const matchExpr = buildWorksMatch(filters);
   if (!matchExpr) return { ids: [], total: 0, exact: true };
 
+  assertWithinMatchWindow(offset, limit);
   const where = [`MATCH('${matchExpr}')`, ...buildWorksAttrConditions(filters)];
   const whereClause = where.join(' AND ');
   const order = buildWorksOrder(filters);
   const maxMatches = Math.min(MAX_MATCHES_CEILING, Math.max(1000, offset + limit));
   const options = [`max_matches=${maxMatches}`, `field_weights=(${WORKS_FIELD_WEIGHTS})`];
-  options.push(order.relevance ? WORKS_RELEVANCE_RANKER : UNRANKED);
+  options.push(order.relevance ? `${WORKS_RELEVANCE_RANKER}, max_query_time=${MAX_QUERY_TIME_MS}` : UNRANKED);
 
   const pageSql = `SELECT id, weight() AS w FROM ${WORKS_TABLE} WHERE ${whereClause} `
     + `ORDER BY ${order.clause} LIMIT ${offset}, ${limit} `
@@ -196,11 +209,12 @@ async function searchPersonIds(query, { verified, limit, offset } = {}) {
   const whereClause = where.join(' AND ');
   const lim = toInt(limit) ?? 20;
   const off = toInt(offset) ?? 0;
+  assertWithinMatchWindow(off, lim);
   const maxMatches = Math.min(MAX_MATCHES_CEILING, Math.max(1000, off + lim));
 
   const pageSql = `SELECT id, weight() AS w FROM ${PERSONS_TABLE} WHERE ${whereClause} `
     + `ORDER BY weight() DESC, total_works DESC, id DESC LIMIT ${off}, ${lim} `
-    + `OPTION max_matches=${maxMatches}, field_weights=(${PERSONS_FIELD_WEIGHTS}), ${PERSONS_RELEVANCE_RANKER}`;
+    + `OPTION max_matches=${maxMatches}, field_weights=(${PERSONS_FIELD_WEIGHTS}), ${PERSONS_RELEVANCE_RANKER}, max_query_time=${MAX_QUERY_TIME_MS}`;
   const countSql = `SELECT COUNT(*) AS total FROM ${PERSONS_TABLE} WHERE ${whereClause} OPTION ${UNRANKED}`;
 
   const [pageRows, countRows] = await Promise.all([
@@ -219,7 +233,7 @@ async function searchPersonIds(query, { verified, limit, offset } = {}) {
 async function runRelevanceWorkIdQuery(matchExpr, lim, maxMatches) {
   const sql = `SELECT id FROM ${WORKS_TABLE} WHERE MATCH('${matchExpr}') `
     + `ORDER BY weight() DESC, citation_count DESC, id DESC LIMIT 0, ${lim} `
-    + `OPTION max_matches=${maxMatches}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}`;
+    + `OPTION max_matches=${maxMatches}, field_weights=(${WORKS_FIELD_WEIGHTS}), ${WORKS_RELEVANCE_RANKER}, max_query_time=${MAX_QUERY_TIME_MS}`;
   const rows = await manticore.query(sql);
   return rows.map(r => Number(r.id));
 }

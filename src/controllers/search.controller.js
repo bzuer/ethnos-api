@@ -1,5 +1,6 @@
 const { validationResult } = require('express-validator');
 const searchService = require('../services/search.service');
+const autocompleteService = require('../services/autocomplete.service');
 const { logger } = require('../middleware/errorHandler');
 const { ERROR_CODES } = require('../utils/responseBuilder');
 
@@ -43,7 +44,7 @@ class SearchController {
       const result = await searchService.searchWorks(query, filters);
       const controllerTime = Date.now() - startTime;
 
-      logger.info(`Works search completed: "${query}" - ${result.pagination.total} results in ${controllerTime}ms`);
+      if (query) autocompleteService.recordSearchQuery(String(query).trim(), result.pagination.total);
 
       const meta = {
         ...(result.meta || {}),
@@ -87,15 +88,12 @@ class SearchController {
         page: req.query.page,
         limit: req.query.limit,
         offset: req.query.offset,
-        verified: req.query.verified,
-        engine: req.query.engine
+        verified: req.query.verified
       };
 
       const startTime = Date.now();
       const result = await searchService.searchPersons(query, filters);
       const controllerTime = Date.now() - startTime;
-
-      logger.info(`Persons search completed: "${query}" - ${result.pagination.total} results in ${controllerTime}ms`);
 
       const meta = {
         ...(result.meta || {}),
@@ -143,7 +141,7 @@ class SearchController {
       const result = await searchService.globalSearch(query, filters);
       const controllerTime = Date.now() - startTime;
 
-      logger.info(`Global search completed: "${query}" in ${controllerTime}ms`);
+      autocompleteService.recordSearchQuery(String(query).trim(), result.data?.works?.total ?? 0);
 
       const meta = {
         ...(result.meta || {}),

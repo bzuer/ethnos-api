@@ -1,5 +1,8 @@
 const { logger } = require('../middleware/errorHandler');
 const redis = require('../config/redis');
+
+const POPULAR_TERMS_MAX = 50;
+const ANALYTICS_DAILY_CAP = 5000;
 const { sequelize } = require('../models');
 const searchEngine = require('./searchEngine.service');
 
@@ -252,13 +255,14 @@ class AutocompleteService {
 
 
     async getPopularTerms(limit = 20) {
-        const cacheKey = `${this.cachePrefix}popular:terms`;
+        const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 20, POPULAR_TERMS_MAX));
+        const cacheKey = `${this.cachePrefix}popular:terms:v2`;
 
         if (redis.connected) {
             try {
                 const cached = await redis.get(cacheKey);
                 if (cached) {
-                    return JSON.parse(cached);
+                    return JSON.parse(cached).slice(0, sanitizedLimit);
                 }
             } catch (error) {
                 logger.warn('Popular terms cache read failed', error);
@@ -266,7 +270,6 @@ class AutocompleteService {
         }
 
         try {
-            const sanitizedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 20, 50));
             const counts = new Map();
 
             if (redis.connected) {
@@ -297,14 +300,14 @@ class AutocompleteService {
 
             const terms = Array.from(counts.entries())
                 .map(([term, frequency]) => ({ term, frequency, type: 'popular' }))
-                .sort((a, b) => b.frequency - a.frequency)
-                .slice(0, sanitizedLimit);
+                .sort((a, b) => b.frequency - a.frequency || a.term.localeCompare(b.term))
+                .slice(0, POPULAR_TERMS_MAX);
 
             if (redis.connected) {
                 redis.setex(cacheKey, 600, JSON.stringify(terms));
             }
 
-            return terms;
+            return terms.slice(0, sanitizedLimit);
 
         } catch (error) {
             logger.error('Popular terms generation failed', { error: error.message });
@@ -326,6 +329,7 @@ class AutocompleteService {
 
             if (redis.connected) {
                 await redis.lpush(key, JSON.stringify(queryData));
+                await redis.ltrim(key, 0, ANALYTICS_DAILY_CAP - 1);
                 await redis.expire(key, 86400 * 30);
             }
 

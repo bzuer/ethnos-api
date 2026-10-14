@@ -149,6 +149,10 @@ const redisWrapper = {
     return withClient((clientInstance) => clientInstance.lPush(key, value), null);
   },
 
+  async ltrim(key, start, stop) {
+    return withClient((clientInstance) => clientInstance.lTrim(key, start, stop), null);
+  },
+
   async expire(key, ttl) {
     return withClient((clientInstance) => clientInstance.expire(key, ttl), null);
   },

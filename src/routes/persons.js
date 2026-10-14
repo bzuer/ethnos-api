@@ -30,6 +30,11 @@ const validatePersonsQuery = [
     .trim()
     .isLength({ min: 2, max: 255 })
     .withMessage('Search term must be between 2 and 255 characters'),
+  query('q')
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ min: 2, max: 255 })
+    .withMessage('q must be between 2 and 255 characters'),
 
   query('signature')
     .optional({ values: 'falsy' })
@@ -334,8 +339,8 @@ const validateWorksQuery = [
   query('role')
     .optional({ values: 'falsy' })
     .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
-    .isIn(['AUTHOR', 'EDITOR'])
-    .withMessage('Role must be AUTHOR or EDITOR'),
+    .isIn(['AUTHOR', 'EDITOR', 'TRANSLATOR', 'REVIEWER'])
+    .withMessage('Role must be one of: AUTHOR, EDITOR, TRANSLATOR, REVIEWER'),
 
   query('year_from')
     .optional({ values: 'falsy' })

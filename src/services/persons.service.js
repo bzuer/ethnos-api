@@ -1,17 +1,24 @@
 const { sequelize } = require('../models');
-const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { formatPersonDetails, formatPersonListItem } = require('../dto/person.dto');
 const { authorshipRoleOrderSql, toOptionalInteger } = require('../dto/helpers');
-const { withTimeout, latestPublicationJoin } = require('../utils/db');
+const { withTimeout, isStatementTimeout, latestPublicationJoin } = require('../utils/db');
+
+const escapeLikeTerm = (value) => String(value).replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
+const toVerifiedFlag = (value) => {
+  if (value === true || value === 'true' || value === '1' || value === 1) return 1;
+  if (value === false || value === 'false' || value === '0' || value === 0) return 0;
+  return null;
+};
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
 
 class PersonsService {
   async getPersonById(id) {
-    const cacheKey = `person:v2:${id}`;
+    const cacheKey = `person:v3:${id}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -60,24 +67,32 @@ class PersonsService {
           w.id,
           w.title,
           w.subtitle,
-          w.abstract,
           pub.type AS work_type,
           w.language,
           pub.year,
           pub.doi,
           pub.open_access,
-          a.role,
-          a.position,
+          ranked.role,
+          ranked.roles,
+          ranked.position,
           v.id as venue_id,
           v.name as venue_name,
           v.abbreviated_name as venue_abbreviated_name,
           v.type as venue_type
-        FROM authorships a
-        INNER JOIN works w ON a.work_id = w.id
+        FROM (
+          SELECT
+            a.work_id,
+            SUBSTRING_INDEX(GROUP_CONCAT(a.role ORDER BY ${authorshipRoleOrderSql('a')}, a.position), ',', 1) AS role,
+            GROUP_CONCAT(DISTINCT a.role ORDER BY ${authorshipRoleOrderSql('a')}) AS roles,
+            CAST(SUBSTRING_INDEX(GROUP_CONCAT(a.position ORDER BY ${authorshipRoleOrderSql('a')}, a.position), ',', 1) AS UNSIGNED) AS position
+          FROM authorships a
+          WHERE a.person_id = :id
+          GROUP BY a.work_id
+        ) ranked
+        INNER JOIN works w ON w.id = ranked.work_id
         ${latestPublicationJoin('pub', 'LEFT')}
         LEFT JOIN venues v ON v.id = pub.venue_id
-        WHERE a.person_id = :id
-        ORDER BY COALESCE(pub.year, 2024) DESC, w.id DESC
+        ORDER BY pub.year IS NULL, pub.year DESC, w.id DESC
         LIMIT 10
       `), {
         replacements: { id },
@@ -165,13 +180,13 @@ class PersonsService {
           id: work.id,
           title: work.title,
           subtitle: work.subtitle,
-          abstract: work.abstract || null,
           type: work.work_type,
           language: work.language,
           year: work.year,
           doi: work.doi,
           open_access: work.open_access === 1 || work.open_access === true,
           role: work.role,
+          roles: typeof work.roles === 'string' && work.roles ? work.roles.split(',') : [work.role].filter(Boolean),
           position: work.position,
           venue: work.venue_id
             ? {
@@ -204,7 +219,7 @@ class PersonsService {
     const { page, limit, offset } = pagination;
     const { search, verified } = filters;
     
-    const cacheKey = `persons:${JSON.stringify(filters)}`;
+    const cacheKey = `persons:v2:${JSON.stringify(filters)}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -220,16 +235,22 @@ class PersonsService {
         return await this.searchPersons(search, { limit, offset, verified });
       }
 
-      if (verified !== undefined) {
+      const verifiedFlag = toVerifiedFlag(verified);
+      if (verifiedFlag !== null) {
         whereConditions.push('p.is_verified = :verified');
-        replacements.verified = verified === 'true' ? 1 : 0;
+        replacements.verified = verifiedFlag;
       }
 
       if (filters.signature) {
-        const signatureQuery = `${filters.signature}%`;
+        const signatureConditions = ['s.signature LIKE :signature', ...whereConditions];
+        const signatureReplacements = {
+          ...replacements,
+          signature: `${escapeLikeTerm(String(filters.signature).trim())}%`
+        };
+        const signatureWhere = signatureConditions.join(' AND ');
         const [rows, countRows] = await Promise.all([
-          sequelize.query(`
-            SELECT 
+          sequelize.query(withTimeout(`
+            SELECT
               p.id,
               p.preferred_name,
               p.given_names,
@@ -241,20 +262,20 @@ class PersonsService {
               s.signature as name_signature
             FROM persons p
             INNER JOIN signatures s ON p.signature_id = s.id
-            WHERE s.signature LIKE :signature
+            WHERE ${signatureWhere}
             ORDER BY p.id DESC
             LIMIT :limit OFFSET :offset
-          `, {
-            replacements: { signature: signatureQuery, limit: parseInt(limit), offset: parseInt(offset) },
+          `), {
+            replacements: signatureReplacements,
             type: sequelize.QueryTypes.SELECT
           }),
-          sequelize.query(`
+          sequelize.query(withTimeout(`
             SELECT COUNT(DISTINCT p.id) as total
             FROM persons p
             INNER JOIN signatures s ON p.signature_id = s.id
-            WHERE s.signature LIKE :signature
-          `, {
-            replacements: { signature: signatureQuery },
+            WHERE ${signatureWhere}
+          `), {
+            replacements: signatureReplacements,
             type: sequelize.QueryTypes.SELECT
           })
         ]);
@@ -283,58 +304,62 @@ class PersonsService {
       }
 
       const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+      const countReplacements = Object.fromEntries(
+        Object.entries(replacements).filter(([key]) => !['limit', 'offset'].includes(key))
+      );
 
-      let persons = [];
-      let countResult = [{ total: 0 }];
+      let idRows;
+      let countResult;
       try {
-        [persons, countResult] = await Promise.all([
-          sequelize.query(`
-            SELECT
-              p.id,
-              p.preferred_name,
-              p.given_names,
-              p.family_name,
-              p.orcid,
-              p.is_verified,
-              p.total_works,
-              p.latest_publication_year,
-              s.signature as name_signature
+        [idRows, countResult] = await Promise.all([
+          sequelize.query(withTimeout(`
+            SELECT p.id
             FROM persons p
-            LEFT JOIN signatures s ON p.signature_id = s.id
             ${whereClause}
             ORDER BY p.id DESC
             LIMIT :limit OFFSET :offset
-          `, {
-            replacements,
+          `), { replacements, type: sequelize.QueryTypes.SELECT }),
+          sequelize.query(withTimeout(`SELECT COUNT(*) AS total FROM persons p ${whereClause}`, 2000), {
+            replacements: countReplacements,
             type: sequelize.QueryTypes.SELECT
-          }),
-          
-          sequelize.query(`
-            SELECT COUNT(*) as total
-            FROM persons p
-            ${whereClause}
-          `, {
-            replacements: Object.fromEntries(
-              Object.entries(replacements).filter(([key]) => !['limit', 'offset'].includes(key))
-            ),
-            type: sequelize.QueryTypes.SELECT
+          }).catch((countError) => {
+            if (isStatementTimeout(countError)) return null;
+            throw countError;
           })
         ]);
-      } catch (listErr) {
-        if (process.env.NODE_ENV === 'test') {
-          logger.warn('Persons listing query failed; returning empty listing (test mode)', { error: listErr.message });
-          const empty = {
-            data: [],
-            pagination: createPagination(page, limit, 0)
-          };
-          await cacheService.set(cacheKey, empty, 7200);
-          return empty;
-        }
-        throw listErr;
+      } catch (listError) {
+        if (!isStatementTimeout(listError)) throw listError;
+        return {
+          data: [],
+          pagination: createPagination(page, limit, 0),
+          meta: {
+            page_degraded: true,
+            pagination_total_exact: false,
+            note: 'This page is too deep for the statement budget; use a filter or a shallower page.'
+          }
+        };
       }
 
-      const total = countResult[0].total;
-      const totalPages = Math.ceil(total / limit);
+      const ids = idRows.map((row) => row.id);
+      const persons = ids.length === 0 ? [] : await sequelize.query(withTimeout(`
+        SELECT
+          p.id,
+          p.preferred_name,
+          p.given_names,
+          p.family_name,
+          p.orcid,
+          p.is_verified,
+          p.total_works,
+          p.latest_publication_year,
+          s.signature as name_signature
+        FROM persons p
+        LEFT JOIN signatures s ON p.signature_id = s.id
+        WHERE p.id IN (:ids)
+        ORDER BY p.id DESC
+      `), { replacements: { ids }, type: sequelize.QueryTypes.SELECT });
+
+      const totalExact = countResult !== null;
+      const total = totalExact ? Number(countResult[0].total) : offset + persons.length + (persons.length === Number(limit) ? 1 : 0);
 
       const listItems = persons.map(person => formatPersonListItem({
         ...person,
@@ -347,6 +372,7 @@ class PersonsService {
       const result = {
         data: listItems,
         pagination: createPagination(page, limit, total),
+        meta: { pagination_total_exact: totalExact },
         performance: {
           engine: 'MariaDB',
           query_type: 'list'
@@ -393,21 +419,21 @@ class PersonsService {
       case 'cited_by_count':
       case 'citation_count':
       case 'citations':
-        orderClause = `COALESCE(w.citation_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
+        orderClause = `w.citation_count ${sortDir}, pub.year IS NULL, pub.year DESC, w.id DESC`;
         break;
       case 'references_count':
       case 'reference_count':
-        orderClause = `COALESCE(w.reference_count, 0) ${sortDir}, COALESCE(pub.year, 2024) DESC, w.id DESC`;
+        orderClause = `w.reference_count ${sortDir}, pub.year IS NULL, pub.year DESC, w.id DESC`;
         break;
       case 'publication_year':
       case 'year':
-        orderClause = `COALESCE(pub.year, 2024) ${sortDir}, w.id DESC`;
+        orderClause = `pub.year IS NULL, pub.year ${sortDir}, w.id DESC`;
         break;
       default:
-        orderClause = 'COALESCE(pub.year, 2024) DESC, w.id DESC';
+        orderClause = 'pub.year IS NULL, pub.year DESC, w.id DESC';
     }
 
-    const cacheKey = `person:${personId}:works:v3:${JSON.stringify({ page, limit, offset, role, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
+    const cacheKey = `person:${personId}:works:v4:${JSON.stringify({ page, limit, offset, role, citedByMin, citedByMax, yearFrom, yearTo, sortKey, sortDir })}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -420,7 +446,7 @@ class PersonsService {
       const replacements = { personId, limit: parseInt(limit), offset: parseInt(offset) };
 
       if (role) {
-        whereConditions.push('a.role = :role');
+        whereConditions.push('EXISTS (SELECT 1 FROM authorships ar WHERE ar.work_id = a.work_id AND ar.person_id = a.person_id AND ar.role = :role)');
         replacements.role = role.toUpperCase();
       }
 
@@ -508,7 +534,6 @@ class PersonsService {
       }
 
       const total = countResult[0].total;
-      const totalPages = Math.ceil(total / limit);
 
       const workIds = works.map(w => w.id).filter(Number.isFinite);
       const authorStringByWork = workIds.length > 0
@@ -650,80 +675,17 @@ class PersonsService {
       if (cached) return cached;
     } catch (_) {}
 
-    if (searchEngine.isEnabled() && trimmed.length >= 2) {
-      const mres = await searchEngine.searchPersonIds(trimmed, { verified, limit, offset });
-      let people = [];
-      if (mres.ids.length) {
-        const rows = await sequelize.query(
-          'SELECT p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.is_verified, p.total_works, p.latest_publication_year FROM persons p WHERE p.id IN (:ids)',
-          { replacements: { ids: mres.ids }, type: sequelize.QueryTypes.SELECT }
-        );
-        const byId = new Map(rows.map(r => [r.id, r]));
-        people = mres.ids.map(id => byId.get(id)).filter(Boolean);
-      }
-      const formattedResults = people.map(person => formatPersonListItem({
-        ...person,
-        name_signature: null,
-        metrics: {
-          works_count: parseInt(person.total_works, 10) || 0,
-          latest_publication_year: person.latest_publication_year || null
-        }
-      }));
-      const result = {
-        data: formattedResults,
-        pagination: createPagination(page, limit, mres.total),
-        performance: { engine: 'Manticore', query_type: 'search' }
-      };
-      try { await cacheService.set(cacheKey, result, 3600); } catch (_) {}
-      logger.info(`Persons search "${trimmed}" [Manticore]: ${formattedResults.length} of ${mres.total} results`);
-      return result;
+    const mres = await searchEngine.searchPersonIds(trimmed, { verified, limit, offset });
+    let people = [];
+    if (mres.ids.length) {
+      const rows = await sequelize.query(
+        withTimeout('SELECT p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.is_verified, p.total_works, p.latest_publication_year FROM persons p WHERE p.id IN (:ids)'),
+        { replacements: { ids: mres.ids }, type: sequelize.QueryTypes.SELECT }
+      );
+      const byId = new Map(rows.map(r => [r.id, r]));
+      people = mres.ids.map(id => byId.get(id)).filter(Boolean);
     }
-
-    const whereConditions = [];
-    const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
-
-    let useFulltext = false;
-    if (trimmed.length >= 2) {
-      whereConditions.push('(p.preferred_name LIKE :likeSearch OR p.given_names LIKE :likeSearch OR p.family_name LIKE :likeSearch)');
-      replacements.likeSearch = `%${trimmed}%`;
-      useFulltext = true;
-      replacements.ftSearch = trimmed;
-    }
-
-    if (verified !== undefined && verified !== null && verified !== '') {
-      whereConditions.push('p.is_verified = :verified');
-      replacements.verified = (verified === 'true' || verified === true || verified === 1 || verified === '1') ? 1 : 0;
-    }
-
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
-
-    const [persons, countResult] = await Promise.all([
-      sequelize.query(`
-        SELECT p.id, p.preferred_name, p.given_names, p.family_name,
-               p.orcid, p.is_verified, p.total_works, p.latest_publication_year
-        FROM persons p
-        ${whereClause}
-        ORDER BY ${useFulltext ? 'CASE WHEN p.preferred_name = :ftSearch THEN 0 ELSE 1 END, ' : ''}p.preferred_name ASC
-        LIMIT :limit OFFSET :offset
-      `, {
-        replacements,
-        type: sequelize.QueryTypes.SELECT
-      }),
-
-      sequelize.query(`
-        SELECT COUNT(*) as total
-        FROM persons p
-        ${whereClause}
-      `, {
-        replacements: Object.fromEntries(
-          Object.entries(replacements).filter(([key]) => !['limit', 'offset'].includes(key))
-        ),
-        type: sequelize.QueryTypes.SELECT
-      })
-    ]);
-
-    const total = parseInt(countResult[0]?.total || 0, 10);
-    const formattedResults = persons.map(person => formatPersonListItem({
+    const formattedResults = people.map(person => formatPersonListItem({
       ...person,
       name_signature: null,
       metrics: {
@@ -731,21 +693,13 @@ class PersonsService {
         latest_publication_year: person.latest_publication_year || null
       }
     }));
-
     const result = {
       data: formattedResults,
-      pagination: createPagination(page, limit, total),
-      performance: {
-        engine: 'MariaDB',
-        query_type: 'search'
-      }
+      pagination: createPagination(page, limit, mres.total),
+      performance: { engine: 'Manticore', query_type: 'search' }
     };
-
-    try {
-      await cacheService.set(cacheKey, result, 3600);
-    } catch (_) {}
-
-    logger.info(`Persons search "${trimmed}": ${formattedResults.length} of ${total} results`);
+    try { await cacheService.set(cacheKey, result, 3600); } catch (_) {}
+    logger.info(`Persons search "${trimmed}" [Manticore]: ${formattedResults.length} of ${mres.total} results`);
     return result;
   }
 }

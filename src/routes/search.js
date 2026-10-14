@@ -7,29 +7,23 @@ const { logger } = require('../middleware/errorHandler');
 const { createPagination, normalizePagination } = require('../utils/pagination');
 const { ERROR_CODES } = require('../utils/responseBuilder');
 
+const WORK_TYPES = ['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'];
+const MAX_YEAR = new Date().getFullYear() + 1;
+
+const toBooleanParam = (value) => {
+  if (value === 'true' || value === '1') return true;
+  if (value === 'false' || value === '0') return false;
+  return undefined;
+};
+
 const validateWorksSearch = [
-  query('q')
-    .optional({ values: 'falsy' })
-    .isLength({ min: 2, max: 200 })
-    .withMessage('Search query must be between 2 and 200 characters')
-    .custom(value => {
-      const suspiciousPatterns = [
-        /[<>]/,
-        /javascript:/i,
-        /(\b(select|insert|update|delete|drop|create|alter|exec|execute|union|declare)\b)/i,
-      ];
-      for (const pattern of suspiciousPatterns) {
-        if (pattern.test(value)) {
-          throw new Error('Search query contains invalid characters');
-        }
-      }
-      return true;
-    }),
+  commonValidations.optionalSearchText('q'),
   ...commonValidations.pagination,
   query('type')
     .optional({ values: 'falsy' })
-    .isIn(['ARTICLE', 'BOOK', 'CHAPTER', 'THESIS', 'CONFERENCE', 'CONFERENCE_PAPER', 'REPORT', 'DATASET', 'PREPRINT', 'REVIEW', 'EDITORIAL', 'OTHER'])
-    .withMessage('Work type must be valid'),
+    .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
+    .isIn(WORK_TYPES)
+    .withMessage(`type must be one of: ${WORK_TYPES.join(', ')}`),
   query('language')
     .optional({ values: 'falsy' })
     .isLength({ min: 2, max: 5 })
@@ -52,13 +46,13 @@ const validateWorksSearch = [
     .withMessage('venue must have between 2 and 255 characters'),
   query('year_from')
     .optional({ values: 'falsy' })
-    .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
-    .withMessage('Year from must be valid')
+    .isInt({ min: 1000, max: MAX_YEAR })
+    .withMessage(`year_from must be between 1000 and ${MAX_YEAR}`)
     .toInt(),
   query('year_to')
     .optional({ values: 'falsy' })
-    .isInt({ min: 1900, max: new Date().getFullYear() + 1 })
-    .withMessage('Year to must be valid')
+    .isInt({ min: 1000, max: MAX_YEAR })
+    .withMessage(`year_to must be between 1000 and ${MAX_YEAR}`)
     .toInt(),
   query('author')
     .optional({ values: 'falsy' })
@@ -284,7 +278,13 @@ router.get('/works', validateWorksSearch, searchController.searchWorks);
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/global', commonValidations.searchQuery, searchController.globalSearch);
+router.get('/global', [
+  ...commonValidations.searchQuery,
+  query('limit')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1, max: 20 })
+    .withMessage('limit must be between 1 and 20')
+], searchController.globalSearch);
 
 
 /**
@@ -341,7 +341,14 @@ router.get('/global', commonValidations.searchQuery, searchController.globalSear
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/persons', commonValidations.searchQuery, commonValidations.pagination, searchController.searchPersons);
+router.get('/persons', [
+  ...commonValidations.searchQuery,
+  ...commonValidations.pagination,
+  query('verified')
+    .optional({ values: 'falsy' })
+    .isIn(['true', 'false', '1', '0'])
+    .withMessage('verified must be boolean-like (1/0/true/false)')
+], searchController.searchPersons);
 
 
 /**
@@ -531,11 +538,9 @@ const advancedSearch = async (req, res, next) => {
       language: req.query.language,
       year_from: req.query.year_from,
       year_to: req.query.year_to,
-      peer_reviewed: req.query.peer_reviewed === 'true' ? true :
-        req.query.peer_reviewed === 'false' ? false : undefined,
+      peer_reviewed: toBooleanParam(req.query.peer_reviewed),
       venue_name: (req.query.venue_name || req.query.venue || '').trim() || undefined,
-      open_access: req.query.open_access === 'true' ? true :
-        req.query.open_access === 'false' ? false : undefined,
+      open_access: toBooleanParam(req.query.open_access),
       author: (req.query.author || '').trim() || undefined,
       subject: (req.query.subject || '').trim() || undefined,
       citation_count_min: toNonNegativeInt(req.query.cited_by_min ?? req.query.citation_count_min),
@@ -608,40 +613,12 @@ const advancedSearch = async (req, res, next) => {
 };
 
 const validateAdvancedSearch = [
-  query('q')
-    .optional({ values: 'falsy' })
-    .isLength({ min: 2, max: 200 })
-    .withMessage('Search query must be between 2 and 200 characters')
-    .custom(value => {
-      const suspiciousPatterns = [
-        /[<>]/,
-        /javascript:/i,
-        /(\b(select|insert|update|delete|drop|create|alter|exec|execute|union|declare)\b)/i,
-      ];
-      for (const pattern of suspiciousPatterns) {
-        if (pattern.test(value)) {
-          throw new Error('Search query contains invalid characters');
-        }
-      }
-      return true;
-    }),
-  query('cited_by_min')
-    .optional({ values: 'falsy' })
-    .isInt({ min: 0 })
-    .withMessage('cited_by_min must be a non-negative integer'),
-  query('cited_by_max')
-    .optional({ values: 'falsy' })
-    .isInt({ min: 0 })
-    .withMessage('cited_by_max must be a non-negative integer'),
-  query('sort_by')
-    .optional({ values: 'falsy' })
-    .isIn(['cited_by_count', 'citation_count', 'references_count', 'reference_count', 'publication_year', 'year', 'id', 'work_id', 'relevance'])
-    .withMessage('sort_by must be one of: cited_by_count, references_count, publication_year, id, relevance'),
-  query('sort_order')
+  ...validateWorksSearch,
+  query('work_type')
     .optional({ values: 'falsy' })
     .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
-    .isIn(['ASC', 'DESC'])
-    .withMessage('sort_order must be ASC or DESC')
+    .isIn(WORK_TYPES)
+    .withMessage(`work_type must be one of: ${WORK_TYPES.join(', ')}`)
 ];
 
 router.get('/advanced', validateAdvancedSearch, advancedSearch);
@@ -763,8 +740,29 @@ const autocompleteService = require('../services/autocomplete.service');
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/autocomplete', async (req, res, next) => {
+router.get('/autocomplete', [
+  query('q')
+    .optional({ values: 'falsy' })
+    .isLength({ max: 200 })
+    .withMessage('q must be at most 200 characters'),
+  query('type')
+    .optional({ values: 'falsy' })
+    .isIn(['all', 'titles', 'authors', 'venues'])
+    .withMessage('type must be one of: all, titles, authors, venues'),
+  query('limit')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1, max: 20 })
+    .withMessage('limit must be between 1 and 20')
+], async (req, res, next) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.fail('Validation failed', {
+        statusCode: 400,
+        code: ERROR_CODES.VALIDATION,
+        errors: errors.array()
+      });
+    }
     const { q, type = 'all', limit = 10 } = req.query;
     const parsedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 10, 20));
     const trimmedQuery = (q || '').trim();
@@ -783,7 +781,6 @@ router.get('/autocomplete', async (req, res, next) => {
     }
 
     const suggestions = await autocompleteService.getSuggestions(trimmedQuery, type, parsedLimit);
-    autocompleteService.recordSearchQuery(trimmedQuery, suggestions.suggestions?.length || 0);
 
     return res.success(suggestions, {
       meta: {
