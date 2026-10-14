@@ -202,13 +202,6 @@ const normalizeValue = (key, value) => {
       }
     }
 
-    const trimmedLower = stringValue.trim().toLowerCase();
-    if (trimmedLower === 'null') {
-      return null;
-    }
-    if (trimmedLower === 'undefined') {
-      return null;
-    }
   }
 
   if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') {
