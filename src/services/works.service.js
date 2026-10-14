@@ -462,7 +462,7 @@ class WorksService {
     const innerWhereClause = innerWhere.length ? `WHERE ${innerWhere.join(' AND ')}` : '';
     const dbTimeoutMs = parseInt(process.env.DB_QUERY_TIMEOUT_MS || '8000', 10);
     const COUNT_BUDGET_MS = 2000;
-    const ESTIMATED_WORKS_TOTAL = 7650021;
+    const ESTIMATED_WORKS_TOTAL = 7657142;
 
     let totalItems;
     let totalIsExact = true;
