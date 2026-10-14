@@ -109,7 +109,8 @@ class SubjectsController {
 
       const works = await subjectsService.getSubjectWorks(req.params.id, filters);
       return res.success(works.data || [], {
-        pagination: works.pagination
+        pagination: works.pagination,
+        meta: works.meta
       });
     } catch (error) {
       handleError(res, error);

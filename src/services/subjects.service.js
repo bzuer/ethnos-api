@@ -118,7 +118,7 @@ class SubjectsService {
   }
 
   async getSubjectWorks(id, filters = {}) {
-    const cacheKey = `subject:${id}:works:v2:${JSON.stringify(filters)}`;
+    const cacheKey = `subject:${id}:works:v3:${JSON.stringify(filters)}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -135,24 +135,62 @@ class SubjectsService {
     const pageLimit = Math.max(1, parseInt(limit, 10) || 20);
     const pageOffset = Math.max(0, parseInt(offset, 10) || 0);
 
+    const conditions = ['ws.subject_id = ?'];
+    const conditionParams = [id];
+    const relevanceFloor = min_relevance !== undefined && min_relevance !== null && min_relevance !== ''
+      ? parseFloat(min_relevance)
+      : null;
+    if (Number.isFinite(relevanceFloor)) {
+      conditions.push('(SELECT r.relevance_score FROM work_subjects r WHERE r.work_id = ws.work_id AND r.subject_id = ws.subject_id) >= ?');
+      conditionParams.push(relevanceFloor);
+    }
+    if (language) {
+      conditions.push('(SELECT lw.language FROM works lw WHERE lw.id = ws.work_id) = ?');
+      conditionParams.push(language);
+    }
+    const publicationConditions = [];
+    if (year_from) { publicationConditions.push('fp.year >= ?'); conditionParams.push(parseInt(year_from, 10)); }
+    if (year_to) { publicationConditions.push('fp.year <= ?'); conditionParams.push(parseInt(year_to, 10)); }
+    if (document_type) { publicationConditions.push('fp.type = ?'); conditionParams.push(document_type); }
+    if (publicationConditions.length > 0) {
+      conditions.push(`(SELECT 1 FROM publications fp WHERE fp.work_id = ws.work_id AND ${publicationConditions.join(' AND ')} LIMIT 1) IS NOT NULL`);
+    }
+    const filtered = conditions.length > 1;
+    const whereClause = conditions.join(' AND ');
+    const pageNumber = Math.floor(pageOffset / pageLimit) + 1;
+
+    const [subjectRows] = await pool.query(
+      withTimeout('SELECT total_works AS total FROM subjects WHERE id = ?'),
+      [id]
+    );
+    const storedTotal = subjectRows?.[0]?.total ? Number.parseInt(subjectRows[0].total, 10) : 0;
+
+    const countFiltered = async () => {
+      if (!filtered) return { total: storedTotal, exact: true };
+      try {
+        const [rows] = await pool.query(
+          withTimeout(`SELECT COUNT(*) AS total FROM work_subjects ws WHERE ${whereClause}`, 2000),
+          conditionParams
+        );
+        return { total: Number.parseInt(rows?.[0]?.total ?? 0, 10), exact: true };
+      } catch (error) {
+        if (isStatementTimeout(error)) return { total: storedTotal, exact: false };
+        throw error;
+      }
+    };
+
     try {
-      const idParams = [id];
-      let idQuery = `
+      const idQuery = `
         SELECT ws.work_id AS work_id
         FROM work_subjects ws
-        WHERE ws.subject_id = ?
-      `;
-      if (min_relevance) {
-        idQuery += ' AND ws.relevance_score >= ?';
-        idParams.push(parseFloat(min_relevance));
-      }
-      idQuery += `
+        WHERE ${whereClause}
         ORDER BY ws.work_id DESC
         LIMIT ? OFFSET ?
       `;
-      idParams.push(pageLimit, pageOffset);
-
-      const [idRows] = await pool.query(withTimeout(idQuery), idParams);
+      const [[idRows], counted] = await Promise.all([
+        pool.query(withTimeout(idQuery), [...conditionParams, pageLimit, pageOffset]),
+        countFiltered()
+      ]);
       const workIds = (idRows || []).map((row) => row.work_id);
 
       let works = [];
@@ -196,25 +234,23 @@ class SubjectsService {
         }
       }
 
-      const [totalRows] = await pool.query(
-        withTimeout('SELECT total_works AS total FROM subjects WHERE id = ?'),
-        [id]
-      );
-      const total = totalRows?.[0]?.total ? Number.parseInt(totalRows[0].total, 10) : 0;
-
-      const pagination = createPagination(
-        Math.floor(pageOffset / pageLimit) + 1,
-        pageLimit,
-        total
-      );
-      const result = { data: works.map(formatSubjectWork), pagination };
+      const result = {
+        data: works.map(formatSubjectWork),
+        pagination: createPagination(pageNumber, pageLimit, counted.total),
+        meta: { pagination_total_exact: counted.exact }
+      };
       await cache.set(cacheKey, result, 1800);
       return result;
     } catch (error) {
       if (isStatementTimeout(error)) {
         return {
           data: [],
-          pagination: createPagination(Math.floor(pageOffset / pageLimit) + 1, pageLimit, 0)
+          pagination: createPagination(pageNumber, pageLimit, storedTotal),
+          meta: {
+            pagination_total_exact: false,
+            page_degraded: true,
+            note: 'These filters exceeded the statement budget on this subject; narrow them or page less deep.'
+          }
         };
       }
       throw error;
