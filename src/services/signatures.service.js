@@ -1,11 +1,14 @@
 const { sequelize } = require('../models');
-const { Op } = require('sequelize');
 const cacheService = require('./cache.service');
 const { logger } = require('../middleware/errorHandler');
-const { withTimeout, latestPublicationJoin } = require('../utils/db');
+const { withTimeout, isStatementTimeout, latestPublicationJoin } = require('../utils/db');
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
-const { formatSignatureDetails, formatSignatureWork } = require('../dto/signatures.dto');
+const { authorshipRoleOrderSql } = require('../dto/helpers');
+const { formatSignatureDetails, formatSignatureListItem, formatSignatureWork } = require('../dto/signatures.dto');
+
+const escapeLikeTerm = (value) => String(value).replace(/[\\%_]/g, (ch) => `\\${ch}`);
 const { formatPersonListItem } = require('../dto/person.dto');
+const { createPagination } = require('../utils/pagination');
 
 class SignaturesService {
   async getSignatureById(id) {
@@ -76,7 +79,7 @@ class SignaturesService {
           p.latest_publication_year
         FROM persons p
         WHERE p.signature_id = ?
-        ORDER BY p.preferred_name ASC
+        ORDER BY p.preferred_name ASC, p.id ASC
         LIMIT ? OFFSET ?
       `;
 
@@ -131,7 +134,7 @@ class SignaturesService {
   }
 
   async getSignatureStatistics() {
-    const cacheKey = 'signatures:statistics';
+    const cacheKey = 'signatures:statistics:v2';
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -144,10 +147,10 @@ class SignaturesService {
         sequelize.query(`
           SELECT 
             COUNT(*) as total_signatures,
-            COUNT(CASE WHEN LENGTH(signature) <= 10 THEN 1 END) as short_signatures,
-            COUNT(CASE WHEN LENGTH(signature) > 10 AND LENGTH(signature) <= 20 THEN 1 END) as medium_signatures,
-            COUNT(CASE WHEN LENGTH(signature) > 20 THEN 1 END) as long_signatures,
-            AVG(LENGTH(signature)) as avg_signature_length
+            COUNT(CASE WHEN CHAR_LENGTH(signature) <= 10 THEN 1 END) as short_signatures,
+            COUNT(CASE WHEN CHAR_LENGTH(signature) > 10 AND CHAR_LENGTH(signature) <= 20 THEN 1 END) as medium_signatures,
+            COUNT(CASE WHEN CHAR_LENGTH(signature) > 20 THEN 1 END) as long_signatures,
+            AVG(CHAR_LENGTH(signature)) as avg_signature_length
           FROM signatures
         `, {
           type: sequelize.QueryTypes.SELECT
@@ -181,11 +184,11 @@ class SignaturesService {
   }
 
   async getSignatureWorks(signatureId, options = {}) {
-    const page = Math.max(1, parseInt(options.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(options.limit, 10) || 20));
-    const offset = (page - 1) * limit;
-    
-    const cacheKey = `signature:${signatureId}:works:v2:${JSON.stringify(options)}`;
+    const offset = Math.max(0, parseInt(options.offset, 10) || 0);
+    const page = Math.floor(offset / limit) + 1;
+
+    const cacheKey = `signature:${signatureId}:works:v3:${limit}:${offset}`;
     
     try {
       const cached = await cacheService.get(cacheKey);
@@ -197,10 +200,10 @@ class SignaturesService {
       const [works, countResult] = await Promise.all([
         sequelize.query(withTimeout(`
           SELECT
-            a.work_id AS id,
+            w.id,
             w.title,
-            MIN(a.person_id) AS person_id,
-            MAX(p.preferred_name) AS person_name,
+            rep.person_id,
+            rep.person_name,
             pub.type AS work_type,
             w.language,
             w.subtitle,
@@ -212,31 +215,40 @@ class SignaturesService {
             pub.issue,
             pub.pages AS pages,
             pub.open_access,
-            MIN(a.role) AS role,
-            MIN(a.position) AS position,
-            MAX(a.is_corresponding) AS is_corresponding,
+            rep.role,
+            rep.position,
+            rep.is_corresponding,
             (SELECT COUNT(DISTINCT a2.person_id) FROM authorships a2 WHERE a2.work_id = w.id) AS total_authors
-          FROM persons p
-          INNER JOIN authorships a ON a.person_id = p.id
-          INNER JOIN works w ON w.id = a.work_id
+          FROM (
+            SELECT
+              a.work_id,
+              a.person_id,
+              p.preferred_name AS person_name,
+              a.role,
+              a.position,
+              a.is_corresponding,
+              ROW_NUMBER() OVER (PARTITION BY a.work_id ORDER BY ${authorshipRoleOrderSql('a')}, a.position, a.person_id) AS rn
+            FROM persons p
+            INNER JOIN authorships a ON a.person_id = p.id
+            WHERE p.signature_id = ?
+          ) rep
+          INNER JOIN works w ON w.id = rep.work_id
           ${latestPublicationJoin('pub', 'LEFT')}
           LEFT JOIN venues v ON v.id = pub.venue_id
-          WHERE p.signature_id = ?
-          GROUP BY a.work_id, w.title, w.language, w.subtitle, w.created_at,
-                   pub.type, pub.year, pub.doi, v.name, pub.volume, pub.issue, pub.pages, pub.open_access
-          ORDER BY COALESCE(pub.year, 2024) DESC, a.work_id DESC
+          WHERE rep.rn = 1
+          ORDER BY pub.year IS NULL, pub.year DESC, w.id DESC
           LIMIT ? OFFSET ?
         `), {
           replacements: [signatureId, parseInt(limit), parseInt(offset)],
           type: sequelize.QueryTypes.SELECT
         }),
 
-        sequelize.query(`
+        sequelize.query(withTimeout(`
           SELECT COUNT(DISTINCT a.work_id) AS total
           FROM persons p
           INNER JOIN authorships a ON a.person_id = p.id
           WHERE p.signature_id = ?
-        `, {
+        `), {
           replacements: [signatureId],
           type: sequelize.QueryTypes.SELECT
         })
@@ -256,7 +268,6 @@ class SignaturesService {
       }
 
       const total = countResult[0].total;
-      const totalPages = Math.ceil(total / limit);
 
       const workIds = Array.from(new Set(works.map(w => w.id).filter(Number.isFinite)));
       const authorStringByWork = workIds.length > 0
@@ -298,14 +309,7 @@ class SignaturesService {
 
       const result = {
         data: items.map(formatSignatureWork),
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: parseInt(total),
-          totalPages,
-          hasNext: page < totalPages,
-          hasPrev: page > 1
-        }
+        pagination: createPagination(page, limit, parseInt(total, 10) || 0)
       };
 
       await cacheService.set(cacheKey, result, 3600);
@@ -319,73 +323,60 @@ class SignaturesService {
   }
 
   async searchSignatures(searchTerm, options = {}) {
-    const { limit = 20, offset = 0, exact = false } = options;
-    const cacheKey = `signatures:search:${searchTerm}:${JSON.stringify(options)}`;
-    
-    try {
-      const cached = await cacheService.get(cacheKey);
-      if (cached) {
-        logger.info('Signature search results retrieved from cache');
-        return cached;
-      }
+    const limit = Math.min(100, Math.max(1, parseInt(options.limit, 10) || 20));
+    const offset = Math.max(0, parseInt(options.offset, 10) || 0);
+    const exact = options.exact === true;
+    const term = String(searchTerm || '').trim();
+    const cacheKey = `signatures:search:v2:${term}:${limit}:${offset}:${exact ? 1 : 0}`;
 
-      const searchPattern = exact ? searchTerm : `%${searchTerm}%`;
-      const searchOperator = exact ? '=' : 'LIKE';
+    const cached = await cacheService.get(cacheKey);
+    if (cached) return cached;
 
-      const query = `
-        SELECT 
-          s.id,
-          s.signature,
-          s.created_at,
-          COUNT(p.id) as persons_count
+    const condition = exact ? 's.signature = ?' : 's.signature LIKE ?';
+    const value = exact ? term : `%${escapeLikeTerm(term)}%`;
+
+    const [rows, counted] = await Promise.all([
+      sequelize.query(withTimeout(`
+        SELECT s.id, s.signature, s.created_at
         FROM signatures s
-        LEFT JOIN persons p ON s.id = p.signature_id
-        WHERE s.signature ${searchOperator} ?
-        GROUP BY s.id, s.signature, s.created_at
-        ORDER BY 
-          CASE WHEN s.signature = ? THEN 1 ELSE 2 END,
-          persons_count DESC,
-          s.signature ASC
+        WHERE ${condition}
+        ORDER BY s.signature ASC, s.id ASC
         LIMIT ? OFFSET ?
-      `;
-
-      const signatures = await sequelize.query(query, {
-        replacements: [searchPattern, searchTerm, parseInt(limit), parseInt(offset)],
+      `), { replacements: [value, limit, offset], type: sequelize.QueryTypes.SELECT }),
+      sequelize.query(withTimeout(`SELECT COUNT(*) AS total FROM signatures s WHERE ${condition}`, 2000), {
+        replacements: [value],
         type: sequelize.QueryTypes.SELECT
-      });
+      })
+        .then(([row]) => ({ total: parseInt(row?.total, 10) || 0, exact: true }))
+        .catch((error) => {
+          if (!isStatementTimeout(error)) throw error;
+          return { total: null, exact: false };
+        })
+    ]);
 
-      const countQuery = `
-        SELECT COUNT(DISTINCT s.id) as total
-        FROM signatures s
-        WHERE s.signature ${searchOperator} ?
-      `;
-
-      const [countResult] = await sequelize.query(countQuery, {
-        replacements: [searchPattern],
-        type: sequelize.QueryTypes.SELECT
-      });
-
-      const result = {
-        signatures,
-        pagination: {
-          total: countResult.total,
-          limit: parseInt(limit),
-          offset: parseInt(offset),
-          pages: Math.ceil(countResult.total / limit)
-        },
-        searchTerm,
-        exact
-      };
-
-      await cacheService.set(cacheKey, result, 1800);
-      logger.info(`Found ${signatures.length} signatures matching search: ${searchTerm}`);
-      
-      return result;
-
-    } catch (error) {
-      logger.error(`Error searching signatures for: ${searchTerm}`, error);
-      throw error;
+    const ids = rows.map((row) => row.id);
+    const personCounts = new Map();
+    if (ids.length > 0) {
+      const counts = await sequelize.query(withTimeout(`
+        SELECT signature_id, COUNT(*) AS persons_count
+        FROM persons
+        WHERE signature_id IN (:ids)
+        GROUP BY signature_id
+      `), { replacements: { ids }, type: sequelize.QueryTypes.SELECT });
+      for (const row of counts) personCounts.set(row.signature_id, parseInt(row.persons_count, 10) || 0);
     }
+
+    const total = counted.total ?? (offset + rows.length + (rows.length === limit ? 1 : 0));
+    const result = {
+      signatures: rows.map((row) => formatSignatureListItem({ ...row, persons_count: personCounts.get(row.id) || 0 })),
+      pagination: createPagination(Math.floor(offset / limit) + 1, limit, total),
+      totalExact: counted.exact,
+      searchTerm: term,
+      exact
+    };
+
+    await cacheService.set(cacheKey, result, 1800);
+    return result;
   }
 }
 

@@ -21,6 +21,7 @@ class CoursesController {
   
   async getCourses(req, res) {
     try {
+      if (failIfInvalid(req, res)) return;
       const pagination = normalizePagination(req.query);
       const filters = {
         program_id: req.query.program_id,
@@ -41,9 +42,6 @@ class CoursesController {
             year: filters.year || null,
             semester: filters.semester || null,
             search: filters.search || null
-          },
-          performance: {
-            query_time_ms: Date.now() - Date.now()
           }
         }
       });
@@ -59,13 +57,15 @@ class CoursesController {
     try {
       if (failIfInvalid(req, res)) return;
       const courseId = req.params.id;
-      const includeBibliography = req.query.include_bibliography !== 'false';
-      const includeInstructors = req.query.include_instructors !== 'false';
-      const includeSubjects = req.query.include_subjects !== 'false';
-      
-      const bibliographyLimit = parseInt(req.query.bibliography_limit) || 50;
-      const instructorsLimit = parseInt(req.query.instructors_limit) || 20;
-      const subjectsLimit = parseInt(req.query.subjects_limit) || 30;
+      const isDisabled = (value) => ['false', '0'].includes(String(value ?? '').toLowerCase());
+      const includeBibliography = !isDisabled(req.query.include_bibliography);
+      const includeInstructors = !isDisabled(req.query.include_instructors);
+      const includeSubjects = !isDisabled(req.query.include_subjects);
+
+      const boundedLimit = (value, fallback) => Math.min(Math.max(parseInt(value, 10) || fallback, 1), 100);
+      const bibliographyLimit = boundedLimit(req.query.bibliography_limit, 50);
+      const instructorsLimit = boundedLimit(req.query.instructors_limit, 20);
+      const subjectsLimit = boundedLimit(req.query.subjects_limit, 30);
 
       const courseDetails = await coursesService.getCourseDetailsById(
         courseId, 

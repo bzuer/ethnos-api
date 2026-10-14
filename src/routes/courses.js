@@ -83,7 +83,19 @@ const validateCoursesList = [
     .optional({ values: 'falsy' })
     .isInt({ min: 0 })
     .withMessage('Offset must be non-negative')
-    .toInt()
+    .toInt(),
+  query('program_id')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1 })
+    .withMessage('program_id must be a positive integer'),
+  query('year')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1000, max: new Date().getFullYear() + 1 })
+    .withMessage('year must be a valid year'),
+  query('semester')
+    .optional({ values: 'falsy' })
+    .isLength({ min: 1, max: 20 })
+    .withMessage('semester must be between 1 and 20 characters')
 ];
 
 const validateCourseId = [
@@ -91,6 +103,18 @@ const validateCourseId = [
     .isInt({ min: 1 })
     .withMessage('Course ID must be a positive integer')
     .toInt()
+];
+
+const validateCourseDetail = [
+  ...validateCourseId,
+  ...['bibliography_limit', 'instructors_limit', 'subjects_limit'].map((field) => query(field)
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1, max: 100 })
+    .withMessage(`${field} must be between 1 and 100`)),
+  ...['include_bibliography', 'include_instructors', 'include_subjects'].map((field) => query(field)
+    .optional({ values: 'falsy' })
+    .isIn(['true', 'false', '1', '0'])
+    .withMessage(`${field} must be boolean-like (1/0/true/false)`))
 ];
 
 router.get('/', validateCoursesList, coursesController.getCourses);
@@ -198,7 +222,7 @@ router.get('/statistics', coursesController.getCoursesStatistics);
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.get('/:id', validateCourseId, coursesController.getCourseById);
+router.get('/:id', validateCourseDetail, coursesController.getCourseById);
 
 /**
  * @swagger

@@ -30,10 +30,15 @@ const responseFormatter = (req, res, next) => {
       status = 'success',
     } = options;
 
+    const requestedOffset = parseInt(req.query?.offset, 10);
+    const servedPagination = pagination && typeof pagination === 'object' && Number.isFinite(requestedOffset)
+      ? { ...pagination, offset: Math.max(0, requestedOffset) }
+      : pagination;
+
     const payload = buildSuccessResponse({
       status,
       data,
-      pagination,
+      pagination: servedPagination,
       meta: mergeMeta(
         meta,
         {
@@ -82,11 +87,10 @@ const responseFormatter = (req, res, next) => {
         path: req.originalUrl
       });
     } else {
-      logger.warn('Request failed', {
+      logger.debug('Request rejected', {
         statusCode,
         code,
         message,
-        errors,
         path: req.originalUrl
       });
     }

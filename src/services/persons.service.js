@@ -646,7 +646,6 @@ class PersonsService {
       }
 
       const total = countResult[0].total;
-      const totalPages = Math.ceil(total / limit);
 
       const result = {
         data: signatures,

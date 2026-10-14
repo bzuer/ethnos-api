@@ -23,6 +23,7 @@ class CollaborationsController {
       const filters = {
         page: pagination.page,
         limit: pagination.limit,
+        offset: pagination.offset,
         min_collaborations: req.query.min_collaborations || undefined,
         sort_by: req.query.sort_by || undefined
       };

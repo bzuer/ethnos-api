@@ -639,5 +639,65 @@ describe('Integration smoke (real DB)', () => {
     });
   });
 
+  describe('Review regressions (2026-10-14)', () => {
+    test('search accepts SQL words as plain text and bounds the match window', async () => {
+      const union = assertSuccess(await fetchJson('/search/works?q=european%20union&limit=2'), 'q=european union');
+      assert.ok(union.pagination.total > 0, 'european union finds works');
+      const beyond = await fetchJson('/search/works?q=social&sort_by=id&offset=100000&limit=5');
+      assert.equal(beyond.status, 400, 'pages past the Manticore window are a 400, not a 500');
+    });
+
+    test('publication filters combined with a sort answer within the budget', async () => {
+      const body = assertSuccess(await fetchJson('/works?type=ARTICLE&sort_by=cited_by_count&limit=5'), 'type+sort');
+      const cites = body.data.map((w) => w.cited_by_count);
+      for (let i = 1; i < cites.length; i += 1) {
+        assert.ok(cites[i - 1] >= cites[i], `cited_by_count DESC (got ${cites.join(', ')})`);
+      }
+      assert.ok(body.data.every((w) => w.type === 'ARTICLE'), 'cards show the matching publication');
+      assertSuccess(await fetchJson('/works?sort_by=references_count&sort_order=asc&limit=3'), 'references asc');
+    });
+
+    test('venue_id filters /works and has_files combines with other filters', async () => {
+      const venues = assertSuccess(await fetchJson('/venues?type=JOURNAL&sortBy=works_count&limit=1'), 'venue seed');
+      const venueId = venues.data[0].id;
+      const works = assertSuccess(await fetchJson(`/works?venue_id=${venueId}&limit=5`), 'works by venue_id');
+      assert.ok(works.data.length > 0 && works.data.every((w) => w.venue && w.venue.id === venueId), 'every row is in the venue');
+      const files = assertSuccess(await fetchJson(`/publications?has_files=true&venue_id=${venueId}&limit=5`), 'has_files+venue');
+      if (files.pagination.total > 0) {
+        assert.ok(files.data.length > 0, 'a non-zero has_files total comes with rows');
+        assert.ok(files.data.every((p) => p.has_files === true), 'rows carry files');
+      }
+    });
+
+    test('collaboration rankings return real pairs with offset-aware ranks', async () => {
+      const first = assertSuccess(await fetchJson('/collaborations/top?limit=3'), 'collaborations page 1');
+      assert.ok(first.data.length > 0 && first.pagination.total > 0, 'top collaborations are not silently empty');
+      const second = assertSuccess(await fetchJson('/collaborations/top?limit=3&page=2'), 'collaborations page 2');
+      assert.deepEqual(second.data.map((p) => p.ranking), [4, 5, 6]);
+      const metrics = assertSuccess(await fetchJson('/metrics/venues?limit=3&page=2'), 'metrics venues page 2');
+      assert.deepEqual(metrics.data.map((v) => v.ranking), [4, 5, 6]);
+    });
+
+    test('an explicit offset is served unsnapped', async () => {
+      const window = assertSuccess(await fetchJson('/venues?limit=5'), 'venues window');
+      const shifted = assertSuccess(await fetchJson('/venues?offset=3&limit=2'), 'venues offset 3');
+      assert.deepEqual(shifted.data.map((v) => v.id), window.data.slice(3, 5).map((v) => v.id));
+      assert.equal(shifted.meta?.pagination_extras?.offset, 3);
+    });
+
+    test('client errors are 4xx and the OpenAPI document is raw', async () => {
+      const cors = await fetch(`${BASE_URL}/health/liveness`, { headers: { Origin: 'https://not-allowed.example' } });
+      assert.equal(cors.status, 200, 'a disallowed origin gets no CORS headers, not a 500');
+      const malformed = await fetch(`${BASE_URL}/health/liveness`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{bad'
+      });
+      assert.equal(malformed.status, 400);
+      const spec = await fetchRaw('/docs.json');
+      assert.ok(spec.body && spec.body.openapi && !spec.body.status, 'docs.json is the bare OpenAPI document');
+    });
+  });
+
   after(() => {});
 });

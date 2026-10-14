@@ -99,6 +99,7 @@ function formatSubjectCourse(row = {}) {
     semester: row.semester || null,
     year: toOptionalInteger(row.year),
     reading_type: row.reading_type || null,
+    reading_types: typeof row.reading_types === 'string' && row.reading_types ? row.reading_types.split(',') : [],
     works_with_subject: toOptionalInteger(row.works_with_subject) || 0,
     instructor_count: toOptionalInteger(row.instructor_count) || 0
   };

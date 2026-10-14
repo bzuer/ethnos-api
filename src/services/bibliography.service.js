@@ -1,21 +1,13 @@
 const { pool } = require('../config/database');
 const cache = require('./cache.service');
-const { createPagination } = require('../utils/pagination');
 const { formatBibliographyItem } = require('../dto/bibliography.dto');
 const { authorshipRoleOrderSql, contributorNames } = require('../dto/helpers');
-
-const LATEST_PUBLICATION_BY_YEAR = `(
-      SELECT p.work_id, p.year AS publication_year, p.open_access, p.type AS document_type
-      FROM publications p
-      INNER JOIN (
-        SELECT work_id, MAX(year) AS max_year FROM publications GROUP BY work_id
-      ) mp ON mp.work_id = p.work_id AND mp.max_year = p.year
-    )`;
+const { latestPublicationJoin } = require('../utils/db');
 
 class BibliographyService {
   
   async getBibliography(filters = {}) {
-    const cacheKey = `bibliography:list:${JSON.stringify(filters)}`;
+    const cacheKey = `bibliography:list:v2:${JSON.stringify(filters)}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -37,7 +29,7 @@ class BibliographyService {
     const limitValue = Math.min(100, Number.parseInt(limit, 10) || 20);
     const offsetValue = Math.max(0, Number.parseInt(offset, 10) || 0);
 
-    const lightMode = String(light || 'false').toLowerCase() === 'true';
+    const lightMode = ['true', '1'].includes(String(light || 'false').toLowerCase());
 
     const shouldUseLightMode = lightMode || (!course_id && !instructor_id && !search);
     
@@ -54,14 +46,14 @@ class BibliographyService {
         c.semester,
         c.program_id,
         w.title,
-        COALESCE(pm.publication_year, NULL) AS publication_year,
-        COALESCE(pm.open_access, NULL) AS open_access,
+        pm.year AS publication_year,
+        pm.open_access AS open_access,
         w.language,
-        pm.document_type AS document_type
+        pm.type AS document_type
       FROM course_bibliography cb
       JOIN courses c ON cb.course_id = c.id
       JOIN works w ON cb.work_id = w.id
-      LEFT JOIN ${LATEST_PUBLICATION_BY_YEAR} pm ON w.id = pm.work_id
+      ${latestPublicationJoin('pm', 'LEFT')}
       WHERE 1=1
     ` : `
       SELECT
@@ -89,16 +81,16 @@ class BibliographyService {
         SELECT
           cb.course_id,
           cb.work_id,
-          latest.publication_year,
+          latest.year AS publication_year,
           latest.open_access,
-          MAX(latest.document_type) AS document_type,
+          MAX(latest.type) AS document_type,
           (SELECT COUNT(DISTINCT a.person_id) FROM authorships a WHERE a.work_id = cb.work_id) AS author_count,
           GROUP_CONCAT(DISTINCT p.preferred_name ORDER BY p.preferred_name SEPARATOR '; ') AS instructors
         FROM course_bibliography cb
-        LEFT JOIN ${LATEST_PUBLICATION_BY_YEAR} latest ON cb.work_id = latest.work_id
+        LEFT JOIN publications latest ON latest.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = cb.work_id)
         LEFT JOIN course_instructors ci ON cb.course_id = ci.course_id
         LEFT JOIN persons p ON ci.canonical_person_id = p.id
-        GROUP BY cb.course_id, cb.work_id, latest.publication_year, latest.open_access
+        GROUP BY cb.course_id, cb.work_id, latest.year, latest.open_access
       ) bm ON cb.course_id = bm.course_id AND cb.work_id = bm.work_id
       WHERE 1=1
     `;
@@ -154,7 +146,7 @@ class BibliographyService {
       ${baseQuery}
       GROUP BY cb.course_id, cb.work_id, cb.reading_type, cb.week_number, cb.notes,
                c.code, c.name, c.year, c.semester, c.program_id,
-               w.title, pm.publication_year, w.language, pm.document_type
+               w.title, pm.year, w.language, pm.type, pm.open_access
     ` : `
       ${baseQuery}
       GROUP BY cb.course_id, cb.work_id, cb.reading_type, cb.week_number, cb.notes,
@@ -164,7 +156,7 @@ class BibliographyService {
     `;
 
     const paginatedQuery = `${groupedQuery}
-      ORDER BY c.year DESC, c.semester, cb.week_number, cb.reading_type, w.title
+      ORDER BY c.year DESC, c.semester, cb.week_number, cb.reading_type, w.title, cb.course_id, cb.work_id
       LIMIT ? OFFSET ?`;
 
     const [bibliography] = await pool.execute(paginatedQuery, [...params, limitValue, offsetValue]);
@@ -201,14 +193,9 @@ class BibliographyService {
       });
     }
 
-    let total = 0;
-    if (process.env.NODE_ENV === 'test') {
-      total = offsetValue + bibliography.length;
-    } else {
-      const countQuery = `SELECT COUNT(*) AS total FROM (${groupedQuery}) bibliography_grouped`;
-      const [countResult] = await pool.execute(countQuery, params);
-      total = countResult[0]?.total ? Number.parseInt(countResult[0].total, 10) : 0;
-    }
+    const countQuery = `SELECT COUNT(*) AS total FROM (${groupedQuery}) bibliography_grouped`;
+    const [countResult] = await pool.execute(countQuery, params);
+    const total = countResult[0]?.total ? Number.parseInt(countResult[0].total, 10) : 0;
 
     const result = {
       bibliography: bibliography.map(formatBibliographyItem),
@@ -264,18 +251,18 @@ class BibliographyService {
         SELECT 
           w.id,
           w.title,
-          latest_pub.publication_year,
+          latest_pub.year AS publication_year,
           latest_pub.open_access,
-          latest_pub.document_type,
+          latest_pub.type AS document_type,
           COUNT(DISTINCT cb.course_id) as used_in_courses,
           COUNT(DISTINCT c.program_id) as used_in_programs,
           GROUP_CONCAT(DISTINCT cb.reading_type ORDER BY cb.reading_type) as reading_types
         FROM works w
         JOIN course_bibliography cb ON w.id = cb.work_id
         JOIN courses c ON cb.course_id = c.id
-        LEFT JOIN ${LATEST_PUBLICATION_BY_YEAR} latest_pub ON w.id = latest_pub.work_id
+        ${latestPublicationJoin('latest_pub', 'LEFT')}
         ${baseWhere}
-        GROUP BY w.id, w.title, latest_pub.document_type, latest_pub.publication_year, latest_pub.open_access
+        GROUP BY w.id, w.title, latest_pub.type, latest_pub.year, latest_pub.open_access
         ORDER BY used_in_courses DESC, used_in_programs DESC
         LIMIT ?
       `, [...params, parseInt(limit)]),
@@ -289,7 +276,7 @@ class BibliographyService {
           AVG(pub.year) as avg_publication_year
         FROM course_bibliography cb
         JOIN courses c ON cb.course_id = c.id
-        LEFT JOIN publications pub ON cb.work_id = pub.work_id
+        LEFT JOIN publications pub ON pub.id = (SELECT MAX(p2.id) FROM publications p2 WHERE p2.work_id = cb.work_id)
         ${baseWhere}
         GROUP BY c.year
         ORDER BY c.year DESC
@@ -311,24 +298,16 @@ class BibliographyService {
 
       pool.execute(`
         SELECT
-          latest_pub.document_type,
+          latest_pub.type AS document_type,
           COUNT(*) as usage_count,
           COUNT(DISTINCT w.id) as unique_works,
           COUNT(DISTINCT cb.course_id) as courses_count
         FROM works w
         JOIN course_bibliography cb ON w.id = cb.work_id
         JOIN courses c ON cb.course_id = c.id
-        LEFT JOIN (
-          SELECT p.work_id, p.type AS document_type
-          FROM publications p
-          INNER JOIN (
-            SELECT work_id, MAX(id) AS max_id
-            FROM publications
-            GROUP BY work_id
-          ) mp ON mp.work_id = p.work_id AND mp.max_id = p.id
-        ) latest_pub ON w.id = latest_pub.work_id
+        ${latestPublicationJoin('latest_pub', 'LEFT')}
         ${baseWhere}
-        GROUP BY latest_pub.document_type
+        GROUP BY latest_pub.type
         ORDER BY usage_count DESC
         LIMIT 10
       `, params)

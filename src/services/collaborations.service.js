@@ -10,7 +10,7 @@ const COLLABORATION_RANKING_SCOPE = 2000;
 class CollaborationsService {
   async getPersonCollaborators(personId, filters = {}) {
     const { page = 1, limit = 20, min_collaborations = 2, sort_by = 'collaboration_count' } = filters;
-    const offset = (page - 1) * limit;
+    const offset = Number.isFinite(parseInt(filters.offset, 10)) ? Math.max(0, parseInt(filters.offset, 10)) : (page - 1) * limit;
     
     const cacheKey = `collaborators:v2:${personId}:${JSON.stringify(filters)}`;
     

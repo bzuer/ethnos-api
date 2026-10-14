@@ -15,7 +15,7 @@ const {
 class InstructorsService {
   
   async getInstructors(filters = {}) {
-    const cacheKey = `instructors:list:${JSON.stringify(filters)}`;
+    const cacheKey = `instructors:list:v2:${JSON.stringify(filters)}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -37,6 +37,7 @@ class InstructorsService {
         p.family_name,
         p.orcid,
         p.lattes_id,
+        p.scopus_id,
         p.is_verified,
         COUNT(DISTINCT ci.course_id) as courses_taught,
         COUNT(DISTINCT c.program_id) as programs_count,
@@ -78,7 +79,7 @@ class InstructorsService {
     }
 
     query += `
-      GROUP BY p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.lattes_id, p.is_verified
+      GROUP BY p.id, p.preferred_name, p.given_names, p.family_name, p.orcid, p.lattes_id, p.scopus_id, p.is_verified
       ORDER BY courses_taught DESC, p.preferred_name
       LIMIT ? OFFSET ?
     `;
@@ -135,7 +136,7 @@ class InstructorsService {
   }
 
   async getInstructorById(personId) {
-    const cacheKey = `instructor:v2:${personId}`;
+    const cacheKey = `instructor:v3:${personId}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -359,21 +360,22 @@ class InstructorsService {
   }
 
   async getInstructorBibliography(personId, filters = {}) {
-    const cacheKey = `instructor:${personId}:bibliography:${JSON.stringify(filters)}`;
+    const cacheKey = `instructor:${personId}:bibliography:v2:${JSON.stringify(filters)}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
     const { reading_type, year_from, year_to, limit = 20, offset = 0 } = filters;
 
     let query = `
-      SELECT DISTINCT
+      SELECT
         w.id as work_id,
         w.title,
         pub.year as publication_year,
         w.language,
         pub.type as document_type,
         pub.open_access,
-        cb.reading_type,
+        SUBSTRING_INDEX(GROUP_CONCAT(DISTINCT cb.reading_type ORDER BY FIELD(cb.reading_type, 'REQUIRED', 'RECOMMENDED', 'SUPPLEMENTARY')), ',', 1) AS reading_type,
+        GROUP_CONCAT(DISTINCT cb.reading_type ORDER BY FIELD(cb.reading_type, 'REQUIRED', 'RECOMMENDED', 'SUPPLEMENTARY')) AS reading_types,
         (SELECT COUNT(DISTINCT a.person_id) FROM authorships a WHERE a.work_id = w.id) AS author_count,
         COUNT(DISTINCT cb.course_id) as used_in_courses
       FROM works w
@@ -401,8 +403,8 @@ class InstructorsService {
     }
 
     query += `
-      GROUP BY w.id, w.title, pub.year, w.language, pub.type, cb.reading_type
-      ORDER BY used_in_courses DESC, pub.year DESC
+      GROUP BY w.id, w.title, pub.year, w.language, pub.type, pub.open_access
+      ORDER BY used_in_courses DESC, pub.year DESC, w.id DESC
       LIMIT ? OFFSET ?
     `;
     params.push(parseInt(limit), parseInt(offset));
@@ -473,7 +475,7 @@ class InstructorsService {
   }
 
   async getInstructorStatistics(personId) {
-    const cacheKey = `instructor:${personId}:statistics`;
+    const cacheKey = `instructor:${personId}:statistics:v2`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -563,7 +565,7 @@ class InstructorsService {
     const [bibliographyUsage] = await pool.execute(bibliographyUsageQuery, [personId]);
 
     const recentWorksQuery = `
-      SELECT DISTINCT
+      SELECT
         w.id,
         w.title,
         pub.year,
@@ -571,17 +573,16 @@ class InstructorsService {
         w.language,
         pub.open_access,
         s.signature AS signature_text
-      FROM authorships a
-      INNER JOIN works w ON w.id = a.work_id
-      LEFT JOIN publications pub ON pub.work_id = w.id
-      LEFT JOIN persons p ON p.id = a.person_id
+      FROM (SELECT DISTINCT a.work_id FROM authorships a WHERE a.person_id = ?) mine
+      INNER JOIN works w ON w.id = mine.work_id
+      ${latestPublicationJoin('pub', 'LEFT')}
+      LEFT JOIN persons p ON p.id = ?
       LEFT JOIN signatures s ON s.id = p.signature_id
-      WHERE a.person_id = ?
-      ORDER BY pub.year DESC
+      ORDER BY pub.year IS NULL, pub.year DESC, w.id DESC
       LIMIT 10
     `;
 
-    const [recentWorks] = await pool.execute(recentWorksQuery, [personId]);
+    const [recentWorks] = await pool.execute(recentWorksQuery, [personId, personId]);
     recentWorks.forEach(work => {
       work.open_access = work.open_access === 1 || work.open_access === true;
     });
@@ -688,7 +689,7 @@ class InstructorsService {
   }
 
   async getInstructorsStatistics() {
-    const cacheKey = 'instructors:statistics';
+    const cacheKey = 'instructors:statistics:v2';
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -697,14 +698,13 @@ class InstructorsService {
         COUNT(DISTINCT ci.canonical_person_id) as total_instructors,
         COUNT(DISTINCT ci.course_id) as total_courses_taught,
         COUNT(DISTINCT c.program_id) as programs_with_instructors,
-        AVG(courses_per_instructor.course_count) as avg_courses_per_instructor
+        (SELECT AVG(per_instructor.course_count) FROM (
+          SELECT canonical_person_id, COUNT(DISTINCT course_id) AS course_count
+          FROM course_instructors
+          GROUP BY canonical_person_id
+        ) per_instructor) as avg_courses_per_instructor
       FROM course_instructors ci
       JOIN courses c ON ci.course_id = c.id
-      JOIN (
-        SELECT canonical_person_id, COUNT(*) as course_count
-        FROM course_instructors
-        GROUP BY canonical_person_id
-      ) courses_per_instructor ON ci.canonical_person_id = courses_per_instructor.canonical_person_id
     `;
 
     const [stats] = await pool.execute(query);

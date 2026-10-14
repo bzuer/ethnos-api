@@ -220,11 +220,6 @@ class AppError extends Error {
 
 const handleDatabaseError = (err) => {
   if (err.name === 'SequelizeValidationError') {
-    const errors = err.errors.map(e => ({
-      field: e.path,
-      message: e.message,
-      value: e.value
-    }));
     return new AppError('Validation failed', 400, ERROR_CODES.VALIDATION);
   }
 

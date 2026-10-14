@@ -10,7 +10,6 @@ const PERSONS_TABLE = process.env.MANTICORE_PERSONS_TABLE || 'persons';
 const WORKS_FIELD_WEIGHTS = 'title=10, subtitle=4, abstract=2, authors=6, subjects=4, venue=4';
 const PERSONS_FIELD_WEIGHTS = 'preferred_name=10, family_name=6, given_names=4';
 
-const WORKS_TEXT_FIELDS = 'title,subtitle,abstract,authors,subjects,venue';
 const WORKS_STEMMED_FIELDS = 'title,subtitle,abstract,subjects';
 const WORKS_VERBATIM_FIELDS = 'authors,venue';
 

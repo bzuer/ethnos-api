@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { body, query, param } = require('express-validator');
+const { query, param } = require('express-validator');
 const { commonValidations } = require('../middleware/validation');
 const venuesController = require('../controllers/venues.controller');
 
@@ -350,6 +350,7 @@ router.get(
       .withMessage(`sort_by must be one of: ${VENUE_SORTS.join(', ')}`),
     query('sortOrder')
       .optional({ values: 'falsy' })
+      .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
       .isIn(['ASC', 'DESC'])
       .withMessage('Sort order must be ASC or DESC'),
     query('sort_order')
@@ -433,7 +434,7 @@ router.get(
  * /venues/search:
  *   get:
  *     summary: Search venues
- *     description: Search venues by name (MariaDB LIKE over `name`, `abbreviated_name`, `issn`, `eissn`, and publisher name — the `summary` text is not searched), optionally filtered by type. Rows are the same shape as `/venues`; results are fixed-ordered by `COALESCE(total_score,0) DESC, name ASC` (no sort param). `meta` carries `source` and the echoed `query`.
+ *     description: Search venues by name (MariaDB LIKE over `name`, `abbreviated_name`, `issn`, `eissn`, and publisher name — the `summary` text is not searched), optionally filtered by type. Rows are the same shape as `/venues`; results are fixed-ordered by `COALESCE(total_score,0) DESC, name ASC, id ASC` (no sort param). `meta` carries `source` and the echoed `query`.
  *     tags: [Venues]
  *     parameters:
  *       - in: query

@@ -23,6 +23,7 @@ class CitationsController {
       const filters = {
         page: pagination.page,
         limit: pagination.limit,
+        offset: pagination.offset,
         type: req.query.type
       };
 
@@ -74,7 +75,8 @@ class CitationsController {
       const pagination = normalizePagination(req.query);
       const filters = {
         page: pagination.page,
-        limit: pagination.limit
+        limit: pagination.limit,
+        offset: pagination.offset
       };
 
       const startTime = Date.now();

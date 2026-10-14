@@ -25,7 +25,11 @@ const formatInstructorListItem = (instructor) => {
       }
     },
     roles: instructor.roles || [],
-    program_ids: instructor.program_ids || []
+    program_ids: instructor.program_ids || [],
+    _links: {
+      self: `/instructors/${instructor.person_id || instructor.id}`,
+      person: `/persons/${instructor.person_id || instructor.id}`
+    }
   };
 };
 
@@ -94,6 +98,7 @@ const formatInstructorBibliography = (entry) => {
     document_type: entry.document_type || null,
     open_access: entry.open_access === true || entry.open_access === 1,
     reading_type: entry.reading_type || null,
+    reading_types: typeof entry.reading_types === 'string' && entry.reading_types ? entry.reading_types.split(',') : [],
     author_count: parseInt(entry.author_count) || 0,
     first_author_name: entry.first_author_name || null,
     authors: entry.authors || [],

@@ -69,7 +69,7 @@ const buildDoiCandidates = (dois = []) => {
 class CitationsService {
   async getWorkCitations(workId, filters = {}) {
     const { page = 1, limit = 20, type = 'all' } = filters;
-    const offset = (page - 1) * limit;
+    const offset = Number.isFinite(parseInt(filters.offset, 10)) ? Math.max(0, parseInt(filters.offset, 10)) : (page - 1) * limit;
     
     const cacheKey = `citations:${workId}:${JSON.stringify(filters)}`;
     
@@ -172,7 +172,7 @@ class CitationsService {
 
   async getWorkReferences(workId, filters = {}) {
     const { page = 1, limit = 20 } = filters;
-    const offset = (page - 1) * limit;
+    const offset = Number.isFinite(parseInt(filters.offset, 10)) ? Math.max(0, parseInt(filters.offset, 10)) : (page - 1) * limit;
     
     const cacheKey = `references:${workId}:${JSON.stringify(filters)}`;
     

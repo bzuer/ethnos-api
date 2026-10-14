@@ -1323,3 +1323,62 @@ describe('Publication review relations', () => {
     expect(Object.prototype.hasOwnProperty.call(entry, 'review_relations')).toBe(false);
   });
 });
+
+describe('Pagination contract', () => {
+  const { normalizePagination } = require('../src/utils/pagination');
+
+  test('an explicit offset is served as given, not snapped to a page boundary', () => {
+    expect(normalizePagination({ offset: '15', limit: '10' })).toEqual({ page: 2, limit: 10, offset: 15 });
+    expect(normalizePagination({ offset: '15', page: '1', limit: '10' })).toEqual({ page: 2, limit: 10, offset: 15 });
+  });
+
+  test('page drives the offset when no offset is given; limits are clamped', () => {
+    expect(normalizePagination({ page: '3', limit: '20' })).toEqual({ page: 3, limit: 20, offset: 40 });
+    expect(normalizePagination({ offset: '', page: '2', limit: '500' })).toEqual({ page: 2, limit: 100, offset: 100 });
+    expect(normalizePagination({ offset: '-5', limit: '10' })).toEqual({ page: 1, limit: 10, offset: 0 });
+  });
+});
+
+describe('Cache TTL resolution', () => {
+  const cacheService = require('../src/services/cache.service');
+
+  test('numeric TTLs passed by callers are honoured', () => {
+    expect(cacheService.resolveTtl(86400)).toBe(86400);
+    expect(cacheService.resolveTtl(60)).toBe(60);
+  });
+
+  test('named TTLs resolve through the table and unknown names fall back to the default', () => {
+    expect(cacheService.resolveTtl('signatures_statistics')).toBe(cacheService.defaultTTL.signatures_statistics);
+    expect(cacheService.resolveTtl('nope')).toBe(cacheService.defaultTTL.default);
+    expect(cacheService.resolveTtl(0)).toBe(cacheService.defaultTTL.default);
+  });
+});
+
+describe('Dashboard health derivation', () => {
+  const { determineHealthStatus } = require('../src/dto/dashboard.dto');
+
+  test('health status follows real dependency reachability', () => {
+    expect(determineHealthStatus({ database: true, search_engine: true, cache: true })).toBe('healthy');
+    expect(determineHealthStatus({ database: true, search_engine: false, cache: true })).toBe('degraded');
+    expect(determineHealthStatus({ database: true, search_engine: true, cache: 'disabled' })).toBe('healthy');
+    expect(determineHealthStatus({ database: false, search_engine: true, cache: true })).toBe('unhealthy');
+    expect(determineHealthStatus({})).toBe('unknown');
+  });
+});
+
+describe('Collaboration pair shape', () => {
+  const { formatTopCollaboration } = require('../src/dto/collaborations.dto');
+
+  test('one strength scale and an offset-aware ranking for every collaboration surface', () => {
+    const pair = (count) => formatTopCollaboration({
+      person1_id: 1, person2_id: 2, collaboration_count: count, avg_citations_together: 1.5,
+      first_collaboration_year: 2000, latest_collaboration_year: 2004
+    }, 11);
+    expect(pair(2).metrics.collaboration_strength).toBe('weak');
+    expect(pair(3).metrics.collaboration_strength).toBe('moderate');
+    expect(pair(5).metrics.collaboration_strength).toBe('strong');
+    expect(pair(10).metrics.collaboration_strength).toBe('very_strong');
+    expect(pair(3).ranking).toBe(11);
+    expect(pair(3).timespan.collaboration_years).toBe(5);
+  });
+});

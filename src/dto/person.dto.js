@@ -232,7 +232,6 @@ function formatPrimaryAffiliation(raw) {
 
 function formatPersonDetails(person = {}) {
   const identifiers = normalizeIdentifiers(person);
-  const nameVariations = [];
   const metrics = formatMetrics(
     person.metrics || {
       works_count: person.works_count,

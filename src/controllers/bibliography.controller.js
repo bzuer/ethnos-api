@@ -37,7 +37,7 @@ class BibliographyController {
       const result = await bibliographyService.getBibliography(filters);
       return res.success(result.bibliography || result.data || [], {
         pagination: result.pagination,
-        meta: { source: 'bibliography.service' }
+        meta: { source: 'course_bibliography' }
       });
     } catch (error) {
       handleError(res, error);

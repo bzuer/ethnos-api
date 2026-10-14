@@ -258,7 +258,7 @@ class SubjectsService {
   }
 
   async getSubjectCourses(id, filters = {}) {
-    const cacheKey = `subject:${id}:courses:${JSON.stringify(filters)}`;
+    const cacheKey = `subject:${id}:courses:v2:${JSON.stringify(filters)}`;
     const cached = await cache.get(cacheKey);
     if (cached) return cached;
 
@@ -272,7 +272,7 @@ class SubjectsService {
     } = filters;
 
     let query = `
-      SELECT DISTINCT
+      SELECT
         c.id,
         c.program_id,
         c.code,
@@ -280,7 +280,8 @@ class SubjectsService {
         c.credits,
         c.semester,
         c.year,
-        cb.reading_type,
+        SUBSTRING_INDEX(GROUP_CONCAT(DISTINCT cb.reading_type ORDER BY FIELD(cb.reading_type, 'REQUIRED', 'RECOMMENDED', 'SUPPLEMENTARY')), ',', 1) AS reading_type,
+        GROUP_CONCAT(DISTINCT cb.reading_type ORDER BY FIELD(cb.reading_type, 'REQUIRED', 'RECOMMENDED', 'SUPPLEMENTARY')) AS reading_types,
         COUNT(DISTINCT cb.work_id) as works_with_subject,
         COUNT(DISTINCT ci.canonical_person_id) as instructor_count
       FROM courses c
@@ -313,8 +314,8 @@ class SubjectsService {
     }
 
     query += `
-      GROUP BY c.id, c.program_id, c.code, c.name, c.credits, c.semester, c.year, cb.reading_type
-      ORDER BY works_with_subject DESC, c.year DESC
+      GROUP BY c.id, c.program_id, c.code, c.name, c.credits, c.semester, c.year
+      ORDER BY works_with_subject DESC, c.year DESC, c.id ASC
       LIMIT ? OFFSET ?
     `;
     params.push(parseInt(limit), parseInt(offset));

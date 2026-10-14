@@ -21,23 +21,14 @@ function createPagination(page, limit, total) {
 
 
 function normalizePagination(query) {
-  const limit = Math.min(Math.max(1, parseInt(query.limit) || 10), 100);
-  
-  let page = 1;
-  if (query.page) {
-    page = Math.max(1, parseInt(query.page) || 1);
-  } else if (query.offset !== undefined) {
-    const offset = Math.max(0, parseInt(query.offset) || 0);
-    page = Math.floor(offset / limit) + 1;
+  const limit = Math.min(Math.max(1, parseInt(query.limit, 10) || 10), 100);
+  const rawOffset = parseInt(query.offset, 10);
+  if (query.offset !== undefined && query.offset !== null && query.offset !== '' && Number.isFinite(rawOffset)) {
+    const offset = Math.max(0, rawOffset);
+    return { page: Math.floor(offset / limit) + 1, limit, offset };
   }
-  
-  const offset = (page - 1) * limit;
-  
-  return {
-    page,
-    limit,
-    offset
-  };
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  return { page, limit, offset: (page - 1) * limit };
 }
 
 

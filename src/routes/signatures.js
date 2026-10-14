@@ -113,9 +113,10 @@ router.get(
   '/search',
   [
     query('q')
+      .trim()
       .notEmpty()
-      .isLength({ min: 1, max: 100 })
-      .withMessage('Search query is required and must be between 1 and 100 characters'),
+      .isLength({ min: 2, max: 100 })
+      .withMessage('Search query is required and must be between 2 and 100 characters'),
     query('exact')
       .optional({ values: 'falsy' })
       .isBoolean()

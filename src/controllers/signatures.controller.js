@@ -2,6 +2,7 @@ const signaturesService = require('../services/signatures.service');
 const { validationResult } = require('express-validator');
 const { logger } = require('../middleware/errorHandler');
 const { ERROR_CODES } = require('../utils/responseBuilder');
+const { normalizePagination } = require('../utils/pagination');
 
 class SignaturesController {
 
@@ -60,19 +61,8 @@ class SignaturesController {
       }
 
       const { id } = req.params;
-      const { limit = 20, offset = 0 } = req.query;
-      
-      if (!id || isNaN(parseInt(id))) {
-        return res.fail('Invalid signature ID', {
-          statusCode: 400,
-          code: ERROR_CODES.VALIDATION
-        });
-      }
-
-      const options = {
-        limit: Math.min(parseInt(limit) || 20, 100),
-        offset: parseInt(offset) || 0
-      };
+      const { limit, offset } = normalizePagination(req.query);
+      const options = { limit, offset };
 
       const result = await signaturesService.getSignaturePersons(parseInt(id), options);
       
@@ -128,9 +118,9 @@ class SignaturesController {
       }
 
       const { id } = req.params;
-      const { page = 1, limit = 20 } = req.query;
-      
-      const result = await signaturesService.getSignatureWorks(id, { page, limit });
+      const { limit, offset } = normalizePagination(req.query);
+
+      const result = await signaturesService.getSignatureWorks(id, { limit, offset });
       
       if (!result) {
         return res.fail(`Signature with ID ${id} not found`, {
@@ -161,8 +151,8 @@ class SignaturesController {
         });
       }
 
-      const { q, exact = false, limit = 20, offset = 0 } = req.query;
-      
+      const { q } = req.query;
+
       if (!q || q.trim().length === 0) {
         return res.fail('Search query (q) parameter is required', {
           statusCode: 400,
@@ -170,10 +160,11 @@ class SignaturesController {
         });
       }
 
+      const { limit, offset } = normalizePagination(req.query);
       const options = {
-        limit: Math.min(parseInt(limit) || 20, 100),
-        offset: parseInt(offset) || 0,
-        exact: exact === 'true' || exact === true
+        limit,
+        offset,
+        exact: ['true', '1'].includes(String(req.query.exact || '').toLowerCase())
       };
 
       const result = await signaturesService.searchSignatures(q.trim(), options);
@@ -187,7 +178,7 @@ class SignaturesController {
 
       return res.success(result.signatures, {
         pagination: result.pagination,
-        meta: { searchTerm: q.trim(), exact: options.exact }
+        meta: { searchTerm: q.trim(), exact: options.exact, pagination_total_exact: result.totalExact }
       });
     } catch (error) {
       logger.error(`Error in searchSignatures for query "${req.query.q}":`, error);
