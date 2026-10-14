@@ -364,9 +364,21 @@ clean_repo_logs() {
   [ -d "$ROOT_DIR/logs" ] && find "$ROOT_DIR/logs" -type f -delete 2>/dev/null || true
 }
 
+API_CACHE_PREFIXES=(
+  autocomplete bibliography citations collaborators course courses instructor instructors
+  metrics network organization organizations person persons publication publications references
+  search signature signatures subject subjects top_collaborations venue venues work works
+)
+
 clear_caches() {
-  if command -v redis-cli >/dev/null 2>&1; then
-    redis-cli -h "${REDIS_HOST:-localhost}" -p "${REDIS_PORT:-6379}" FLUSHALL 2>/dev/null || true
+  if command -v redis-cli >/dev/null 2>&1 && [ "${REDIS_DISABLED:-false}" != "true" ]; then
+    local cli=(redis-cli -h "${REDIS_HOST:-localhost}" -p "${REDIS_PORT:-6379}")
+    [ -n "${REDIS_PASSWORD:-}" ] && cli+=(-a "$REDIS_PASSWORD" --no-auth-warning)
+    local prefix
+    for prefix in "${API_CACHE_PREFIXES[@]}"; do
+      "${cli[@]}" --scan --pattern "${prefix}:*" 2>/dev/null \
+        | xargs -r -n 500 "${cli[@]}" UNLINK >/dev/null 2>&1 || true
+    done
   fi
   local d
   for d in node_modules/.cache .tmp tmp temp logs/cache; do
@@ -482,10 +494,11 @@ validate_all() {
   fi
 
   echo ""
-  if [ "$fail" -eq 0 ]; then
+  if [ "$fail" -eq 0 ] && [ "$ERRORS" -eq 0 ]; then
     log "All $ok checks passed"
   else
-    err "$fail check(s) failed, $ok passed"
+    err "$fail check(s) failed, $ok passed, $ERRORS error(s) reported above"
+    return 1
   fi
   return "$fail"
 }
@@ -533,7 +546,10 @@ cmd_deploy() {
   check_redis
 
   step "Test suite"
-  npm run test 2>&1 || warn "Tests reported failures"
+  if ! npm run test 2>&1; then
+    err "Unit tests failed — deploy aborted before the API was started"
+    return 1
+  fi
 
   check_api
 

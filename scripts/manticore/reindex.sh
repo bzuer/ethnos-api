@@ -10,7 +10,9 @@
 #
 #   scripts/manticore/reindex.sh init    # first full build of every table
 #   scripts/manticore/reindex.sh delta   # frequent: works_delta + persons_delta
-#   scripts/manticore/reindex.sh main    # nightly: works_main + persons_main
+#   scripts/manticore/reindex.sh main    # works_main + persons_main only
+#   scripts/manticore/reindex.sh all     # nightly: main and delta in one run, so the
+#                                        # delta kill-list lands on the fresh main
 #
 # Requires libmysqlclient.so.21 resolvable (symlink it to libmysqlclient.so.24).
 #

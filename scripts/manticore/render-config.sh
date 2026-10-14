@@ -6,6 +6,7 @@
 #   sudo scripts/manticore/render-config.sh
 #
 set -euo pipefail
+shopt -u patsub_replacement 2>/dev/null || true
 
 ENV_FILE="${ENV_FILE:-/etc/node-backend.env}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

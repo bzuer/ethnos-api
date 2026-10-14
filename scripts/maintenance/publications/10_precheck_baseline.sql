@@ -48,29 +48,33 @@ WHERE ROUTINE_SCHEMA = DATABASE()
   AND ROUTINE_NAME = 'sp_update_core_statistics'
   AND ROUTINE_TYPE = 'PROCEDURE'
 UNION ALL
-SELECT 'sp_refresh_work_search_fields_exists', COUNT(*)
-FROM information_schema.ROUTINES
-WHERE ROUTINE_SCHEMA = DATABASE()
-  AND ROUTINE_NAME = 'sp_refresh_work_search_fields'
-  AND ROUTINE_TYPE = 'PROCEDURE'
-UNION ALL
 SELECT 'fn_calculate_10yr_impact_factor_exists', COUNT(*)
 FROM information_schema.ROUTINES
 WHERE ROUTINE_SCHEMA = DATABASE()
   AND ROUTINE_NAME = 'fn_calculate_10yr_impact_factor'
   AND ROUTINE_TYPE = 'FUNCTION'
 UNION ALL
-SELECT 'ft_works_content_exists', COUNT(DISTINCT INDEX_NAME)
+SELECT 'works_fulltext_gone',
+       CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
 FROM information_schema.STATISTICS
 WHERE TABLE_SCHEMA = DATABASE()
   AND TABLE_NAME = 'works'
-  AND INDEX_NAME = 'ft_works_content'
+  AND INDEX_TYPE = 'FULLTEXT'
 UNION ALL
-SELECT 'ft_works_metadata_exists', COUNT(DISTINCT INDEX_NAME)
+SELECT 'ft_organizations_name_exists', COUNT(DISTINCT INDEX_NAME)
 FROM information_schema.STATISTICS
 WHERE TABLE_SCHEMA = DATABASE()
-  AND TABLE_NAME = 'works'
-  AND INDEX_NAME = 'ft_works_metadata'
+  AND TABLE_NAME = 'organizations'
+  AND INDEX_NAME = 'ft_organizations_name'
+UNION ALL
+SELECT 'ft_subjects_term_exists', COUNT(DISTINCT INDEX_NAME)
+FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'subjects'
+  AND INDEX_NAME = 'ft_subjects_term'
+UNION ALL
+SELECT 'metrics_annual_summary_rows', COUNT(*)
+FROM metrics_annual_summary
 UNION ALL
 SELECT 'ft_venues_search_exists', COUNT(DISTINCT INDEX_NAME)
 FROM information_schema.STATISTICS
@@ -159,4 +163,5 @@ UNION ALL
 SELECT 'legacy_views_absent',
        CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
 FROM information_schema.VIEWS
-WHERE TABLE_SCHEMA = DATABASE();
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME <> 'subject_effective_weight';

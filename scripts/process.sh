@@ -22,8 +22,15 @@ require_env_file() {
 clean_workspace() {
   rm -rf coverage
   rm -rf runtime/*
-  rm -rf logs/*.log logs/*.log.gz
   rm -rf node_modules/.cache
+}
+
+refuse_occupied_port() {
+  local port="${PORT:-1201}"
+  if ss -lnt 2>/dev/null | grep -q ":${port} "; then
+    echo "Port ${port} is already bound (the system unit owns 1201); stop it or run the dev server with PORT=<free port>" >&2
+    exit 1
+  fi
 }
 
 install_dependencies() {
@@ -63,6 +70,7 @@ case "$ACTION" in
   dev)
     require_env_file
     set -a; . "$ENV_FILE"; set +a
+    refuse_occupied_port
     clean_workspace
     install_dependencies
     run_docs_cache
