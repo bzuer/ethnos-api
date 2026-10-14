@@ -180,14 +180,9 @@ const logger = winston.createLogger({
       maxFiles: '3d',
       zippedArchive: true,
       format: winston.format.combine(
+        winston.format((info) => (info.response_time_ms || info.query_time_ms ? info : false))(),
         winston.format.timestamp(),
-        winston.format.printf(({ timestamp, level, message, ...meta }) => {
-          if (meta.query_time_ms || meta.response_time) {
-            return `${timestamp} [${level}] ${message} ${JSON.stringify(meta)}`;
-          }
-          return null;
-        }),
-        winston.format.splat()
+        winston.format.printf(({ timestamp, level, message, ...meta }) => `${timestamp} [${level}] ${message} ${JSON.stringify(sanitizeLogData(meta))}`)
       )
     })
   ],
@@ -261,7 +256,7 @@ const sendErrorDev = (err, res) => {
   }
 
   const payload = buildErrorResponse({
-    status: err.status || 'error',
+    status: 'error',
     message: sanitizePathString(err.message || 'Unexpected error'),
     code: err.code,
     errors: err.errors ? sanitizePaths(err.errors) : undefined,
@@ -275,14 +270,12 @@ const sendErrorProd = (err, res) => {
   const statusCode = err.statusCode || 500;
   if (err.isOperational) {
     const payload = buildErrorResponse({
-      status: err.status || 'error',
+      status: 'error',
       message: sanitizePathString(err.message),
       code: err.code
     });
     res.status(statusCode).json(payload);
   } else {
-    logger.error('Programming Error:', err);
-    
     const payload = buildErrorResponse({
       status: 'error',
       message: 'Something went wrong!',
@@ -292,23 +285,50 @@ const sendErrorProd = (err, res) => {
   }
 };
 
-const globalErrorHandler = (err, req, res, next) => {
-  err.statusCode = err.statusCode || 500;
-  err.status = err.status || 'error';
+const httpStatusOf = (err) => {
+  if (Number.isInteger(err.statusCode)) return err.statusCode;
+  if (Number.isInteger(err.status)) return err.status;
+  return null;
+};
 
-  logger.error({
+const isStatementTimeoutError = (err) => {
+  const src = err.original || err.parent || err;
+  return src.code === 'ER_STATEMENT_TIMEOUT' || src.errno === 1969 || /max_statement_time/i.test(String(err.message || ''));
+};
+
+const normalizeError = (err) => {
+  if (err.isOperational) return err;
+  if (isStatementTimeoutError(err)) {
+    return new AppError('The query exceeded its time budget; narrow the filters or request a shallower page', 503, ERROR_CODES.TIMEOUT);
+  }
+  const status = httpStatusOf(err);
+  if (status && status >= 400 && status < 500) {
+    if (err.type === 'entity.too.large') return new AppError('Request body too large', 413, ERROR_CODES.VALIDATION);
+    if (typeof err.type === 'string' && err.type.startsWith('entity.')) return new AppError('Malformed request body', 400, ERROR_CODES.VALIDATION);
+    if (err instanceof URIError) return new AppError('Malformed request path', 400, ERROR_CODES.VALIDATION);
+    return new AppError('Bad request', status, ERROR_CODES.VALIDATION);
+  }
+  return handleDatabaseError(err);
+};
+
+const globalErrorHandler = (err, req, res, next) => {
+  const error = normalizeError(err);
+  const statusCode = error.statusCode || 500;
+  const context = {
     error: err.message,
-    stack: err.stack,
+    status: statusCode,
     url: req.originalUrl,
     method: req.method,
-    ip: req.ip,
-    userAgent: req.get('User-Agent'),
-  });
+    ip: req.ip
+  };
 
-  let error = { ...err };
-  error.message = err.message;
+  if (statusCode >= 500) {
+    logger.error('Request failed', { ...context, stack: err.stack, userAgent: req.get('User-Agent') });
+  } else if (statusCode !== 404) {
+    logger.warn('Request rejected', context);
+  }
 
-  error = handleDatabaseError(error);
+  if (res.headersSent) return next(err);
 
   if (process.env.NODE_ENV === 'development') {
     sendErrorDev(error, res);

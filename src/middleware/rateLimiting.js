@@ -1,4 +1,4 @@
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const slowDown = require('express-slow-down');
 const { logger } = require('./errorHandler');
 const { ERROR_CODES, buildErrorResponse } = require('../utils/responseBuilder');
@@ -12,15 +12,12 @@ const parseIntSafe = (val, def) => {
 };
 
 const windowMs = parseIntSafe(process.env.RATE_LIMIT_WINDOW_MS, 60000);
-const maxGlobal = parseIntSafe(process.env.RATE_LIMIT_MAX_REQUESTS, 0);
-const maxGeneral = parseIntSafe(process.env.RATE_LIMIT_GENERAL, maxGlobal || 120);
-const maxSearch = parseIntSafe(process.env.RATE_LIMIT_SEARCH, maxGeneral);
-const maxMetrics = parseIntSafe(process.env.RATE_LIMIT_METRICS, maxGeneral);
-const maxRelational = parseIntSafe(process.env.RATE_LIMIT_RELATIONAL, maxGeneral);
+const maxGeneral = parseIntSafe(process.env.RATE_LIMIT_GENERAL, parseIntSafe(process.env.RATE_LIMIT_MAX_REQUESTS, 0) || 120);
 
 const delayAfter = parseIntSafe(process.env.SLOW_DOWN_AFTER, 1000);
 const delayMs = parseIntSafe(process.env.SLOW_DOWN_DELAY, 50);
 const maxDelayMs = parseIntSafe(process.env.SLOW_DOWN_MAX, 1000);
+const MAX_TRACKED_LIMITED_CLIENTS = 1000;
 
 const disableRateLimiting = (process.env.RATE_LIMIT_DISABLED || 'false').toLowerCase() === 'true';
 const noopLimiter = (_req, _res, next) => next();
@@ -49,11 +46,29 @@ const isLocalRequest = (req) => {
   return ip.startsWith('127.');
 };
 
+const limitedClients = new Map();
+
+const pruneLimitedClients = () => {
+  const now = Date.now();
+  for (const [ip, entry] of limitedClients.entries()) {
+    if (entry.resetAt <= now) limitedClients.delete(ip);
+  }
+};
+
 const handler = (req, res) => {
   const remaining = (res.getHeader('RateLimit-Remaining') || '').toString();
   const limit = (res.getHeader('RateLimit-Limit') || '').toString();
   const reset = (res.getHeader('RateLimit-Reset') || '').toString();
   const meta = { ip: req.ip, path: req.path, remaining, limit, reset };
+
+  pruneLimitedClients();
+  if (limitedClients.has(req.ip) || limitedClients.size < MAX_TRACKED_LIMITED_CLIENTS) {
+    const resetAt = Date.now() + (parseIntSafe(reset, Math.ceil(windowMs / 1000)) * 1000);
+    if (!limitedClients.has(req.ip)) {
+      logger.warn('Rate limit exceeded', { ip: req.ip, path: req.path, limit });
+    }
+    limitedClients.set(req.ip, { since: limitedClients.get(req.ip)?.since || new Date().toISOString(), resetAt });
+  }
 
   if (typeof res.fail === 'function') {
     return res.fail('Too many requests', {
@@ -63,7 +78,6 @@ const handler = (req, res) => {
     });
   }
 
-  logger.warn('Rate limit exceeded', { ip: req.ip, path: req.path, limit });
   return res.status(429).json(buildErrorResponse({
     status: 'error',
     message: 'Too many requests',
@@ -72,23 +86,16 @@ const handler = (req, res) => {
   }));
 };
 
-const buildLimiter = (max) => {
-  if (disableRateLimiting) return noopLimiter;
-  return rateLimit({
-    windowMs,
-    max,
-    skip: shouldSkipRateLimit,
-    standardHeaders: true,
-    legacyHeaders: false,
-    handler,
-  });
-};
-
-const generalLimiter = buildLimiter(maxGeneral);
-const searchLimiter = buildLimiter(maxSearch);
-const relationalLimiter = buildLimiter(maxRelational);
-
-const metricsLimiter = buildLimiter(maxMetrics);
+const generalLimiter = disableRateLimiting
+  ? noopLimiter
+  : rateLimit({
+      windowMs,
+      limit: maxGeneral,
+      skip: shouldSkipRateLimit,
+      standardHeaders: true,
+      legacyHeaders: false,
+      handler,
+    });
 
 const speedLimiter = disableRateLimiting
   ? noopLimiter
@@ -131,21 +138,30 @@ const getViolationStats = () => ({
   disabled: disableRateLimiting,
   windowMs,
   general: maxGeneral,
-  search: maxSearch,
-  metrics: maxMetrics,
-  relational: maxRelational,
   slowDown: { delayAfter, delayMs, maxDelayMs },
 });
 
-const getBlockedIPs = () => [];
-const unblockIP = (_ip) => true;
+const getBlockedIPs = () => {
+  pruneLimitedClients();
+  return Array.from(limitedClients.entries()).map(([ip, entry]) => ({
+    ip,
+    limited_since: entry.since,
+    resets_at: new Date(entry.resetAt).toISOString()
+  }));
+};
+
+const unblockIP = async (ip) => {
+  const key = ipKeyGenerator(ip);
+  const wasLimited = limitedClients.delete(ip);
+  if (!disableRateLimiting) {
+    await Promise.all([generalLimiter.resetKey(key), speedLimiter.resetKey(key)]);
+  }
+  return wasLimited;
+};
 
 module.exports = {
   generalLimiter,
-  searchLimiter,
   speedLimiter,
-  metricsLimiter,
-  relationalLimiter,
   honeypotMiddleware,
   getViolationStats,
   getBlockedIPs,

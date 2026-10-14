@@ -10,8 +10,9 @@ const config = {
   username: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   dialect: 'mariadb',
+  keepDefaultTimezone: true,
   dialectOptions: {
-    timezone: 'Etc/GMT-3',
+    timezone: 'local',
     ...(process.env.DB_SSL === 'true' && fs.existsSync(path.join(__dirname, '../../ssl/mysql-client-cert.pem')) ? {
       ssl: {
         cert: fs.readFileSync(path.join(__dirname, '../../ssl/mysql-client-cert.pem')),
@@ -27,9 +28,6 @@ const config = {
     acquire: 30000,
     idle: 10000,
     maxUses: 100,
-  },
-  query: {
-    timeout: 10000,
   },
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   define: {

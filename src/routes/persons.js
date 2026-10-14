@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const { param, query } = require('express-validator');
 const personsController = require('../controllers/persons.controller');
-const { relationalLimiter } = require('../middleware/rateLimiting');
 
 const validatePersonId = [
   param('id')
@@ -370,8 +369,8 @@ const validateWorksQuery = [
     .withMessage('sort_order must be ASC or DESC')
 ];
 
-router.get('/:id/works', relationalLimiter, validatePersonId, validateWorksQuery, personsController.getPersonWorks);
+router.get('/:id/works', validatePersonId, validateWorksQuery, personsController.getPersonWorks);
 
-router.get('/:id/signatures', relationalLimiter, validatePersonId, validateSignaturesQuery, personsController.getPersonSignatures);
+router.get('/:id/signatures', validatePersonId, validateSignaturesQuery, personsController.getPersonSignatures);
 
 module.exports = router;

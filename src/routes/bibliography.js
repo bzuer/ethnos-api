@@ -1,10 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const bibliographyController = require('../controllers/bibliography.controller');
-const rateLimit = require('../middleware/rateLimiting');
 const { query } = require('express-validator');
 
-router.use(rateLimit.generalLimiter);
 
 const validatePagination = [
   query('page')

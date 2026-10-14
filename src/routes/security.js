@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { param, validationResult } = require('express-validator');
-const validator = require('validator');
 const { getViolationStats, getBlockedIPs, unblockIP } = require('../middleware/rateLimiting');
 const { createAccessKeyGuard } = require('../middleware/accessKey');
 const { logger } = require('../middleware/errorHandler');
@@ -16,6 +15,7 @@ const requireAccessKey = createAccessKeyGuard({
     'ETHNOS_API_KEY',
     'ETHNOS_API_ACCESS_KEY',
     'API_SECRET_KEY',
+    'ETHNOS_API_KEY_2',
   ],
   context: 'security API',
 });
@@ -205,13 +205,12 @@ router.get('/stats', requireAccessKey, (req, res) => {
       blocked_ips: blockedIPs,
       stats: {
         total_blocked: blockedIPs.length,
-        total_violations: 0,
         block_tracking_persisted: false
       }
     }, {
       meta: {
         generated_at: new Date().toISOString(),
-        note: 'Rate limiting uses in-memory rolling windows; per-IP violation and block tracking is not persisted.',
+        note: 'blocked_ips lists the clients currently over the per-IP limit in this process; the rolling windows are in memory and reset on restart.',
         performance: { controller_time_ms: Date.now() - t0 }
       }
     });
@@ -260,7 +259,7 @@ router.get('/stats', requireAccessKey, (req, res) => {
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.post('/unblock/:ip', requireAccessKey, validateIpParam, (req, res) => {
+router.post('/unblock/:ip', requireAccessKey, validateIpParam, async (req, res) => {
   try {
     const validationError = handleValidation(req, res);
     if (validationError) {
@@ -268,23 +267,12 @@ router.post('/unblock/:ip', requireAccessKey, validateIpParam, (req, res) => {
     }
 
     const { ip } = req.params;
-    if (!validator.isIP(ip)) {
-      return res.fail('Invalid IP address format', {
-        statusCode: 400,
-        code: ERROR_CODES.VALIDATION
-      });
-    }
-    
-    const blockedIPs = getBlockedIPs();
-    const wasBlocked = blockedIPs.includes(ip);
-    if (wasBlocked) {
-      unblockIP(ip);
-      logger.info('IP unblocked via API', {
-        ip,
-        requestor_ip: req.ip,
-        timestamp: new Date().toISOString()
-      });
-    }
+    const wasBlocked = await unblockIP(ip);
+    logger.info('Rate-limit counters reset via API', {
+      ip,
+      was_blocked: wasBlocked,
+      requestor_ip: req.ip
+    });
 
     return res.success({
       ip,
@@ -293,8 +281,8 @@ router.post('/unblock/:ip', requireAccessKey, validateIpParam, (req, res) => {
       meta: {
         generated_at: new Date().toISOString(),
         note: wasBlocked
-          ? 'IP removed from the block list.'
-          : 'Rate limiting uses in-memory rolling windows; there is no persistent block list, so no IP is currently blocked.'
+          ? 'The client was over the limit; its rate-limit and slow-down counters were reset.'
+          : 'The client was not over the limit; its rate-limit and slow-down counters were reset anyway.'
       }
     });
     

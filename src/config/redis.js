@@ -5,20 +5,24 @@ const redisConfig = {
   host: process.env.REDIS_HOST || 'localhost',
   port: process.env.REDIS_PORT || 6379,
   password: process.env.REDIS_PASSWORD || undefined,
-  socket: {
-    connectTimeout: 10000,
-    lazyConnect: true,
-  },
-  retryDelayOnFailover: 100,
-  maxRetriesPerRequest: 3,
+  connectTimeoutMs: 1000,
+  reconnectCooldownMs: 10000,
+  maxReconnectAttempts: 3
 };
 
 let client = null;
 let connectPromise = null;
+let lastFailureAt = 0;
 
-const resolveClient = () => (client && client.isOpen ? client : null);
+const isRedisDisabled = () => process.env.REDIS_DISABLED === 'true' || process.env.NODE_ENV === 'test';
+
+const resolveClient = () => (client && client.isOpen && client.isReady ? client : null);
 
 const createRedisClient = async () => {
+  if (isRedisDisabled()) {
+    return null;
+  }
+
   if (resolveClient()) {
     return client;
   }
@@ -27,11 +31,20 @@ const createRedisClient = async () => {
     return connectPromise;
   }
 
+  if (Date.now() - lastFailureAt < redisConfig.reconnectCooldownMs) {
+    return null;
+  }
+
   connectPromise = (async () => {
-    const url = `redis://${redisConfig.password ? `:${redisConfig.password}@` : ''}${redisConfig.host}:${redisConfig.port}`;
+    const url = `redis://${redisConfig.password ? `:${encodeURIComponent(redisConfig.password)}@` : ''}${redisConfig.host}:${redisConfig.port}`;
     const instance = createClient({
       url,
-      socket: redisConfig.socket,
+      socket: {
+        connectTimeout: redisConfig.connectTimeoutMs,
+        reconnectStrategy: (retries) => (retries >= redisConfig.maxReconnectAttempts
+          ? new Error('Redis unreachable')
+          : Math.min((retries + 1) * 200, 1000))
+      }
     });
 
     instance.on('error', (err) => {
@@ -42,13 +55,8 @@ const createRedisClient = async () => {
       console.log('Redis connected');
     });
 
-    instance.on('disconnect', () => {
-      console.warn('Redis disconnected');
-      client = null;
-    });
-
     instance.on('end', () => {
-      client = null;
+      if (client === instance) client = null;
     });
 
     try {
@@ -57,9 +65,10 @@ const createRedisClient = async () => {
       return client;
     } catch (error) {
       console.error('Redis connection failed:', error.message);
+      lastFailureAt = Date.now();
       try {
-        await instance.disconnect();
-      } catch (disconnectError) {
+        await instance.destroy();
+      } catch (_) {
       }
       client = null;
       return null;
@@ -163,7 +172,7 @@ const redisWrapper = {
   }
 };
 
-if (process.env.REDIS_DISABLED !== 'true' && process.env.NODE_ENV !== 'test') {
+if (!isRedisDisabled()) {
   createRedisClient().catch((error) => {
     console.error('Redis initialization error:', error.message);
   });
@@ -172,5 +181,7 @@ if (process.env.REDIS_DISABLED !== 'true' && process.env.NODE_ENV !== 'test') {
 module.exports = Object.assign(redisWrapper, {
   createRedisClient,
   getRedisClient,
+  getActiveRedisClient: async () => resolveClient() || createRedisClient(),
+  isRedisDisabled,
   testRedisConnection,
 });

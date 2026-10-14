@@ -1,4 +1,6 @@
 
+const { ERROR_CODES } = require('../utils/responseBuilder');
+
 function requestTimeout(opts = {}) {
   const timeoutMs = parseInt(process.env.REQUEST_TIMEOUT_MS || opts.timeoutMs || 5000);
 
@@ -15,7 +17,7 @@ function requestTimeout(opts = {}) {
         res.status(503);
         originalJson({
           status: 'error',
-          code: 'REQUEST_TIMEOUT',
+          code: ERROR_CODES.TIMEOUT,
           message: `Request timed out after ${timeoutMs}ms`,
           timestamp: new Date().toISOString(),
         });

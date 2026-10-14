@@ -2,10 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { query, param } = require('express-validator');
 const instructorsController = require('../controllers/instructors.controller');
-const rateLimit = require('../middleware/rateLimiting');
 const { commonValidations } = require('../middleware/validation');
 
-router.use(rateLimit.generalLimiter);
 
 const validateInstructorId = [
   param('id')

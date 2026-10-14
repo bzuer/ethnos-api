@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const { query, param } = require('express-validator');
 const signaturesController = require('../controllers/signatures.controller');
-const { relationalLimiter } = require('../middleware/rateLimiting');
 
 /**
  * @swagger
@@ -306,7 +305,7 @@ const validateWorksQuery = [
     .withMessage('Limit must be between 1 and 100')
 ];
 
-router.get('/:id/works', validateWorksQuery, relationalLimiter, signaturesController.getSignatureWorks);
+router.get('/:id/works', validateWorksQuery, signaturesController.getSignatureWorks);
 
 router.get(
   '/:id/persons',
@@ -323,7 +322,6 @@ router.get(
       .isInt({ min: 0 })
       .withMessage('Offset must be a non-negative integer')
   ],
-  relationalLimiter,
   signaturesController.getSignaturePersons
 );
 

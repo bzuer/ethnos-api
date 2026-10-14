@@ -21,16 +21,18 @@ async function runHandlers(handlers, req, res) {
       if (err) return reject(err);
       if (idx >= handlers.length) return resolve({ req, res });
       const handler = handlers[idx++];
+      let advanced = false;
+      const step = (stepErr) => {
+        if (advanced) return;
+        advanced = true;
+        next(stepErr);
+      };
       try {
-        const maybePromise = handler(req, res, next);
-        if (maybePromise && typeof maybePromise.then === 'function') {
-          maybePromise.then(() => {
+        Promise.resolve(handler(req, res, step))
+          .then(() => {
             if (res.__sent) resolve({ req, res });
-          }).catch(reject);
-        } else {
-          if (res.__sent) return resolve({ req, res });
-          next();
-        }
+          })
+          .catch(reject);
       } catch (e) {
         reject(e);
       }

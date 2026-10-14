@@ -1,5 +1,7 @@
-const { getRedisClient } = require('../config/redis');
+const { getActiveRedisClient } = require('../config/redis');
 const { logger } = require('../middleware/errorHandler');
+
+const MEMORY_CACHE_MAX_ENTRIES = 5000;
 
 class CacheService {
   constructor() {
@@ -18,45 +20,23 @@ class CacheService {
     this.memoryCache = new Map();
   }
 
-  generateKey(prefix, identifier, params = {}) {
-    const sortedParams = Object.keys(params)
-      .sort()
-      .map(key => `${key}:${params[key]}`)
-      .join('|');
-    
-    return `${prefix}:${identifier}${sortedParams ? `|${sortedParams}` : ''}`;
+  resolveTtl(ttl) {
+    if (typeof ttl === 'number' && Number.isFinite(ttl) && ttl > 0) {
+      return Math.floor(ttl);
+    }
+    return this.defaultTTL[ttl] || this.defaultTTL.default;
+  }
+
+  _redisMandatory() {
+    return process.env.NODE_ENV === 'production' && process.env.REDIS_MANDATORY_IN_PRODUCTION === 'true';
   }
 
   async get(key) {
     try {
-      const client = getRedisClient();
-      const isProduction = process.env.NODE_ENV === 'production';
-      const redisMandatory = process.env.REDIS_MANDATORY_IN_PRODUCTION === 'true';
-      
+      const client = await getActiveRedisClient();
       if (!client) {
-        if (isProduction && redisMandatory) {
-          logger.error('Redis required in production but not available', {
-            key,
-            redis_mandatory: redisMandatory,
-            environment: process.env.NODE_ENV
-          });
-          return null;
-        }
-        
-        this._cleanupExpiredMemoryEntries();
-
-        const memoryEntry = this.memoryCache.get(key);
-        if (!memoryEntry) {
-          return null;
-        }
-
-        if (memoryEntry.expiresAt && memoryEntry.expiresAt <= Date.now()) {
-          this.memoryCache.delete(key);
-          return null;
-        }
-
-        logger.debug(`Cache HIT (memory): ${key}`);
-        return memoryEntry.value;
+        if (this._redisMandatory()) return null;
+        return this._memoryGet(key);
       }
 
       const value = await client.get(key);
@@ -64,133 +44,78 @@ class CacheService {
         logger.debug(`Cache HIT (Redis): ${key}`);
         return JSON.parse(value);
       }
-      
       logger.debug(`Cache MISS: ${key}`);
       return null;
     } catch (error) {
-      logger.warn('Cache get error:', error.message);
+      logger.warn('Cache get error', { key, error: error.message });
       return null;
     }
   }
 
-  async set(key, value, ttlType = 'default') {
-    const ttl = this.defaultTTL[ttlType] || this.defaultTTL.default;
-    
+  async set(key, value, ttl = 'default') {
+    const seconds = this.resolveTtl(ttl);
+
     try {
-      const client = getRedisClient();
-      const isProduction = process.env.NODE_ENV === 'production';
-      const redisMandatory = process.env.REDIS_MANDATORY_IN_PRODUCTION === 'true';
-      
+      const client = await getActiveRedisClient();
       if (!client) {
-        if (isProduction && redisMandatory) {
-          logger.error('Redis required in production but not available for SET', {
-            key,
-            ttlType,
-            redis_mandatory: redisMandatory
-          });
-          return false;
-        }
-        
-        this.memoryCache.set(key, {
-          value,
-          expiresAt: Date.now() + (ttl * 1000)
-        });
-        logger.debug(`Cache SET (memory): ${key} (TTL: ${ttl}s)`);
+        if (this._redisMandatory()) return false;
+        this._memorySet(key, value, seconds);
         return true;
       }
 
-      await client.setex(key, ttl, JSON.stringify(value));
-      logger.debug(`Cache SET (Redis): ${key} (TTL: ${ttl}s)`);
+      await client.setEx(key, seconds, JSON.stringify(value));
+      logger.debug(`Cache SET (Redis): ${key} (TTL: ${seconds}s)`);
       return true;
     } catch (error) {
-      logger.warn('Cache set error:', error.message);
+      logger.warn('Cache set error', { key, error: error.message });
       return false;
     }
   }
 
   async del(key) {
     try {
-      const client = getRedisClient();
+      const client = await getActiveRedisClient();
       if (!client) {
-        const existed = this.memoryCache.has(key);
-        this.memoryCache.delete(key);
-        logger.debug(`Cache DEL (memory): ${key}`);
-        return existed;
+        return this.memoryCache.delete(key);
       }
-
       const result = await client.del(key);
-      logger.debug(`Cache DEL (Redis): ${key}`);
       return result > 0;
     } catch (error) {
-      logger.warn('Cache delete error:', error.message);
+      logger.warn('Cache delete error', { key, error: error.message });
       return false;
     }
   }
 
-  async flush() {
-    try {
-      const client = getRedisClient();
-      if (!client) {
-        const count = this.memoryCache.size;
-        this.memoryCache.clear();
-        logger.info(`Cache FLUSH (memory): ${count} keys cleared`);
-        return true;
-      }
-
-      await client.flushdb();
-      logger.info('Cache FLUSH (Redis): all keys cleared');
-      return true;
-    } catch (error) {
-      logger.warn('Cache flush error:', error.message);
-      return false;
+  _memoryGet(key) {
+    const entry = this.memoryCache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      this.memoryCache.delete(key);
+      return null;
     }
+    logger.debug(`Cache HIT (memory): ${key}`);
+    return entry.value;
   }
 
-  async exists(key) {
-    try {
-      const client = getRedisClient();
-      if (!client) {
-        const memoryEntry = this.memoryCache.get(key);
-        if (!memoryEntry) return false;
-        
-        if (memoryEntry.expiresAt && memoryEntry.expiresAt <= Date.now()) {
-          this.memoryCache.delete(key);
-          return false;
-        }
-        return true;
+  _memorySet(key, value, seconds) {
+    this.memoryCache.delete(key);
+    if (this.memoryCache.size >= MEMORY_CACHE_MAX_ENTRIES) {
+      this._cleanupExpiredMemoryEntries();
+      while (this.memoryCache.size >= MEMORY_CACHE_MAX_ENTRIES) {
+        this.memoryCache.delete(this.memoryCache.keys().next().value);
       }
-
-      const result = await client.exists(key);
-      return result === 1;
-    } catch (error) {
-      logger.warn('Cache exists error:', error.message);
-      return false;
     }
+    this.memoryCache.set(key, { value, expiresAt: Date.now() + (seconds * 1000) });
+    logger.debug(`Cache SET (memory): ${key} (TTL: ${seconds}s)`);
   }
 
   _cleanupExpiredMemoryEntries() {
     const now = Date.now();
-    let cleanedCount = 0;
-    
     for (const [key, entry] of this.memoryCache.entries()) {
-      if (entry.expiresAt && entry.expiresAt <= now) {
+      if (entry.expiresAt <= now) {
         this.memoryCache.delete(key);
-        cleanedCount++;
       }
     }
-    
-    if (cleanedCount > 0) {
-      logger.debug(`Cache cleanup: removed ${cleanedCount} expired entries`);
-    }
-  }
-
-  getStats() {
-    const client = getRedisClient();
-    return {
-      redis_connected: !!client,
-      memory_cache_size: this.memoryCache.size,
-      ttl_config: this.defaultTTL
-    };
   }
 }
 

@@ -15,7 +15,7 @@ const homepageStatsService = require('./services/homepageStats.service');
 
 const app = express();
 
-app.set('trust proxy', 1);
+app.set('trust proxy', 'loopback');
 app.set('query parser', false);
 
 app.use((req, res, next) => {
@@ -72,12 +72,7 @@ app.use(helmet({
   
   permittedCrossDomainPolicies: false,
   
-  hidePoweredBy: true,
-  
-  expectCt: {
-    maxAge: 86400,
-    enforce: process.env.NODE_ENV === 'production',
-  }
+  hidePoweredBy: true
 }));
 
 const corsOptions = {
@@ -96,8 +91,8 @@ const corsOptions = {
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      logger.warn('CORS blocked request', { origin });
-      callback(new Error('Not allowed by CORS'));
+      logger.warn('CORS origin not allowed', { origin });
+      callback(null, false);
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -117,17 +112,14 @@ app.use(cors(corsOptions));
 
 const {
   generalLimiter,
-  searchLimiter,
   speedLimiter,
-  metricsLimiter,
-  relationalLimiter,
   honeypotMiddleware
 } = require('./middleware/rateLimiting');
 
 app.use(honeypotMiddleware);
 
-app.use('/', generalLimiter);
-app.use('/', speedLimiter);
+app.use(generalLimiter);
+app.use(speedLimiter);
 
 app.use(compression());
 
@@ -154,8 +146,8 @@ app.use(morgan('combined', {
   }
 }));
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '16kb' }));
+app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 app.use(responseFormatter);
 
 const { sanitizationMiddleware } = require('./middleware/sanitization');
@@ -220,14 +212,14 @@ app.get('/', (req, res) => {
     },
     system_status: {
       database: homepageStats ? `${totalWorksLabel} works, ${totalPublicationsLabel} publications` : 'Database connected',
-      search_engine: 'Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search',
-      cache: 'Redis with 30min TTL',
+      search_engine: 'Manticore Search (SphinxQL) full-text for works and persons, including the works venue filter; MariaDB FULLTEXT for organizations (ft_organizations_name), subjects (ft_subjects_term) and the /publications venue filter (ft_venues_search)',
+      cache: 'Redis; per-endpoint TTLs from 1 minute to 48 hours',
       rate_limiting: 'Public requests limited to 120/min per IP; a valid X-Access-Key removes the limit',
       authentication: 'No key required for data and metrics endpoints; X-Access-Key still gates /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics)'
     },
     main_categories: {
       search_discovery: {
-        description: 'Search across works, persons, and publications backed by Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues, subjects, organizations (institutions search disabled for performance)',
+        description: 'Search across works, persons, and publications backed by Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations, subjects and the /publications venue filter',
         endpoints: ['/search/works', '/search/persons', '/search/advanced', '/search/autocomplete', '/search/global']
       },
       academic_works: {
@@ -269,11 +261,11 @@ app.get('/', (req, res) => {
       collected_at: homepageStats?.collected_at || null
     },
     technical_features: {
-      search_performance: 'Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search; institutions search disabled for optimal performance',
+      search_performance: 'Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations (ft_organizations_name), subjects (ft_subjects_term) and the /publications venue filter (ft_venues_search)',
       authentication: 'Open access: data and metrics endpoints need no key. An optional X-Access-Key (header: x-access-key | x-internal-key | x-api-key) lifts the rate limit and unlocks /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics).',
       rate_limits: 'Unauthenticated requests: 120/min per IP. No limit when a valid X-Access-Key is supplied.',
       response_format: 'JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}',
-      cache_ttl: '30 minutes',
+      cache_ttl: 'per endpoint, 1 minute to 48 hours',
       security: 'XSS protection, SQL injection prevention, abuse detection'
     },
     quick_examples: {
@@ -321,7 +313,7 @@ app.get('/docs.json', (req, res) => {
     'Pragma': 'no-cache',
     'Expires': '0'
   });
-  res.send(swaggerSpecs);
+  res.json({ __skipEnvelope: true, payload: swaggerSpecs });
 });
 
 const swaggerOptions = {
@@ -368,20 +360,20 @@ app.get(['/docs.yaml', '/openapi.yaml', '/openapi.yml'], (req, res) => {
 
 app.use('/health', healthRoutes);
 
-app.use('/security', metricsLimiter, securityRoutes);
+app.use('/security', securityRoutes);
 
-app.use('/search', searchLimiter, searchRoutes);
-app.use('/publications', relationalLimiter, publicationsRoutes);
-app.use('/works', relationalLimiter, worksRoutes);
-app.use('/persons', relationalLimiter, personsRoutes);
-app.use('/institutions', relationalLimiter, organizationsRoutes);
-app.use('/venues', relationalLimiter, venuesRoutes);
-app.use('/metrics', metricsLimiter, metricsRoutes);
-app.use('/dashboard', metricsLimiter, dashboardRoutes);
+app.use('/search', searchRoutes);
+app.use('/publications', publicationsRoutes);
+app.use('/works', worksRoutes);
+app.use('/persons', personsRoutes);
+app.use('/institutions', organizationsRoutes);
+app.use('/venues', venuesRoutes);
+app.use('/metrics', metricsRoutes);
+app.use('/dashboard', dashboardRoutes);
 app.use('/', citationsRoutes);
 app.use('/', collaborationsRoutes);
-app.use('/signatures', relationalLimiter, signaturesRoutes);
-app.use('/subjects', relationalLimiter, subjectsRoutes);
+app.use('/signatures', signaturesRoutes);
+app.use('/subjects', subjectsRoutes);
 
 app.use('/courses', coursesRoutes);
 app.use('/instructors', instructorsRoutes);
@@ -445,7 +437,7 @@ const publicationsController = require('./controllers/publications.controller');
 app.get(/^\/((?:https?:\/\/)?doi\.org\/)?(\d{2}\..+)$/, (req, res, next) => {
   req.params.doi = req.params[1];
   next();
-}, relationalLimiter, publicationsController.getPublicationByDoi);
+}, publicationsController.getPublicationByDoi);
 
 app.use(notFoundHandler);
 
@@ -474,7 +466,7 @@ const startServer = async () => {
       logger.info(`Server running on ${BIND_HOST}:${PORT} (public entry point is nginx)`);
       logger.info(`API Bibliografica ${process.env.NODE_ENV || 'development'} mode`);
       logger.info(`Health check: http://${BIND_HOST}:${PORT}/health`);
-      logger.info('Search engine: Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search');
+      logger.info('Search engine: Manticore Search (SphinxQL) for works and persons; MariaDB FULLTEXT for organizations, subjects and the /publications venue filter');
     });
 
     server.on('error', (error) => {
