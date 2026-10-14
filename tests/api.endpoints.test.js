@@ -1087,6 +1087,15 @@ describe('Manticore match expression', () => {
       .toBe('@authors o brien or 1 1 x');
   });
 
+  test('wildcards and other non-word characters never reach the engine', () => {
+    const pairOf = term => `((${STEMMED} ${term}) | (${VERBATIM} ${term}))`;
+    expect(buildWorksMatch({ q: 'culture?' })).toBe(pairOf('culture'));
+    expect(buildWorksMatch({ q: 'social soci%l' })).toBe(['social', 'soci', 'l'].map(pairOf).join(' '));
+    expect(buildWorksMatch({ q: 'ritual&myth: 3.11' })).toBe(['ritual', 'myth', '3', '11'].map(pairOf).join(' '));
+    expect(buildWorksMatch({ author: 'Malinowsk% [x] {y} ;' })).toBe('@authors malinowsk x y');
+    expect(buildWorksMatch({ q: 'antropología Ñandú' })).toBe(['antropología', 'ñandú'].map(pairOf).join(' '));
+  });
+
   test('upper-case Manticore operator words reach the engine as plain terms', () => {
     const pairOf = term => `((${STEMMED} ${term}) | (${VERBATIM} ${term}))`;
     expect(buildWorksMatch({ q: 'Ritual MAYBE SENTENCE PARAGRAPH ZONESPAN' }))

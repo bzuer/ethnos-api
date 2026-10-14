@@ -66,7 +66,7 @@ function toBoolFlag(value) {
 function sanitizeMatchValue(value) {
   if (typeof value !== 'string') return '';
   const cleaned = value
-    .replace(/[@()~/"^$<=>|!*'`\\-]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}_\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
