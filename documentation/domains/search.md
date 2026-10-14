@@ -1,59 +1,86 @@
 # Search — full-text discovery over works and persons
 
-The search domain is the primary discovery surface of the API. It exposes seven read-only endpoints that run against **Manticore Search** (SphinxQL, the same engine that powers `/works`, `/publications` and `/persons`): works full-text lives in the Manticore `works` index (fields `title, subtitle, abstract, authors, subjects, venue`), person full-text in the `persons` index (`preferred_name, given_names, family_name`). The one exception is the `venue`/`venue_name` filter, which resolves through the MariaDB `ft_venues_search` FULLTEXT index. Matching ids are found in Manticore and then hydrated from MariaDB base tables (`works`, `publications`, `persons`, `venues`), so every result row carries the same rich shape as the corresponding entity endpoint. All endpoints are public (no key, rate-limited only — see [../00-conventions.md](../00-conventions.md)).
+The search domain is the primary discovery surface of the API. It exposes seven read-only endpoints. Full-text matching runs on **Manticore Search** (SphinxQL), the same engine behind `q=` on `/works`, `/publications` and `/persons`:
 
-Result rows reuse shapes from other domains: the work row is the same `WorkListItem` returned by [./works.md](./works.md) enriched with search provenance; the person row is a compact subset of [./persons.md](./persons.md). This chapter documents only what is specific to search; the response envelope, pagination (`page/limit` + `offset/limit`), auth/rate-limit, error codes, boolean/date normalization and the shared citation/sort params are all in [../00-conventions.md](../00-conventions.md).
+- The `works` index has the full-text fields `title, subtitle, abstract, authors, subjects, venue`. The `authors` field holds **AUTHOR-role contributors only**, so editors and translators are not matched by `q` or `author=`. The `venue` field holds the name and abbreviation of the venue of every publication of the work.
+- The `persons` index has the fields `preferred_name, given_names, family_name`.
 
-Quick engine map:
+Manticore returns matching ids, and the API hydrates each row from the MariaDB base tables. Every result row therefore carries the same shape as the corresponding entity endpoint. All endpoints are public: no key is needed and requests are only rate-limited (see [../00-conventions.md](../00-conventions.md)).
 
-| Endpoint | Entities | Engine | Paginated | `q` required |
+Result rows reuse shapes from other domains:
+
+- The work row is the `WorkListItem` of [works › `GET /works`](./works.md#get-works) plus search provenance.
+- The person row is a compact subset of [persons](./persons.md).
+
+This chapter documents only what is specific to search. The envelope, pagination, auth, rate limits, error codes, value normalization and the shared citation/sort parameters are covered in [../00-conventions.md](../00-conventions.md).
+
+| Endpoint | Entities | Engine | Paginated | `q` |
 |---|---|---|---|---|
-| `GET /search/works` | works | Manticore (+ MariaDB for `venue`) | yes | no (filter-only allowed) |
-| `GET /search/advanced` | works | Manticore | yes | no (filter-only allowed) |
-| `GET /search/global` | works + persons | Manticore | no (per-entity slice) | **yes** |
-| `GET /search/persons` | persons | Manticore | yes | **yes** |
-| `GET /search/autocomplete` | titles + authors + venues | Manticore → MariaDB | no | **yes** (min 2) |
-| `GET /search/popular` | most-frequent terms | Redis analytics aggregate | no | n/a |
+| `GET /search/works` | works | Manticore when a text term is present, else MariaDB | yes | optional |
+| `GET /search/advanced` | works | same as `/search/works` | yes | optional |
+| `GET /search/global` | works + persons | Manticore | no (per-entity slice) | **required** |
+| `GET /search/persons` | persons | Manticore | yes | **required** |
+| `GET /search/autocomplete` | titles + authors + venues | Manticore → MariaDB | no | optional (< 2 chars → short shape) |
+| `GET /search/popular` | most frequent recent queries | Redis analytics | no | n/a |
 | `GET /search/health` | engine status | — | no | n/a |
 
-A cross-cutting note before the per-endpoint reference: the `relevance` field is present (as `null`) on the works rows of `/search/works` and `/search/global`, and on the person rows everywhere, but it is **always `null`** — Manticore's internal ranking score is never surfaced, even when `sort_by=relevance`. Do not build UI around it. The work row shape is byte-for-byte identical across `/search/works`, `/search/global` (`data.works.results[]`) and `/search/advanced` (`data.results[]`), so a single result component serves all three (the only difference: `/search/advanced` omits the `relevance` key entirely).
+## Rules shared by every search endpoint
+
+- **Query text is literal.** Only letters, combining marks, digits, `_` and whitespace reach the engine. Every other character is a word separator, including `? % * " ' & : . - | @ ( )`. The text is also lower-cased. So `ritual&myth` is the same query as `ritual myth`, `culture?` is the same as `culture`, and words such as `MAYBE`, `NEAR`, `SENTENCE` or `ZONE` are ordinary terms. There are no operators, phrases or wildcards.
+- **Every term is required (AND).** In the content fields (`title`, `subtitle`, `abstract`, `subjects`), each term also matches its inflected forms through Portuguese and English stemming: `movimentos` finds *movimento*. In `authors` and `venue`, terms match verbatim, so names are never stemmed.
+- **Match window.** Full-text results can be paged up to the first 100,000 matches. A request with `offset + limit > 100000` returns **400 `VALIDATION_ERROR`**: "Full-text results can be paged up to the first 100000 matches; narrow the query or use a different sort".
+- **Time budget.** Every Manticore query carries `max_query_time = 4000 ms`, below the 5 s request ceiling. When the page query hits it, the request fails with **503 `REQUEST_TIMEOUT`** rather than serving a truncated page. When only the count hits it, the page is served with `meta.pagination_total_exact: false` and a lower-bound `total` (one more than the rows seen while a full page came back, so `hasNext` stays usable).
+- **Pagination.** `page`/`limit` or `offset`/`limit`, with a default `limit` of 10. An explicit `offset` is served as given and echoed in `meta.pagination_extras.offset`.
+- **`relevance` is always `null`.** The field appears on the work rows of `/search/works` and `/search/global` and on the person rows of `/search/persons` and `/search/global`. It stays `null` even with `sort_by=relevance`: the ranking score is never surfaced. `/search/advanced` rows omit the key entirely.
+
+> Figures in this chapter were measured on 2026-10-14 against the development server. Its Manticore index is stale: it holds 7,673,100 works for 7,657,142 in MariaDB, and 4,766,283 persons for 4,903,220. Full-text totals there drift from production. Treat the numbers as orders of magnitude, not fixed values.
 
 ---
 
 ## `GET /search/works`
 
-Full-text works search served by Manticore. Free-text `q` spans every text field; `q` is **optional** when at least one filter is supplied (filter-only queries such as `?venue=mana` are fully supported). Pagination totals are **exact** (Manticore `COUNT(*)`).
+Works search. `q` is optional, and the request takes one of two paths depending on whether a text term is present.
+
+**With a text term** (`q`, `author`, `subject` or `venue`/`venue_name`), the request runs on Manticore:
+- Rows default to relevance order.
+- `pagination.total` is an exact Manticore `COUNT(*)`.
+
+**Without a text term** (only `type`, `language`, years, booleans and citation bounds, or no parameters at all), the request is the same MariaDB browse as [`/works`](./works.md#get-works):
+- Rows default to `id DESC` (newest work first).
+- The count runs under a 2 s budget. When the budget fires, `total` falls back to the corpus estimate and `meta.pagination_total_exact` is `false`. For example, `open_access=true` returns 7,657,142 with the flag `false`.
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `q` | string | — | 2–200 chars; rejects `<`/`>`, `javascript:`, SQL keywords (`select insert update delete drop create alter exec execute union declare`) → 400 | Free-text over `@(title,subtitle,abstract,authors,subjects,venue)`. Optional if a filter is present. |
-| `type` | enum | — | `ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER` | Work-type filter with `any_publication` semantics (matches if any publication of the work is of that type). |
-| `language` | string | — | 2–5 chars, ISO code e.g. `en`, `pt` | Language filter. |
-| `peer_reviewed` | boolean | — | `1/0/true/false` | Peer-review flag. |
-| `open_access` | boolean | — | `1/0/true/false` | Open-access flag. |
-| `venue_name` | string | — | 2–255 chars | Venue name partial match via MariaDB `ft_venues_search` (flips the venue join to INNER). |
+| `q` | string | — | 2–200 chars after trimming | Free text over every text field (see the shared rules). |
+| `type` | enum | — | `ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER` (case-insensitive) | Matches a work if any of its publications is of that type. |
+| `language` | string | — | 2–5 chars (`en`, `pt`, …) | Language filter. |
+| `peer_reviewed` | boolean | — | `1/0/true/false` | Peer-review flag of any publication. |
+| `open_access` | boolean | — | `1/0/true/false` | Open-access flag of any publication. |
+| `venue_name` | string | — | 2–255 chars | Manticore `venue` field: the name or abbreviation of the venue of any of the work's publications, verbatim words. Counts as a text term. |
 | `venue` | string | — | 2–255 chars | Alias of `venue_name`. |
-| `year_from` | integer | — | 1900 .. currentYear+1 | Minimum publication year. |
-| `year_to` | integer | — | 1900 .. currentYear+1 | Maximum publication year. |
-| `author` | string | — | 2–255 chars | Manticore `@authors` field match (AND semantics with `q`/other filters). |
-| `subject` | string | — | 2–255 chars | Manticore `@subjects` field match (AND semantics). |
-| `sort_by` | enum | relevance (if `q`/filter text present) else `publication_year DESC, id DESC` | swagger enum `cited_by_count, references_count, publication_year, id, relevance`; validator also accepts the aliases `citation_count, reference_count, year, work_id` | Primary sort key. |
+| `year_from` / `year_to` | integer | — | 1000 .. next year | Publication-year bounds (any publication). |
+| `author` | string | — | 2–255 chars | Manticore `authors` field (AUTHOR-role names, verbatim). |
+| `subject` | string | — | 2–255 chars | Manticore `subjects` field (stemmed). |
+| `sort_by` | enum | relevance with a text term, otherwise `id DESC` | `cited_by_count, references_count, publication_year, id, relevance` (aliases `citation_count, reference_count, year, work_id`) | Primary sort key. |
 | `sort_order` | enum | `DESC` | `ASC`/`DESC`, case-insensitive | Sort direction. |
 
-Plus the shared citation-filter and pagination params — `cited_by_min`/`cited_by_max` (aliases `citation_count_min`/`citation_count_max`, inclusive bounds against `works.citation_count`), `page`/`limit`, `offset`/`limit`. See [../00-conventions.md](../00-conventions.md).
+The shared `cited_by_min`/`cited_by_max` (aliases `citation_count_min`/`citation_count_max`) and pagination parameters also apply. Any invalid value returns 400 with the standard `errors[]` array.
 
 ### Example requests
 
 ```
 GET /search/works?q=kinship&limit=20
-GET /search/works?venue=mana&limit=10&sort_by=cited_by_count&sort_order=DESC        # filter-only, no q
-GET /search/works?q=kinship&type=ARTICLE&year_from=2015&cited_by_min=5&sort_by=cited_by_count
-GET /search/works?author=silva&subject=anthropology&limit=10                        # metadata filters, AND semantics
+GET /search/works?q=european union&type=article&sort_by=cited_by_count
+GET /search/works?venue=mana&limit=10                                  # filter-only, still Manticore (venue is a text term)
+GET /search/works?author=silva&subject=anthropology&limit=10
+GET /search/works?type=THESIS&language=pt                              # no text term → MariaDB browse
 ```
 
 ### Example response
+
+`GET /search/works?q=kinship&limit=2`, first row shown, `abstract` trimmed:
 
 ```json
 {
@@ -65,7 +92,7 @@ GET /search/works?author=silva&subject=anthropology&limit=10                    
       "publications_count": 1,
       "title": "Mama's Baby, Papa's Maybe",
       "subtitle": "An American Grammar Book",
-      "abstract": "Hortense Spillers's \"Mama's Baby, Papa's Maybe\" is a foundational text in Black feminist thought ... (long text)",
+      "abstract": "… (long text)",
       "type": "BOOK",
       "language": "en",
       "publication_year": 1987,
@@ -73,15 +100,9 @@ GET /search/works?author=silva&subject=anthropology&limit=10                    
       "open_access": false,
       "peer_reviewed": true,
       "venue": {
-        "id": 1014939,
-        "name": "diacritics",
-        "abbreviated_name": "diacritics",
-        "type": "JOURNAL",
-        "issn": "0300-7162",
-        "eissn": "1080-6539",
-        "scopus_id": "5700156387",
-        "wikidata_id": "Q5270247",
-        "openalex_id": "S149853692"
+        "id": 1014939, "name": "diacritics", "abbreviated_name": "diacritics", "type": "JOURNAL",
+        "issn": "0300-7162", "eissn": "1080-6539", "scopus_id": "5700156387",
+        "wikidata_id": "Q5270247", "openalex_id": "S149853692"
       },
       "authors_preview": ["Hortense J Spillers"],
       "contributors_preview": [
@@ -93,26 +114,22 @@ GET /search/works?author=silva&subject=anthropology&limit=10                    
       "first_author_identifiers": null,
       "cited_by_count": 1075,
       "references_count": 0,
-      "added_to_database": "2025-08-29T20:47:32.000Z",
+      "added_to_database": "2025-08-29T17:47:32.000Z",
       "data_source": "search",
       "search_engine": "Manticore",
       "_links": { "self": "/works/2689796" },
       "relevance": null
     }
-    // ... (2 returned of total 14580)
   ],
-  "pagination": { "page": 1, "limit": 2, "total": 14580, "totalPages": 7290, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 18039, "totalPages": 9020, "hasNext": true, "hasPrev": false },
   "meta": {
     "query": "kinship",
     "search_type": "fulltext",
+    "match_mode": "any_publication",
+    "pagination_total_exact": true,
     "performance": {
-      "engine": "Manticore",
-      "query_type": "search",
-      "match_mode": "any_publication",
-      "primary_query_ms": 4,
-      "elapsed_ms": 5,
-      "controller": "searchWorks",
-      "controller_time_ms": 5
+      "engine": "Manticore", "query_type": "search", "match_mode": "any_publication",
+      "primary_query_ms": 9, "elapsed_ms": 11, "controller": "searchWorks", "controller_time_ms": 11
     },
     "request": { "method": "GET", "path": "/search/works?q=kinship&limit=2" },
     "pagination_extras": { "offset": 0 }
@@ -120,99 +137,57 @@ GET /search/works?author=silva&subject=anthropology&limit=10                    
 }
 ```
 
-### Fields — `data[]` (work row)
+### Fields
 
-| field (dot-path) | type | notes |
-|---|---|---|
-| `id` | int | Work id. Navigate to `/works/{id}`. |
-| `publication_id` | int | Latest matching publication id — navigate to `/publications/{id}`. |
-| `publications_count` | int | Total publications on the work. |
-| `title` | string | Work title. |
-| `subtitle` | string \| null | |
-| `abstract` | string \| null | Can be very long. |
-| `type` | enum string | Displayed work type from the primary publication: `ARTICLE, BOOK, CHAPTER, THESIS, CONFERENCE, CONFERENCE_PAPER, REPORT, DATASET, PREPRINT, REVIEW, EDITORIAL, OTHER`. |
-| `language` | string \| null | ISO code (`en`, `pt`, …). |
-| `publication_year` | int \| null | Year of the displayed publication. |
-| `doi` | string \| null | |
-| `open_access` | boolean | From the primary publication. |
-| `peer_reviewed` | boolean | From the primary publication. |
-| `venue` | object \| null | Displayed publication's venue (see sub-table). |
-| `venue.id` | int | |
-| `venue.name` | string | |
-| `venue.abbreviated_name` | string \| null | Always paired with `name`. |
-| `venue.type` | enum string | `JOURNAL, CONFERENCE, REPOSITORY, BOOK_SERIES, SOURCE_BOOK, OTHER`. |
-| `venue.issn` | string \| null | |
-| `venue.eissn` | string \| null | |
-| `venue.scopus_id` | string \| null | |
-| `venue.wikidata_id` | string \| null | |
-| `venue.openalex_id` | string \| null | |
-| `authors_preview` | string[] | Up to 3 contributor display names, deduplicated by person and ordered AUTHOR first. Plain strings, no role — use `contributors_preview` to tell an author from a translator. |
-| `contributors_preview` | object[] | The same people carrying their role: `{ person_id, name, role, roles[], position }`. See [works › Contributor roles and positions](./works.md#contributor-roles-and-positions). |
-| `author_count` | int | Distinct people credited across every role; someone credited as both `AUTHOR` and `EDITOR` counts once. |
-| `first_author` | object \| null | `{ person_id, name }`. Always an `AUTHOR`-role contributor. |
-| `first_author.person_id` | int | |
-| `first_author.name` | string | |
-| `first_author_id` | int \| null | Duplicate of `first_author.person_id`. |
-| `first_author_identifiers` | object \| null | Usually `null`. |
-| `cited_by_count` | int | Incoming citations (`works.citation_count`). |
-| `references_count` | int | Outgoing references. |
-| `added_to_database` | ISO datetime | `works.created_at`. |
-| `data_source` | string | Constant `"search"`. |
-| `search_engine` | string | Constant `"Manticore"`. |
-| `_links.self` | string | `/works/{id}`. |
-| `relevance` | null | **Always null** — never surfaced (see intro). |
+The row is the `/works` list item. Its full field table is in [works › `GET /works`](./works.md#get-works) and is not repeated here. Search-specific points:
 
-### Fields — `meta`
+| field | notes |
+|---|---|
+| `publication_id`, `type`, `publication_year`, `doi`, `open_access`, `peer_reviewed`, `venue` | Taken from the **latest publication that matches the filters**. With `type=PREPRINT`, a work holding a PREPRINT and a newer ARTICLE shows the PREPRINT. |
+| `data_source` / `search_engine` | `"search"` / `"Manticore"` on the full-text path; `"full_api"` / `"MariaDB"` on the browse path. |
+| `relevance` | Always `null`. |
+| `meta.query` | Echoed `q`; empty string when absent. |
+| `meta.search_type` | Constant `"fulltext"`, on both paths. |
+| `meta.match_mode` | `"any_publication"`. |
+| `meta.pagination_total_exact` | `true` on the full-text path. On the browse path it is `false` when the count fell back to the corpus estimate. |
+| `meta.performance.*` | `engine` (`Manticore`/`MariaDB`), `query_type` (`search` / `showcase_optimized`), `primary_query_ms`, `elapsed_ms`, `controller`, `controller_time_ms`. |
 
-| field | type | notes |
-|---|---|---|
-| `meta.query` | string | Echoed `q` (empty string on filter-only queries). |
-| `meta.search_type` | string | Constant `"fulltext"`. |
-| `meta.performance.engine` | string | `"Manticore"`. |
-| `meta.performance.query_type` | string | `"search"`. |
-| `meta.performance.match_mode` | string | `"any_publication"` — a work matches if any of its publications matches the filters. |
-| `meta.performance.primary_query_ms` | int | Manticore query time. |
-| `meta.performance.elapsed_ms` | int | Total search time. |
-| `meta.performance.controller` | string | `"searchWorks"`. |
-| `meta.performance.controller_time_ms` | int | |
-| `meta.pagination_extras.offset` | int | Effective offset (from `offset` param or derived from `page`). |
-| `meta.request` | object | `{ method, path }`. |
+### Notes
 
-### Notes / caveats
+- **Relevance order** (the default with a text term) is computed per field:
+  - Each matched query word counts once, and twice when the matched words sit contiguously.
+  - Field weights: `title` 10, `authors` 6, `subtitle`/`subjects`/`venue` 4, `abstract` 2.
+  - A BM25 term and a citation boost (`min(citation_count, 1000)`) are added.
 
-- Pagination `total` is **exact** (Manticore `COUNT(*)`); no `pagination_total_exact` flag or estimate fallback is emitted here.
-- `match_mode: "any_publication"` — the `type`/`year`/`open_access`/`peer_reviewed` filters match a work if **any** of its publications qualifies, and the displayed publication is the latest matching one.
-- Real cardinalities for calibration: `q=kinship` → 14 580 works; `venue=mana` → 959 works.
-- Validation failures return the standard 400 envelope with `errors[]` (`{ type, value, msg, path, location }`) — e.g. `q=a` → `"Search query must be between 2 and 200 characters"`; `sort_by=bogus` → the sort_by enum message.
-- To search authors or subjects specifically, prefer the `author`/`subject` filters (scoped Manticore fields) over stuffing names into `q` (which also matches title/abstract text).
-- **Relevance order** (the default sort): per field, the query words a work matches count once each and twice when they sit contiguously, weighted by field (`title` 10, `authors` 6, `subtitle`/`subjects`/`venue` 4, `abstract` 2), plus a BM25 term and a citation boost (`min(citation_count, 1000)`). An exact-title query therefore ranks that title first (`q=Cultural Nationalism in Contemporary Japan` → the book itself at #1); a very highly cited work matching only part of the query can still outrank an uncited exact title. Word order inside a field is not scored. Attribute sorts (`cited_by_count`, `references_count`, `publication_year`, `id`) skip relevance scoring entirely.
-- **Query text is literal.** Manticore syntax characters (`@ ( ) ~ / " ^ $ < = > | ! * ' \` `` ` `` `-`) are stripped and the query is lower-cased, so words such as `MAYBE`, `SENTENCE`, `PARAGRAPH`, `NEAR` or `ZONE:` are ordinary search terms, never operators.
+  An exact title query therefore ranks that title first: `q=Cultural Nationalism in Contemporary Japan` returns the book at #1. The attribute sorts skip relevance scoring.
+- `sort_by=publication_year` orders by the latest publication year of the work. On the full-text path, works without any year are indexed as year 0, so they open an ascending sort and close a descending one.
+- An inverted year range (`year_from > year_to`) is swapped on the full-text path.
+- **Searching for editors or translators.** The `authors` field holds AUTHOR-role contributors only. `author=barry kernfeld` matches 523 works, while the person also has 837 edited volumes. List everything a person contributed through [`/persons/{id}/works`](./persons.md#get-personsidworks).
+- Every request with a non-empty `q` is recorded for [`/search/popular`](#get-searchpopular).
+- Live cardinalities (dev, 2026-10-14): `q=kinship` 18,039; `q=european union` 80,569; `venue=mana` 906; `type=THESIS` 10,614 (exact count on the browse path).
 
 ---
 
 ## `GET /search/advanced`
 
-Works search served by the same Manticore engine as `/search/works`, but wrapping the rows under `data.results` alongside a `data.facets` object. **Faceting is not implemented** — `data.facets` is always an empty object `{}`. Use it exactly like `/search/works` (same filters, same paginated exact totals); the only structural difference is the `data.results` nesting and the absence of the `relevance` key on rows.
+Same engine, parameters and validation as `/search/works`, with two differences:
 
-### Query parameters
+- Rows are nested under `data.results`, and `data.facets` is always `{}`. Faceting is not implemented, so build filter UI from the static enums.
+- An extra `work_type` alias of `type` is accepted. It takes precedence when both are set.
 
-Same set as `/search/works`, with one extra alias:
-
-| param | type | default | accepted values / bounds | effect |
-|---|---|---|---|---|
-| `work_type` | enum | — | same 12-value work-type enum | Alias of `type` (both accepted; `work_type` takes precedence when both set). |
-
-All of `q, work_type, type, language, year_from, year_to, peer_reviewed, open_access, venue_name, venue, author, subject` plus the shared `cited_by_min/cited_by_max, sort_by, sort_order, page/limit, offset` behave identically to `/search/works`. `peer_reviewed`/`open_access` here are matched strictly against the strings `"true"`/`"false"`.
+Requests are not recorded for `/search/popular`.
 
 ### Example requests
 
 ```
 GET /search/advanced?q=ritual&author=silva&limit=20
 GET /search/advanced?work_type=ARTICLE&year_from=2018&language=pt&limit=10
-GET /search/advanced?venue=mana&sort_by=cited_by_count&sort_order=DESC
+GET /search/advanced?q=ritual&peer_reviewed=1
 ```
 
 ### Example response
+
+`GET /search/advanced?q=ritual&author=silva&limit=2`, first row shown:
 
 ```json
 {
@@ -225,7 +200,7 @@ GET /search/advanced?venue=mana&sort_by=cited_by_count&sort_order=DESC
         "publications_count": 1,
         "title": "Remarks on Similarity in Ritual Classification",
         "subtitle": "Affliction, Divination, and Object Animation",
-        "abstract": "In her article, Silva considers the significance of similarity ... (long text)",
+        "abstract": "… (long text)",
         "type": "ARTICLE",
         "language": "en",
         "publication_year": 2013,
@@ -233,40 +208,35 @@ GET /search/advanced?venue=mana&sort_by=cited_by_count&sort_order=DESC
         "open_access": false,
         "peer_reviewed": true,
         "venue": {
-          "id": 1012740,
-          "name": "History of Religions",
-          "abbreviated_name": "Hist. Relig.",
-          "type": "JOURNAL",
-          "issn": "0018-2710",
-          "eissn": "1545-6935",
-          "scopus_id": "26797",
-          "wikidata_id": null,
-          "openalex_id": "S99675065"
+          "id": 1012740, "name": "History of Religions", "abbreviated_name": "Hist. Relig.", "type": "JOURNAL",
+          "issn": "0018-2710", "eissn": "1545-6935", "scopus_id": "26797", "wikidata_id": null, "openalex_id": "S99675065"
         },
         "authors_preview": ["Sónia Silva"],
+        "contributors_preview": [
+          { "person_id": 3621666, "name": "Sónia Silva", "role": "AUTHOR", "roles": ["AUTHOR"], "position": 1 }
+        ],
         "author_count": 1,
         "first_author": { "person_id": 3621666, "name": "Sónia Silva" },
         "first_author_id": 3621666,
         "first_author_identifiers": null,
         "cited_by_count": 4,
         "references_count": 10,
-        "added_to_database": "2025-10-07T20:29:47.000Z",
+        "added_to_database": "2025-10-07T17:29:47.000Z",
         "data_source": "search",
         "search_engine": "Manticore",
         "_links": { "self": "/works/3974425" }
       }
-      // ... (2 returned of total 110)
     ],
     "facets": {}
   },
-  "pagination": { "page": 1, "limit": 2, "total": 110, "totalPages": 55, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 207, "totalPages": 104, "hasNext": true, "hasPrev": false },
   "meta": {
     "query": "ritual",
     "search_type": "fulltext_faceted",
     "filters_applied": 1,
     "engine": "Manticore",
     "pagination_total_exact": true,
-    "performance": { "controller_time_ms": 3 },
+    "performance": { "controller_time_ms": 5 },
     "request": { "method": "GET", "path": "/search/advanced?q=ritual&author=silva&limit=2" },
     "pagination_extras": { "offset": 0 }
   }
@@ -275,181 +245,148 @@ GET /search/advanced?venue=mana&sort_by=cited_by_count&sort_order=DESC
 
 ### Fields
 
-| field (dot-path) | type | notes |
+| field | type | notes |
 |---|---|---|
-| `data.results[]` | array | Work rows — **identical shape to `/search/works` data rows EXCEPT the `relevance` key is absent** here. See that endpoint's field table. |
-| `data.facets` | object | **Always `{}`.** Faceting is not implemented; do not expect year/type/language/venue buckets. |
-| `pagination` | object | Standard `{ page, limit, total, totalPages, hasNext, hasPrev }`, total exact. |
-| `meta.query` | string | Echoed `q` (empty on filter-only). |
+| `data.results[]` | array | `/search/works` rows without the `relevance` key. |
+| `data.facets` | object | Always `{}`. |
+| `meta.query` | string | Echoed `q` (empty on filter-only requests). |
 | `meta.search_type` | string | Constant `"fulltext_faceted"`. |
-| `meta.filters_applied` | int | Count of active (non-empty) filters. |
-| `meta.engine` | string | `"Manticore"` when a full-text/text clause participates, else `"MariaDB"` (pure filter-only). |
-| `meta.pagination_total_exact` | boolean | Reports whether `total` is exact (typically `true`). |
+| `meta.filters_applied` | int | Number of non-empty filters other than `q`, sort and pagination. |
+| `meta.engine` | string | `"Manticore"` when a text term participates, else `"MariaDB"`. |
+| `meta.pagination_total_exact` | boolean | Same semantics as on `/search/works`. |
 | `meta.performance.controller_time_ms` | int | Controller wall time. |
-| `meta.pagination_extras.offset` | int | Effective offset. |
-| `meta.request` | object | `{ method, path }`. |
-
-### Notes / caveats
-
-- The endpoint's advertised differentiator (facets) is inert: `data.facets` is a permanent empty object and no `meta.search_engine`/`meta.faceted_search` keys are returned. This is a known limitation logged as an operator follow-up — see [../API_ISSUES.md](../API_ISSUES.md). Build filter UI from the static enums documented above, not from a facets response.
-- Everything else matches `/search/works`: exact totals, `any_publication` semantics, same validation rules and error envelope. Real cardinality: `q=ritual&author=silva` → 110 works.
 
 ---
 
 ## `GET /search/global`
 
-Simultaneous search across works **and** persons in one round-trip (institutions search is permanently disabled for performance). `q` is **required**. There is no cross-entity pagination — each entity block returns its own `total` and a `results[]` slice capped at `limit`.
+Works and persons in one round trip, for a unified search box. There is no cross-entity pagination: each block returns its own `total` and a `results[]` slice capped at `limit`. Institutions are not searched here; use `/institutions?q=`. The query is recorded for `/search/popular`.
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `q` | string | — | **required**, min 2 chars | Full-text query run against both the works and persons Manticore indexes. |
-| `limit` | integer | 5 | 1 .. 20 | Max rows returned **per entity type** (applies independently to works and persons). |
-
-### Example requests
-
-```
-GET /search/global?q=anthropology
-GET /search/global?q=viveiros+de+castro&limit=10
-```
+| `q` | string | — | **required**, 2–200 chars | Run against the works and persons indexes. |
+| `limit` | integer | 5 | 1–20 (400 outside) | Rows per entity block. |
 
 ### Example response
+
+`GET /search/global?q=anthropology&limit=1`, `abstract` trimmed:
 
 ```json
 {
   "status": "success",
   "data": {
     "works": {
-      "total": 296845,
+      "total": 408629,
       "results": [
         {
-          "id": 2514643,
-          "publication_id": 1021394,
+          "id": 7098772,
+          "publication_id": 1112197633,
           "publications_count": 1,
           "title": "Anthropology as Cultural Critique",
           "subtitle": "An Experimental Moment in the Human Sciences",
-          "abstract": "Using cultural anthropology to analyze debates ... (long text)",
-          "type": "ARTICLE",
+          "abstract": "… (long text)",
+          "type": "BOOK",
           "language": "en",
-          "publication_year": 1987,
-          "doi": "10.2307/1386453",
+          "publication_year": 1999,
+          "doi": "10.7208/chicago/9780226229539.001.0001",
           "open_access": false,
           "peer_reviewed": true,
           "venue": {
-            "id": 1012231,
-            "name": "Journal for the Scientific Study of Religion",
-            "abbreviated_name": "J. Sci. Study Relig.",
-            "type": "JOURNAL",
-            "issn": "0021-8294",
-            "eissn": "1468-5906",
-            "scopus_id": "27285",
-            "wikidata_id": "Q6294702",
-            "openalex_id": "S207420867"
+            "id": 1683204, "name": "Anthropology as Cultural Critique", "abbreviated_name": null, "type": "SOURCE_BOOK",
+            "issn": null, "eissn": null, "scopus_id": null, "wikidata_id": null, "openalex_id": null
           },
-          "authors_preview": ["David D Laitin", "George E Marcus", "M M J Fischer"],
+          "authors_preview": ["George E Marcus", "M M J Fischer", "达居 蓝"],
+          "contributors_preview": [
+            { "person_id": 3591298, "name": "George E Marcus", "role": "AUTHOR", "roles": ["AUTHOR"], "position": 1 },
+            { "person_id": 3890, "name": "M M J Fischer", "role": "AUTHOR", "roles": ["AUTHOR"], "position": 2 },
+            { "person_id": 9316915, "name": "达居 蓝", "role": "AUTHOR", "roles": ["AUTHOR"], "position": 3 }
+          ],
           "author_count": 4,
-          "first_author": { "person_id": 147469, "name": "David D Laitin" },
-          "first_author_id": 147469,
+          "first_author": { "person_id": 3591298, "name": "George E Marcus" },
+          "first_author_id": 3591298,
           "first_author_identifiers": null,
           "cited_by_count": 1071,
           "references_count": 0,
-          "added_to_database": "2025-08-18T22:36:47.000Z",
+          "added_to_database": "2026-02-03T23:33:26.000Z",
           "data_source": "search",
           "search_engine": "Manticore",
-          "_links": { "self": "/works/2514643" },
+          "_links": { "self": "/works/7098772" },
           "relevance": null
         }
-        // ... (limit rows of total 296845)
       ]
     },
     "persons": {
-      "total": 23,
+      "total": 26,
       "results": [
         {
-          "id": 8961609,
-          "_links": { "self": "/persons/8961609" },
-          "preferred_name": "IEA RAS Moscow Russia Center for Medical Anthropology",
-          "given_names": "IEA RAS Moscow Russia Center for Medical",
+          "id": 9472721,
+          "_links": { "self": "/persons/9472721" },
+          "preferred_name": "Department of Anthropology",
+          "given_names": "Department of",
           "family_name": "Anthropology",
           "name_signature": null,
           "identifiers": { "orcid": null, "lattes_id": null, "scopus_id": null, "wikidata_id": null, "openalex_id": null, "url": null },
           "is_verified": false,
-          "metrics": { "works_count": 2, "latest_publication_year": 2017 },
+          "metrics": { "works_count": 16, "latest_publication_year": 1941 },
           "relevance": null
         }
-        // ... (limit rows of total 23)
       ]
     },
     "institutions": {
-      "total": 0,
+      "total": null,
       "results": [],
-      "note": "Institutions search disabled for performance optimization"
+      "note": "Institutions are not part of the global search; query /institutions?q= instead"
     }
   },
   "meta": {
     "query": "anthropology",
-    "query_time_ms": 25,
+    "query_time_ms": 45,
     "sources": {
-      "works": { "engine": "Manticore", "query_type": "search", "match_mode": "any_publication", "primary_query_ms": 24, "elapsed_ms": 25, "controller": "searchWorks" },
+      "works": { "engine": "Manticore", "query_type": "search", "match_mode": "any_publication", "primary_query_ms": 44, "elapsed_ms": 45, "controller": "searchWorks" },
       "persons": { "engine": "Manticore", "query_type": "search", "controller": "searchPersons" },
       "institutions": null
     },
-    "controller_time_ms": 26,
-    "request": { "method": "GET", "path": "/search/global?q=anthropology&limit=2" }
+    "controller_time_ms": 46,
+    "request": { "method": "GET", "path": "/search/global?q=anthropology&limit=1" }
   }
 }
 ```
 
 ### Fields
 
-| field (dot-path) | type | notes |
+| field | type | notes |
 |---|---|---|
-| `data.works.total` | int | Total matching works (exact). |
-| `data.works.results[]` | array | Full work-row shape (same as `/search/works`, includes `relevance: null`), sliced to `limit`. |
-| `data.persons.total` | int | Total matching persons (exact). |
-| `data.persons.results[]` | array | Compact person-row shape — see `/search/persons` field table. |
-| `data.institutions.total` | int | **Always 0.** |
-| `data.institutions.results` | array | **Always `[]`.** |
-| `data.institutions.note` | string | `"Institutions search disabled for performance optimization"`. |
-| `meta.query` | string | Echoed `q`. |
-| `meta.query_time_ms` | int | Combined query time. |
-| `meta.sources.works` | object | Works performance block (`engine, query_type, match_mode, primary_query_ms, elapsed_ms, controller`). |
-| `meta.sources.persons` | object | Persons performance block (`engine, query_type, controller`). |
-| `meta.sources.institutions` | null | Always `null`. |
+| `data.works.total` | int | Exact Manticore count. |
+| `data.works.results[]` | array | `/search/works` rows (with `relevance: null`). |
+| `data.persons.total` | int | Exact Manticore count. |
+| `data.persons.results[]` | array | `/search/persons` rows. |
+| `data.institutions` | object | Always `{ total: null, results: [], note }`. `null` means "not searched", not zero. Hide the block or link to `/institutions?q=`. |
+| `meta.query_time_ms` | int | Combined works + persons time. |
+| `meta.sources.works` / `meta.sources.persons` | object | Per-entity performance blocks. `meta.sources.institutions` is `null`. |
 | `meta.controller_time_ms` | int | Controller wall time. |
-| `meta.request` | object | `{ method, path }`. |
 
-### Notes / caveats
-
-- Intended for a unified "search everything" box. Render the `works` and `persons` blocks separately; the `institutions` block is inert by design (empty with an explanatory `note`) — hide it or show a disabled state, do not treat `total: 0` as "no results found".
-- No pagination: to page deeper into either entity, switch to `/search/works` or `/search/persons` with the same `q`.
-- Real cardinalities: `q=anthropology` → 296 845 works, 23 persons.
+To page deeper, switch to `/search/works` or `/search/persons` with the same `q`.
 
 ---
 
 ## `GET /search/persons`
 
-Full-text researcher/author name search via Manticore over `preferred_name, given_names, family_name`. `q` is **required**. Each row is a **compact** `PersonSearchItem`, not the full profile returned by `/persons/{id}` (see [./persons.md](./persons.md)). Paginated with exact totals.
+Researcher and author name search over `preferred_name, given_names, family_name`. Names are unstemmed; every term is required. Each row is a compact person item, not the full profile of `/persons/{id}`. Totals are exact Manticore counts. `/persons?search=` (or `q=`) runs the same search with the `/persons` list envelope.
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `q` | string | — | **required**, 2–255 chars | Person name full-text query. |
-| `verified` | boolean | — | `1/0/true/false` | Restrict to verified persons when true (honoured by the controller; not otherwise surfaced). |
+| `q` | string | — | **required**, 2–200 chars | Name query. |
+| `verified` | boolean | — | `1/0/true/false` (400 otherwise) | Restrict by `is_verified`. Echoed as a boolean in `meta.verified`. |
 
-Plus the shared pagination params `page`/`limit`, `offset`/`limit` — see [../00-conventions.md](../00-conventions.md).
-
-### Example requests
-
-```
-GET /search/persons?q=silva&limit=20
-GET /search/persons?q=viveiros&verified=true&limit=10
-GET /search/persons?q=silva&limit=20&offset=40
-```
+Plus `page`/`limit`/`offset`.
 
 ### Example response
+
+`GET /search/persons?q=silva&limit=2`, first row shown:
 
 ```json
 {
@@ -462,21 +399,13 @@ GET /search/persons?q=silva&limit=20&offset=40
       "given_names": "Kleber Aparecido Da Silva",
       "family_name": "Silva",
       "name_signature": null,
-      "identifiers": {
-        "orcid": "0000-0002-7815-7767",
-        "lattes_id": null,
-        "scopus_id": null,
-        "wikidata_id": null,
-        "openalex_id": null,
-        "url": null
-      },
+      "identifiers": { "orcid": "0000-0002-7815-7767", "lattes_id": null, "scopus_id": null, "wikidata_id": null, "openalex_id": null, "url": null },
       "is_verified": true,
-      "metrics": { "works_count": 47, "latest_publication_year": 2025 },
+      "metrics": { "works_count": 57, "latest_publication_year": 2025 },
       "relevance": null
     }
-    // ... (2 returned of total 27846)
   ],
-  "pagination": { "page": 1, "limit": 2, "total": 27846, "totalPages": 13923, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 35970, "totalPages": 17985, "hasNext": true, "hasPrev": false },
   "meta": {
     "query": "silva",
     "search_type": "fulltext",
@@ -487,70 +416,43 @@ GET /search/persons?q=silva&limit=20&offset=40
 }
 ```
 
-### Fields — `data[]` (person row)
+### Fields
 
-| field (dot-path) | type | notes |
-|---|---|---|
-| `id` | int | Person id. Navigate to `/persons/{id}`. |
-| `_links.self` | string | `/persons/{id}`. |
-| `preferred_name` | string | Display name. |
-| `given_names` | string \| null | |
-| `family_name` | string \| null | |
-| `name_signature` | null | Present but always `null` in results. |
-| `identifiers.orcid` | string \| null | |
-| `identifiers.lattes_id` | string \| null | |
-| `identifiers.scopus_id` | string \| null | |
-| `identifiers.wikidata_id` | string \| null | |
-| `identifiers.openalex_id` | string \| null | |
-| `identifiers.url` | string \| null | |
-| `is_verified` | boolean | Whether the person record is verified. |
-| `metrics.works_count` | int | Total works. |
-| `metrics.latest_publication_year` | int \| null | Most recent publication year. |
-| `relevance` | null | Always `null`. |
+The row is the `/persons` list item (see [persons › `GET /persons`](./persons.md#get-persons)) plus `relevance: null`. Differences:
 
-### Fields — `meta`
+- `name_signature` is always `null` here.
+- Only `identifiers.orcid` can be populated. `lattes_id` and `scopus_id` are not read on this path. `wikidata_id`, `openalex_id` and `url` have no source column and are always `null`.
 
-| field | type | notes |
-|---|---|---|
-| `meta.query` | string | Echoed `q`. |
-| `meta.search_type` | string | Constant `"fulltext"`. |
-| `meta.performance.engine` | string | `"Manticore"`. |
-| `meta.performance.query_type` | string | `"search"`. |
-| `meta.performance.controller` | string | `"searchPersons"`. |
-| `meta.performance.controller_time_ms` | int | |
-| `meta.pagination_extras.offset` | int | Effective offset. |
-| `meta.request` | object | `{ method, path }`. |
+| meta field | notes |
+|---|---|
+| `meta.query` | Echoed `q`. |
+| `meta.search_type` | Constant `"fulltext"`. |
+| `meta.verified` | Boolean; present only when `verified` was supplied. |
+| `meta.performance.*` | `engine` (`"Manticore"`), `query_type` (`"search"`), `controller`, `controller_time_ms`. |
 
-### Notes / caveats
+### Notes
 
-- This compact row does **not** include the full-profile blocks (`primary_affiliation`, `authorship_profile`, `subject_expertise`, `top_collaborators`, `recent_works`, `h_index`, `total_citations`, `created_at`, timestamps). Fetch `/persons/{id}` for those (see [./persons.md](./persons.md)). Identifiers live only under `identifiers{}`, not duplicated at top level.
-- Totals are exact. Real cardinality: `q=silva` → 27 846 persons.
-- Beware that some "persons" are institutional author strings (e.g. `"Society For Medical Anthropology"`) — this reflects the underlying data, not a bug.
+- Ranking: names matching the query words in order rank first (`preferred_name` 10, `family_name` 6, `given_names` 4), then a BM25 term and a productivity boost (`min(total_works, 500)`).
+- Some "persons" are institutional author strings (e.g. `"Department of Anthropology"`). This reflects the data.
+- Live cardinalities (dev, 2026-10-14): `q=silva` 35,970; with `verified=true`, 16,698.
 
 ---
 
 ## `GET /search/autocomplete`
 
-Typeahead suggestions blending work **titles**, **author** names, and **venue** names. Each kind is searched in its own Manticore field — titles in work titles, authors in author names, venues in venue names — with the **last typed term matched as a prefix** (`kins` → `kinship`, `Kinsella`) and earlier terms as whole words; the matching works (most-cited first) are then hydrated from MariaDB. Not paginated; returns a single flat `suggestions[]` list.
+Typeahead suggestions blending work **titles**, **author** names and **venue** names. Each kind is searched in its own Manticore field. The **last term matches as a prefix** from 3 characters on (`kins` → *kinship*, *Kinsella*), and earlier terms match as whole words. The most-cited matching works are then hydrated from MariaDB. Not paginated. Requests are not recorded for `/search/popular`.
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `q` | string | — | min 2 chars (a query < 2 chars returns the short-query shape, still HTTP 200) | The prefix/term to autocomplete. |
-| `type` | enum | `all` | `all, titles, authors, venues` | Which suggestion kinds to include. |
-| `limit` | integer | 10 | 1 .. 20 (clamped) | Max suggestions returned. |
+| `q` | string | — | up to 200 chars (400 above). Shorter than 2 chars, or absent, returns the short-query shape (HTTP 200). | Text to complete. |
+| `type` | enum | `all` | `all, titles, authors, venues` (400 otherwise) | Suggestion kinds. |
+| `limit` | integer | 10 | 1–20 (400 outside) | Maximum suggestions. |
 
-### Example requests
+### Example response (`type=all`)
 
-```
-GET /search/autocomplete?q=kins
-GET /search/autocomplete?q=silva&type=authors&limit=5
-GET /search/autocomplete?q=nature&type=venues&limit=8
-GET /search/autocomplete?q=a          # short-query branch → suggestions:[], message:"Query too short"
-```
-
-### Example response (normal, `type=all`)
+`GET /search/autocomplete?q=kins`, abridged:
 
 ```json
 {
@@ -559,33 +461,25 @@ GET /search/autocomplete?q=a          # short-query branch → suggestions:[], m
     "query": "kins",
     "suggestions": [
       { "text": "American Kinship", "type": "title", "relevance": 1, "preview": "American Kinship" },
-      { "text": "The Elementary Structures of Kinship", "type": "title", "relevance": 1, "preview": "The Elementary Structures of Kinship" },
       { "text": "Bill Kinsey", "type": "author", "work_count": 3, "preview": "Bill Kinsey (3 works)" },
       {
-        "text": "Gender and Kinship",
-        "name": "Gender and Kinship",
+        "text": "Anthropological Perspectives on Kinship",
+        "name": "Anthropological Perspectives on Kinship",
         "abbreviated_name": null,
         "type": "venue",
         "work_count": 1,
-        "preview": "Gender and Kinship (1 works)"
+        "preview": "Anthropological Perspectives on Kinship (1 works)"
       }
-      // ... (10 total; mixed title/author/venue items)
     ],
     "type": "all",
     "count": 10,
-    "generated_at": "2026-10-02T18:52:10.114Z"
+    "generated_at": "2026-10-14T05:20:09.886Z"
   },
-  "meta": {
-    "query": "kins",
-    "type": "all",
-    "limit": 10,
-    "engine": "Manticore",
-    "request": { "method": "GET", "path": "/search/autocomplete?q=kins" }
-  }
+  "meta": { "query": "kins", "type": "all", "limit": 10, "engine": "Manticore", "request": { "method": "GET", "path": "/search/autocomplete?q=kins" } }
 }
 ```
 
-### Example response (short query, `q` < 2 chars, still HTTP 200)
+### Example response (short query, HTTP 200)
 
 ```json
 {
@@ -597,111 +491,91 @@ GET /search/autocomplete?q=a          # short-query branch → suggestions:[], m
 
 ### Fields
 
-| field (dot-path) | type | notes |
+| field | type | notes |
 |---|---|---|
-| `data.query` | string | Echoed query. Absent in the short-query shape. |
-| `data.suggestions[]` | array | Mixed items; each has a discriminating `type`. |
-| `suggestions[].text` | string | Display text (all item types). |
-| `suggestions[].type` | enum string | `"title"` \| `"author"` \| `"venue"`. |
-| `suggestions[].relevance` | int | **title items only** — count of works sharing that exact title among the matched works. Titles are ordered by this count, then by the citations of their most-cited work. |
-| `suggestions[].work_count` | int | **author + venue items only** — number of matched works for that author/venue (ordering key). |
-| `suggestions[].name` | string | **venue items only** — equals `text`. |
-| `suggestions[].abbreviated_name` | string \| null | **venue items only.** |
-| `suggestions[].preview` | string | Pre-formatted display string for all types (e.g. `"Evie Kins (4 works)"`, `"Journal … [J. Adolesc. Res.] (2 works)"`). |
-| `data.type` | string | Echoes the `type` param. Absent in the short-query shape. |
-| `data.count` | int | `suggestions.length`. Absent in the short-query shape. |
-| `data.generated_at` | ISO datetime | Absent in the short-query shape. |
-| `data.message` | string | **Short-query shape only** — `"Query too short"`. |
-| `meta.query` | string | Echoed query. |
-| `meta.type` | string | Echoed type. |
-| `meta.limit` | int | Effective clamped limit. |
-| `meta.engine` | string | `"Manticore"`. **Absent in the short-query shape.** |
-| `meta.request` | object | `{ method, path }`. |
+| `data.query` | string | Echoed query. Absent in the short shape. |
+| `data.suggestions[]` | array | Mixed items, discriminated by `type`. With `type=all`, the list is the first three titles, then three authors, then three venues, then any remainder. |
+| `suggestions[].text` | string | Display text. |
+| `suggestions[].type` | enum | `"title"` \| `"author"` \| `"venue"`. |
+| `suggestions[].relevance` | int | **Title items only.** Number of matched works sharing that exact title. Titles are ordered by this count, then by the citations of their most-cited work. |
+| `suggestions[].work_count` | int | **Author and venue items only.** Number of works carrying that name **among the sampled matches** (the top `limit × 5` matching works by citations), not the person's or venue's total. The `preview` string reuses this number. |
+| `suggestions[].name` / `abbreviated_name` | string | **Venue items only.** |
+| `suggestions[].preview` | string | Ready-to-display string. |
+| `data.type`, `data.count`, `data.generated_at` | | Absent in the short shape. |
+| `data.message` | string | Short shape only: `"Query too short"`. |
+| `meta.engine` | string | `"Manticore"`. Absent in the short shape. |
 
-### Notes / caveats
+### Notes
 
-- **Two response shapes**: the frontend must handle both. The normal shape carries `data.{query,type,count,generated_at}` and `meta.engine`; the short-query shape (`q` shorter than 2 characters) returns HTTP 200 with `data: { suggestions: [], message }` and no `engine`/`count`/`generated_at`. Key off `Array.isArray(data.suggestions)` plus the presence of `data.count`.
-- Suggestion items are heterogeneous — switch on `suggestions[].type` to render each (title vs author-with-work-count vs venue-with-abbreviation). The `preview` string is safe to display verbatim if you don't want to compose your own.
-- On an internal full-text failure the endpoint returns an empty `suggestions` list rather than an error inside a success envelope.
-- **Prefix rule.** The last term completes as a prefix only from 3 characters on (the index's `min_prefix_len`); a shorter trailing fragment is ignored while earlier terms exist (`antropologia ur` suggests for `antropologia`), and a lone 2-character query matches that exact word. Prefix expansion is capped at the 128 most frequent completions, so very rare spellings of a short prefix may not surface.
-- **Author and venue items always contain every typed term** (case- and accent-insensitive) — names that only matched through a co-author or a sibling publication's venue are dropped. Title items match on stems (`movimentos` also finds `movimento`), so they are not filtered that way.
+- Handle both shapes. Key off `Array.isArray(data.suggestions)` plus the presence of `data.count`.
+- **Prefix rule.**
+  - A trailing fragment shorter than 3 characters is ignored while earlier terms exist: `antropologia ur` suggests for `antropologia`.
+  - A lone 2-character query matches that exact word.
+  - Prefix expansion is capped at the 128 most frequent completions.
+- **Author and venue items** must contain every typed term (case- and accent-insensitive substring), so names that matched only through a co-author or a sibling publication are dropped. Author suggestions come from the AUTHOR-role `authors` field. Title items match on stems.
+- If the full-text lookup fails, the endpoint returns an empty `suggestions` list, never an error inside a success envelope.
 
 ---
 
 ## `GET /search/popular`
 
-Most-frequent search/title terms across the corpus, served from a precomputed analytics aggregate. Fast (does not run heavy SQL) and cached; returns HTTP 200. Not paginated.
+The most frequent recent search queries, for "trending" chips on an empty search box.
+
+**Source.** Every `/search/works` request with a non-empty `q`, and every `/search/global` request, appends its query to a Redis list:
+- The query is stored whole, trimmed and lower-cased, not split into words.
+- The list key is `search_analytics:YYYY-MM-DD`, using the UTC date.
+- Each daily list keeps its newest 5,000 entries and expires after 30 days.
+
+**Aggregation.**
+- The endpoint counts identical query strings over every retained entry (up to 5,000) of each of the last 7 days.
+- Queries shorter than 2 characters and single common stop words are skipped.
+- Results are sorted by frequency, then alphabetically.
+- The top 50 are cached for 600 s under `autocomplete:v2:popular:terms:v2` and sliced to `limit`.
+
+Without Redis the list is empty: it is never an error and never a corpus scan.
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `limit` | integer | 20 | 1 .. 50 (clamped) | Max number of terms returned. |
-
-### Example requests
-
-```
-GET /search/popular
-GET /search/popular?limit=10
-```
+| `limit` | integer | 20 | 1–50 (clamped, not rejected) | Maximum terms returned. |
 
 ### Example response
+
+Values are illustrative; they depend on live traffic.
 
 ```json
 {
   "status": "success",
   "data": {
     "popular_terms": [
-      { "term": "social", "frequency": 57030, "type": "popular" },
-      { "term": "health", "frequency": 43064, "type": "popular" },
-      { "term": "education", "frequency": 32059, "type": "popular" },
-      { "term": "impact", "frequency": 29306, "type": "popular" },
-      { "term": "covid-19", "frequency": 29046, "type": "popular" }
-      // ... (up to `limit` terms)
+      { "term": "kinship", "frequency": 12, "type": "popular" },
+      { "term": "european union", "frequency": 7, "type": "popular" }
     ],
-    "generated_at": "2026-07-23T18:54:36.308Z"
+    "generated_at": "2026-10-14T05:20:09.967Z"
   },
-  "meta": {
-    "limit": 5,
-    "source": "autocomplete_popular",
-    "request": { "method": "GET", "path": "/search/popular?limit=5" }
-  }
+  "meta": { "limit": 5, "source": "autocomplete_popular", "request": { "method": "GET", "path": "/search/popular?limit=5" } }
 }
 ```
 
 ### Fields
 
-| field (dot-path) | type | notes |
+| field | type | notes |
 |---|---|---|
-| `data.popular_terms[]` | array | Ranked list, most frequent first. |
-| `popular_terms[].term` | string | The term (single word or token, e.g. `"covid-19"`). |
-| `popular_terms[].frequency` | int | Occurrence count in the aggregate. |
+| `popular_terms[].term` | string | A recorded query string (may contain several words). |
+| `popular_terms[].frequency` | int | Number of recorded requests with that query in the window. |
 | `popular_terms[].type` | string | Constant `"popular"`. |
 | `data.generated_at` | ISO datetime | When this response was assembled. |
 | `meta.limit` | int | Effective clamped limit. |
-| `meta.source` | string | Constant `"autocomplete_popular"`. |
-| `meta.request` | object | `{ method, path }`. |
+| `meta.source` | string | Constant `"autocomplete_popular"` (historical label). |
 
-### Notes / caveats
-
-- This endpoint previously returned `503 REQUEST_TIMEOUT` on every call (an unbounded cross-join over the corpus). It has been fixed to read from a cached analytics aggregate and now returns HTTP 200 in ~1 ms; the fix is recorded in [../API_ISSUES.md](../API_ISSUES.md) (P2). Frontends can rely on it for a "trending terms" / suggestion-chips UI.
-- Useful as pre-typed suggestion chips on an empty search box; feed a chosen `term` straight into `/search/works?q=`.
+Feed a chosen `term` straight into `/search/works?q=`.
 
 ---
 
 ## `GET /search/health`
 
-Reports the Manticore backend status and index topology. Public, unpaginated. Intended for status dashboards and diagnostics rather than end-user UI.
-
-### Query parameters
-
-None.
-
-### Example request
-
-```
-GET /search/health
-```
+Manticore backend status and table topology, for status dashboards rather than end-user UI. No parameters.
 
 ### Example response
 
@@ -723,7 +597,7 @@ GET /search/health
     "indexes": {
       "works": "Manticore table works (title, subtitle, abstract, authors, subjects, venue)",
       "persons": "Manticore table persons (preferred_name, given_names, family_name)",
-      "venues": "ft_venues_search (name + abbreviated_name) [MariaDB]"
+      "venues": "Manticore field venue for the works venue filter; MariaDB ft_venues_search (name + abbreviated_name) for the /publications venue filter"
     },
     "endpoints": {
       "basic_search": "/search/works",
@@ -738,22 +612,16 @@ GET /search/health
 
 ### Fields
 
-| field (dot-path) | type | notes |
+| field | type | notes |
 |---|---|---|
-| `data.search_engine` | string | `"Manticore"`. |
-| `data.backend` | string | `"manticore"` (from the runtime `SEARCH_BACKEND`). |
-| `data.reachable` | boolean | Whether the Manticore daemon responded. |
-| `data.error` | string | Present **only on failure** (Manticore unreachable). |
-| `data.tables[]` | array | `{ Table, Type }` per Manticore table. |
-| `data.tables[].Table` | string | Table name (`works`, `works_main`, `works_delta`, `persons`, `persons_main`, `persons_delta`). |
-| `data.tables[].Type` | string | `"distributed"` (the routed view) or `"local"` (main/delta shards). |
-| `data.indexes.works` | string | Descriptive: fields indexed for works. |
-| `data.indexes.persons` | string | Descriptive: fields indexed for persons. |
-| `data.indexes.venues` | string | Descriptive: notes venue filtering uses MariaDB `ft_venues_search`. |
-| `data.endpoints.*` | string | Route hints for the search family. |
-| `meta.request` | object | `{ method, path }`. |
+| `data.backend` | string | Runtime `SEARCH_BACKEND` (default `manticore`). |
+| `data.reachable` | boolean | Whether `searchd` answered. |
+| `data.error` | string | Present only when unreachable. |
+| `data.tables[]` | array | `{ Table, Type }`. Each distributed table (`works`, `persons`) fans out to its `*_main` and `*_delta` local tables. |
+| `data.indexes.*` | string | Descriptive labels. `venues` names both venue-filter backends: the Manticore `venue` field (works filter of `/works` and `/search/*`) and MariaDB `ft_venues_search` (`/publications` venue filter). `/venues` itself uses neither; it matches with LIKE. |
+| `data.endpoints.*` | string | Route hints. |
 
-### Notes / caveats
+### Notes
 
-- `reachable: false` plus a `data.error` string indicates Manticore is down — in that state `/search/works`, `/search/advanced`, `/search/global`, `/search/persons` and `/search/autocomplete` degrade or fail, since works/persons full-text has no MariaDB fallback. Only the `venue`/`venue_name` filter (MariaDB `ft_venues_search`) and the persons short-query LIKE path survive.
-- The `works`/`persons` distributed tables fan out to `*_main` (nightly full rebuild) + `*_delta` (recent-updates, rebuilt every few minutes) shards; a freshly-published record may lag until the next delta index run.
+- When `reachable` is `false`, `/search/works` and `/search/advanced` requests that carry a text term fail, and so do `/search/global`, `/search/persons` and `/persons?search=`. `/search/autocomplete` returns an empty `suggestions` list. There is no MariaDB fallback for works or persons full-text. Filter-only `/search/works` requests (MariaDB browse) keep working.
+- `*_main` holds a full build and `*_delta` holds the works and persons updated in the 48 h before the last delta build. Rebuilds are an operator task. A record created or updated after the last build resolves by id on `/works/{id}` or `/persons/{id}` but is missing from search until the index is rebuilt.

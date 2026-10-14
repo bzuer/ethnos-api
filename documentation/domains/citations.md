@@ -1,44 +1,41 @@
 # Citations — citation graph, references, bibliometrics and network for a work
 
-This domain exposes the **citation relationships of a single work**: who cites it, what it cites, its bibliometric summary, and a bounded citation-network graph. All four operations are nested under `/works/{id}` and are backed purely by the MariaDB `work_references` table (edges: `status` ∈ `PENDING|RESOLVED|FAILED`, `citation_type` ∈ `POSITIVE|NEUTRAL|NEGATIVE|SELF`) joined to `works`/`publications`/`venues`/`authorships` for hydration. **No Manticore/full-text is involved** — these are pure relational reads. The parent work resource itself lives in [./works.md](./works.md); the `cited_by_count` / `references_count` shown on work listings there come from the denormalized `works.citation_count` / `works.reference_count` columns and can differ from the exact `work_references` counts computed here (see caveats). Global response envelope, pagination (`page`/`limit` + `offset`/`limit`), error codes and rate-limiting are described in [../00-conventions.md](../00-conventions.md); this chapter documents only what is specific to citations.
+This domain exposes the **citation relationships of a single work**: who cites it, what it cites, its bibliometric summary and a bounded citation-network graph. All four operations are nested under `/works/{id}` and backed by the MariaDB `work_references` table (`status` ∈ `PENDING|RESOLVED|FAILED`, `citation_type` ∈ `POSITIVE|NEUTRAL|NEGATIVE|SELF` or `null`) joined to `works`/`publications`/`venues`/`authorships` for hydration. No Manticore is involved. The parent work lives in [./works.md](./works.md); envelope, pagination (default page size 10; an explicit `offset` is served as given and echoed in `meta.pagination_extras.offset`), error codes and rate limiting are in [../00-conventions.md](../00-conventions.md).
 
-An edge in `work_references` records "citing_work cites cited_work". A citation may be resolved by a **direct work link** (`cited_work_id` set) or only by a **DOI** (`cited_doi` set, `cited_work_id` null → the cited work is not yet in the corpus). `RESOLVED` means the cited work exists locally; `PENDING` is the normal state for a DOI not yet matched (not an error); `FAILED` is a resolution attempt that gave up.
+An edge records "citing work cites cited work". It is resolved by a **direct work link** (`cited_work_id` set, status `RESOLVED`: the cited work exists locally) or carries only a **DOI** (`cited_work_id` null, status `PENDING`: the cited work is not yet in the corpus — the normal state, not an error; `FAILED`: resolution gave up).
 
-All four endpoints are **public** (no key). Non-existent work ids return **404** via an existence guard (`SELECT id FROM works WHERE id=?`); invalid params return **400** with the standard express-validator envelope.
+Shared behaviour:
+
+- All four endpoints are **public**. A non-existent work id returns **404** `NOT_FOUND` (message like `"Citations for work with ID … not found"`); invalid params return **400** `VALIDATION_ERROR` with the express-validator `errors[]`.
+- Failures are surfaced, never masked as empty or zeroed data: a statement-budget overrun returns **503** `REQUEST_TIMEOUT`, other failures **500**.
+- **Two citation totals can disagree.** `/works` and `/publications` surface the denormalized `works.citation_count` as `cited_by_count`; this domain counts `work_references` rows. Measured 2026-10-14 for `7539537`: `cited_by_count` 21,493 vs 44,750 resolved citing works here. Decide per screen which is authoritative.
+- Row DTO artifacts: every citation row carries both `citing_work_id` and `cited_work_id`, but only one is populated (`citing_work_id` on `/citations`, `cited_work_id` on `/references`); `citation.context` is always `null` (no context text is stored).
 
 ---
 
 ## `GET /works/{id}/citations`
 
-Lists works that **cite** the target work (incoming edges). Public, MariaDB `work_references` joined to `works`/latest-publication/`venues`/`authorships`. Ordered by `MAX(wr.id) DESC` — most-recently-ingested citing edge first.
+Works that **cite** the target (incoming edges), one row per citing work, matched by `cited_work_id = id` **or** by `cited_doi` equal to any DOI of the target's publications. Ordered by the newest edge (`MAX(wr.id) DESC`).
 
-**Path parameters**
-
-| param | type | notes |
-|---|---|---|
-| `id` | integer ≥ 1 | Work id. 404 if the work does not exist. |
-
-**Query parameters**
+### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `type` | string | `all` | `all`, `POSITIVE`, `NEUTRAL`, `NEGATIVE`, `SELF` | Filters citing edges by `work_references.citation_type`. `all` = no filter. Invalid value → 400. |
-| `page` | integer | 1 | ≥ 1 | 1-based page. |
-| `limit` | integer | 20 | 1..100 | Page size. `0` or `>100` → 400. |
-| `offset` | integer | — | ≥ 0 | Alternative to `page`; skip N rows. Combined with `limit` it resolves to a page (e.g. `offset=2&limit=2` → page 2). |
+| `type` | string | `all` | `all`, `POSITIVE`, `NEUTRAL`, `NEGATIVE`, `SELF` (case-insensitive) | Filter by `citation_type`; `all` = no filter. Other values → 400. |
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | `limit` 1..100 | Pagination. |
 
-There are no shared citation/sort params on this endpoint (no `sort_by`, no `cited_by_*`) — it is a fixed most-recent-first order.
+No `sort_by` / `cited_by_*` params.
 
-**Example requests**
+### Example requests
 
 ```
-GET /works/7539537/citations?limit=2
-GET /works/7539537/citations?limit=20&type=NEUTRAL
+GET /works/7539537/citations?limit=1
+GET /works/7539537/citations?type=neutral&limit=20
 GET /works/7539537/citations?limit=20&offset=40
 GET /works/22519667/citations?limit=5        # a work with zero citations
 ```
 
-**Example response** (`7539537` "Using thematic analysis in psychology", trimmed to one array element; `total` really is 43,419):
+### Example response (`/works/7539537/citations?limit=1`, measured 2026-10-14)
 
 ```json
 {
@@ -47,99 +44,75 @@ GET /works/22519667/citations?limit=5        # a work with zero citations
     "work_id": 7539537,
     "citing_works": [
       {
-        "citing_work_id": 22479148,
+        "citing_work_id": 24221083,
         "cited_work_id": null,
-        "title": "Insights of Vietnamese American Women on Cervical Cancer Screening and HPV Self-Sampling",
+        "title": "Ethical AI for language assessment",
         "type": "ARTICLE",
-        "publication_year": 2026,
-        "venue_name": "Journal of Racial and Ethnic Health Disparities",
-        "venue_abbreviated_name": "J. Racial Ethn. Heal. Disparities",
-        "doi": "10.1007/s40615-026-03114-8",
-        "authors_count": 7,
-        "citation": { "type": "NEUTRAL", "status": "RESOLVED", "context": null }
+        "publication_year": 2025,
+        "venue_name": "Annual Review of Applied Linguistics",
+        "venue_abbreviated_name": "Annu. Rev. Appl. Linguist.",
+        "doi": "10.1017/s0267190525100081",
+        "authors_count": 2,
+        "citation": { "type": null, "status": "RESOLVED", "context": null }
       }
     ],
     "filters": { "type": "all" }
   },
-  "pagination": { "page": 1, "limit": 2, "total": 43419, "totalPages": 21710, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 1, "total": 44750, "totalPages": 44750, "hasNext": true, "hasPrev": false },
   "meta": {
-    "query_time_ms": 207,
+    "query_time_ms": 221,
     "source": "citations_analysis",
     "filters": { "type": "all" },
-    "request": { "method": "GET", "path": "/works/7539537/citations?limit=2" },
+    "request": { "method": "GET", "path": "/works/7539537/citations?limit=1" },
     "pagination_extras": { "offset": 0 }
   }
 }
 ```
 
-Empty case (`22519667`) is the identical envelope with `citing_works: []`, `pagination.total: 0`, `totalPages: 0`.
+With no citations (`22519667`) the envelope is identical with `citing_works: []` and `pagination.total: 0`.
 
-**Fields**
+### Fields
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `data.work_id` | integer | Echoes the path id. |
-| `data.citing_works[]` | array | One entry per distinct citing work, most-recently-ingested first. Empty when there are no citations (or none match `type`). |
-| `data.citing_works[].citing_work_id` | integer | Id of the work that cites the target. Link to `/works/{citing_work_id}`. |
-| `data.citing_works[].cited_work_id` | null | **Always `null`** here (the shared DTO carries both keys; only `citing_work_id` is meaningful on this endpoint). |
-| `data.citing_works[].title` | string \| null | Citing work title. |
-| `data.citing_works[].type` | string \| null | Publication type of the citing work's latest publication: `ARTICLE\|BOOK\|CHAPTER\|THESIS\|CONFERENCE\|CONFERENCE_PAPER\|REPORT\|DATASET\|PREPRINT\|REVIEW\|EDITORIAL\|OTHER`. |
-| `data.citing_works[].publication_year` | integer \| null | Year of the citing work (from its latest-publication summary). |
-| `data.citing_works[].venue_name` | string \| null | Falls back to the abbreviated name if the full name is null. |
-| `data.citing_works[].venue_abbreviated_name` | string \| null | Short venue name; may be null even when `venue_name` is set. |
-| `data.citing_works[].doi` | string \| null | DOI of the citing work. |
-| `data.citing_works[].authors_count` | integer | Count of `authorships` rows for the citing work; defaults `0`. |
-| `data.citing_works[].citation` | object | The edge summary between this citing work and the target. |
-| `data.citing_works[].citation.type` | string \| null | Aggregated citation type over the edges from that citing work (`MIN(citation_type)`): `POSITIVE\|NEUTRAL\|NEGATIVE\|SELF`. |
-| `data.citing_works[].citation.status` | string \| null | Derived: `RESOLVED` if any edge resolved, else `PENDING`, else `FAILED`. |
-| `data.citing_works[].citation.context` | null | **Always `null`** — no citation-context text is stored. |
-| `data.filters.type` | string | Echoes the requested `type` filter (`all` when unset). |
-| `pagination.*` | object | Standard block. `total` = **exact** `COUNT(DISTINCT citing_work_id)` (no statement-budget flag on this endpoint). |
-| `meta.query_time_ms` | integer | Server time for the request. |
-| `meta.source` | string | Constant `"citations_analysis"`. |
-| `meta.filters.type` | string | Duplicate of `data.filters.type`. |
-| `meta.pagination_extras.offset` | integer | Resolved offset. |
-| `meta.request.{method,path}` | object | From the global response formatter. |
+| `data.work_id` | integer | Path id. |
+| `data.citing_works[]` | array | One entry per citing work. |
+| `.citing_work_id` | integer | Link to `/works/{citing_work_id}`. |
+| `.title` | string \| null | Citing work title. |
+| `.type` | string \| null | Type of the citing work's latest publication. |
+| `.publication_year` | integer \| null | Year of that publication. |
+| `.venue_name` | string \| null | Falls back to the abbreviated name when the full name is null. |
+| `.venue_abbreviated_name` | string \| null | |
+| `.doi` | string \| null | DOI of that publication. |
+| `.authors_count` | integer | Distinct contributors (persons) of the citing work. |
+| `.citation.type` | string \| null | `MIN(citation_type)` over the edges from that citing work; `null` when untyped. Essentially all typed edges are `NEUTRAL` (7539537: 43,875 of 44,750). |
+| `.citation.status` | string | `RESOLVED` if any edge is resolved, else `PENDING`, else `FAILED`. |
+| `data.filters.type` / `meta.filters.type` | string | Effective filter, upper-cased (`all` when unset). |
+| `pagination.total` | integer | Exact `COUNT(DISTINCT citing_work_id)` over the same match. |
+| `meta.source` | string | `"citations_analysis"`. |
 
-**Notes / caveats**
-
-- The count is **exact** — there is no `pagination_total_exact` flag and no under-fill risk here.
-- **Latency:** the `COUNT(DISTINCT …)` and hydration on very-highly-cited works (tens of thousands of citations, e.g. `7539537`) can take a few hundred ms up to a few seconds. It still returns; do not set an aggressive client timeout for such works.
-- `type=SELF` / `POSITIVE` / `NEGATIVE` legitimately return `total: 0` for most works — in the current data essentially all edges are `NEUTRAL`.
-- `cited_work_id` is structurally always null here; use `citing_work_id` for navigation.
-- Related: reverse direction is `/works/{id}/references` (this section, below); aggregate counts are on `/works/{id}/metrics`.
+Latency grows with the citation count: ~0.2 s for 44,750 citations (measured 2026-10-14).
 
 ---
 
 ## `GET /works/{id}/references`
 
-Lists works that the target work **references** (outgoing edges), split into locally-resolved references and unresolved DOI-only references, with corpus-wide `counts`. Public, MariaDB `work_references`. No `type` filter here.
+What the target work **references** (outgoing edges), paginated over its `work_references` rows (`id DESC`) and split into resolved and unresolved lists, plus whole-work `counts`. No `type` filter.
 
-**Path parameters**
-
-| param | type | notes |
-|---|---|---|
-| `id` | integer ≥ 1 | Work id. 404 if the work does not exist. |
-
-**Query parameters**
+### Query parameters
 
 | param | type | default | bounds | effect |
 |---|---|---|---|---|
-| `page` | integer | 1 | ≥ 1 | 1-based page. |
-| `limit` | integer | 20 | 1..100 | Page size (paginates the combined reference rows). |
-| `offset` | integer | — | ≥ 0 | Alternative to `page`; same semantics as `/citations`. |
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | `limit` 1..100 | Paginates the reference rows. |
 
-No `type` filter and no sort params — references come back in the table's natural order.
-
-**Example requests**
+### Example requests
 
 ```
 GET /works/22519667/references?limit=3
-GET /works/22519667/references?limit=100      # whole reference list in one page
-GET /works/22519667/references?limit=20&page=2
+GET /works/22519667/references?limit=100      # the whole list (57 rows) in one page
 ```
 
-**Example response** (`22519667`, 56 references = 42 resolved / 14 unresolved; arrays trimmed):
+### Example response (`/works/22519667/references?limit=100`, measured 2026-10-14; arrays trimmed)
 
 ```json
 {
@@ -149,40 +122,28 @@ GET /works/22519667/references?limit=20&page=2
     "referenced_works": [
       {
         "citing_work_id": null,
-        "cited_work_id": 13047110,
-        "title": "Black Orthodox “Visual Piety”",
-        "type": "ARTICLE",
-        "publication_year": 2020,
-        "venue_name": "Journal of Africana Religions",
-        "venue_abbreviated_name": "J. Afr. Relig.",
-        "doi": "10.5325/jafrireli.8.1.0084",
-        "authors_count": 1,
-        "citation": { "type": "NEUTRAL", "context": null }
+        "cited_work_id": 2689413,
+        "title": "The Book of Jerry Falwell",
+        "type": "BOOK",
+        "publication_year": 2018,
+        "venue_name": "Book of Jerry Falwell",
+        "venue_abbreviated_name": null,
+        "doi": "10.2307/j.ctv301gc8",
+        "authors_count": 2,
+        "citation": { "type": null, "context": null }
       }
     ],
     "unresolved_references": [
-      {
-        "cited_doi": "10.1093/oso/9780198797852.003.0013",
-        "status": "PENDING",
-        "citation_type": "NEUTRAL",
-        "created_at": "2026-07-23T03:25:16.000Z",
-        "resolved_at": null
-      }
+      { "cited_doi": "10.1093/oso/9780198797852.003.0013", "status": "PENDING", "citation_type": "NEUTRAL", "created_at": "2026-07-23T00:25:16.000Z", "resolved_at": null }
     ],
     "unsolved": [
-      {
-        "cited_doi": "10.1093/oso/9780198797852.003.0013",
-        "status": "PENDING",
-        "citation_type": "NEUTRAL",
-        "created_at": "2026-07-23T03:25:16.000Z",
-        "resolved_at": null
-      }
+      { "cited_doi": "10.1093/oso/9780198797852.003.0013", "status": "PENDING", "citation_type": "NEUTRAL", "created_at": "2026-07-23T00:25:16.000Z", "resolved_at": null }
     ],
-    "counts": { "total": 56, "resolved": 42, "unresolved": 14 }
+    "counts": { "total": 57, "resolved": 47, "unresolved": 10 }
   },
-  "pagination": { "page": 1, "limit": 100, "total": 56, "totalPages": 1, "hasNext": false, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 100, "total": 57, "totalPages": 1, "hasNext": false, "hasPrev": false },
   "meta": {
-    "query_time_ms": 2,
+    "query_time_ms": 5,
     "source": "references_analysis",
     "request": { "method": "GET", "path": "/works/22519667/references?limit=100" },
     "pagination_extras": { "offset": 0 }
@@ -190,79 +151,38 @@ GET /works/22519667/references?limit=20&page=2
 }
 ```
 
-**Fields**
-
-Resolved references block (`data.referenced_works[]`):
+### Fields
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `data.work_id` | integer | Echoes the path id. |
-| `data.referenced_works[]` | array | RESOLVED references **on the current page only**, de-duplicated by `cited_work_id`. Page-scoped (see caveats). |
-| `data.referenced_works[].citing_work_id` | null | **Always `null`** here (shared DTO). |
-| `data.referenced_works[].cited_work_id` | integer | Referenced work id. Link to `/works/{cited_work_id}`. |
-| `data.referenced_works[].title` | string \| null | Referenced work title. |
-| `data.referenced_works[].type` | string \| null | Publication type enum (same set as `/citations`). |
-| `data.referenced_works[].publication_year` | integer \| null | Year of the referenced work. |
-| `data.referenced_works[].venue_name` | string \| null | Falls back to abbreviated name. |
-| `data.referenced_works[].venue_abbreviated_name` | string \| null | May be null. |
-| `data.referenced_works[].doi` | string \| null | Falls back to the edge's `cited_doi` when the work summary DOI is null. |
-| `data.referenced_works[].authors_count` | integer | Author count of the referenced work. |
-| `data.referenced_works[].citation` | object | `{ type, context }` — **note there is no `status` key here** (unlike `/citations`, where the row carries `citation.status`). |
-| `data.referenced_works[].citation.type` | string \| null | `POSITIVE\|NEUTRAL\|NEGATIVE\|SELF`. |
-| `data.referenced_works[].citation.context` | null | Always `null`. |
+| `data.referenced_works[]` | array | RESOLVED rows **of the current page**, one entry per `cited_work_id`. |
+| `.cited_work_id` | integer | Link to `/works/{cited_work_id}`. |
+| `.title` / `.type` / `.publication_year` / `.venue_name` / `.venue_abbreviated_name` / `.authors_count` | mixed | Same definitions as on `/citations`, for the referenced work. |
+| `.doi` | string \| null | Referenced work's DOI, falling back to the edge's `cited_doi`. |
+| `.citation` | object | `{ type, context }` — no `status` key here. |
+| `data.unresolved_references[]` | array | PENDING/FAILED rows **of the current page**: `{ cited_doi, status, citation_type (default NEUTRAL), created_at, resolved_at }`. |
+| `data.unsolved[]` | array | Exact alias of `unresolved_references`, kept for back-compat. |
+| `data.counts.total` | integer | All reference rows of the work (`= pagination.total`). |
+| `data.counts.resolved` | integer | RESOLVED rows with a `cited_work_id`, whole work. |
+| `data.counts.unresolved` | integer | PENDING + FAILED rows, whole work. |
+| `meta.source` | string | `"references_analysis"`. |
 
-Unresolved block (`data.unresolved_references[]`, and its alias `data.unsolved[]`):
-
-| field (dot-path) | type | notes |
-|---|---|---|
-| `data.unresolved_references[]` | array | PENDING/FAILED reference rows **on the current page**. |
-| `data.unresolved_references[].cited_doi` | string \| null | DOI that has not been resolved to a local work. |
-| `data.unresolved_references[].status` | string | `PENDING` (default) or `FAILED`. |
-| `data.unresolved_references[].citation_type` | string | `POSITIVE\|NEUTRAL\|NEGATIVE\|SELF`, default `NEUTRAL`. |
-| `data.unresolved_references[].created_at` | string(ISO) \| null | When the edge was recorded. |
-| `data.unresolved_references[].resolved_at` | string(ISO) \| null | `null` while unresolved. |
-| `data.unsolved[]` | array | **Exact alias of `unresolved_references`** (identical content, kept for back-compat). Prefer `unresolved_references`. |
-
-Counts block (corpus-wide, not page-scoped):
-
-| field (dot-path) | type | notes |
-|---|---|---|
-| `data.counts.total` | integer | All `work_references` rows for this work (= `pagination.total`). |
-| `data.counts.resolved` | integer | RESOLVED rows with a non-null `cited_work_id`, across the whole work (not just this page). |
-| `data.counts.unresolved` | integer | PENDING + FAILED rows, across the whole work. |
-| `pagination.*` | object | `total = counts.total`; **exact** count. |
-| `meta.source` | string | Constant `"references_analysis"`. |
-| `meta.query_time_ms` / `meta.pagination_extras.offset` / `meta.request.*` | — | Standard. |
-
-**Notes / caveats**
-
-- **Two different scopes on one payload.** `referenced_works` and `unresolved_references`/`unsolved` are **page-scoped** — they are split out of the current page's rows only. `counts` is **corpus-wide**. Drive summary badges ("42 resolved · 14 unresolved") off `data.counts`; render the two lists off the arrays. A page that happens to contain only resolved rows will show `unresolved_references: []` even though `counts.unresolved > 0` (and vice-versa). To get every resolved reference hydrated in one shot, request `limit=100` when `counts.total ≤ 100`.
-- The `unsolved` key is a redundant alias — do not treat it as a distinct dataset.
-- Fast endpoint (single-digit ms typical).
-- Related: reverse direction `/works/{id}/citations`; totals also appear on `/works/{id}/metrics` (`total_references_made`).
+The two lists are **page-scoped** while `counts` covers the whole work: drive summary badges ("47 resolved · 10 unresolved") off `counts` and render the lists off the arrays. A page can show `unresolved_references: []` while `counts.unresolved > 0`. Single-digit milliseconds typical.
 
 ---
 
 ## `GET /works/{id}/metrics`
 
-Bibliometric summary for one work: citations received, references made, citation-type breakdown, temporal span and impact flags. Public, MariaDB `work_references` + `publications`. No query params.
+Bibliometric summary for one work: citations received, references made, citation-type breakdown, temporal span and impact flags. No query params.
 
-**Path parameters**
-
-| param | type | notes |
-|---|---|---|
-| `id` | integer ≥ 1 | Work id. 404 if the work does not exist (the guard runs before the service's zeroed-metrics fallback, so a bad id is a real 404). |
-
-**Query parameters:** none.
-
-**Example requests**
+### Example requests
 
 ```
-GET /works/7539537/metrics       # highly-cited
+GET /works/7539537/metrics       # highly cited
 GET /works/22519667/metrics      # zero citations
 ```
 
-**Example response** (`7539537`):
+### Example response (`/works/7539537/metrics`, measured 2026-10-14)
 
 ```json
 {
@@ -273,89 +193,59 @@ GET /works/22519667/metrics      # zero citations
     "type": "ARTICLE",
     "publication_year": 2006,
     "citation_metrics": {
-      "total_citations_received": 43419,
+      "total_citations_received": 44750,
       "total_references_made": 34,
-      "unique_citing_works": 43419,
-      "citations_per_year": 775.34,
-      "citation_types": { "positive": 0, "neutral": 43419, "negative": 0, "self": 0 }
+      "unique_citing_works": 44750,
+      "citations_per_year": 799.11,
+      "citation_types": { "positive": 0, "neutral": 43875, "negative": 0, "self": 0 }
     },
-    "temporal_metrics": {
-      "first_citation_year": 1970,
-      "latest_citation_year": 2027,
-      "citation_span_years": 58
-    },
+    "temporal_metrics": { "first_citation_year": 1970, "latest_citation_year": 2027, "citation_span_years": 58 },
     "impact_indicators": { "highly_cited": true, "citation_velocity": "recent" }
   },
   "meta": {
-    "query_time_ms": 227,
+    "query_time_ms": 426,
     "source": "bibliometric_analysis",
     "request": { "method": "GET", "path": "/works/7539537/metrics" }
   }
 }
 ```
 
-Zero-citation case (`22519667`): every count `0`, `citations_per_year: 0`, all three `temporal_metrics` `null`, `highly_cited: false`, `citation_velocity: "historical"`.
+Zero-citation case (`22519667`): every citation count `0`, `citations_per_year: 0`, the three `temporal_metrics` `null`, `highly_cited: false`, `citation_velocity: "historical"`.
 
-**Fields**
+### Fields
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `data.work_id` | integer | Path id. |
-| `data.title` | string \| null | Work title. |
-| `data.type` | string \| null | Latest publication type (subquery `ORDER BY year DESC, id DESC`). Same enum set as above. |
-| `data.publication_year` | integer \| null | **Earliest (MIN)** publication year of the work. |
-| `data.citation_metrics.total_citations_received` | integer | `COUNT(*)` of RESOLVED `work_references` where `cited_work_id = id`. May differ from `cited_by_count` on `/works` (see caveats). |
-| `data.citation_metrics.total_references_made` | integer | `COUNT(*)` of all `work_references` where `citing_work_id = id` (includes unresolved). Matches `counts.total` on `/references`. |
-| `data.citation_metrics.unique_citing_works` | integer | `COUNT(DISTINCT citing_work_id)`. |
-| `data.citation_metrics.citations_per_year` | number (float, 2-dp) | `total_citations_received ÷ max(1, currentYear − first_citation_year)`. `0` when no citations. |
-| `data.citation_metrics.citation_types.positive` | integer | Count of citing edges with `citation_type = POSITIVE`. |
-| `data.citation_metrics.citation_types.neutral` | integer | `NEUTRAL` count. |
-| `data.citation_metrics.citation_types.negative` | integer | `NEGATIVE` count. |
-| `data.citation_metrics.citation_types.self` | integer | `SELF` count. |
-| `data.temporal_metrics.first_citation_year` | integer \| null | MIN publication year across citing works. `null` when no citations. |
-| `data.temporal_metrics.latest_citation_year` | integer \| null | MAX publication year across citing works. |
-| `data.temporal_metrics.citation_span_years` | integer \| null | `latest − first + 1`; `null` if either endpoint is null. |
-| `data.impact_indicators.highly_cited` | boolean | `true` when `total_citations_received > 100`. |
-| `data.impact_indicators.citation_velocity` | string | `current` (latest citation year = this year), `recent` (≥ thisYear−2), `historical` (older / no citations), or `unknown` (internal-fallback path). |
-| `meta.source` | string | Constant `"bibliometric_analysis"`. |
-| `meta.query_time_ms` / `meta.request.*` | — | Standard. |
+| `data.type` | string \| null | Type of the latest publication (by year, then id). |
+| `data.publication_year` | integer \| null | **Earliest** publication year of the work. |
+| `citation_metrics.total_citations_received` | integer | RESOLVED rows with `cited_work_id = id` (DOI-only matches are not counted, unlike `/citations`). |
+| `citation_metrics.total_references_made` | integer | All rows with `citing_work_id = id` (= `counts.total` on `/references`). |
+| `citation_metrics.unique_citing_works` | integer | Distinct citing works among the resolved rows. |
+| `citation_metrics.citations_per_year` | number | `total_citations_received ÷ max(1, currentYear − first_citation_year)`, 2 dp; `0` without citations. |
+| `citation_metrics.citation_types.{positive,neutral,negative,self}` | integer | Counts per `citation_type`; untyped edges are in none of them. |
+| `temporal_metrics.first_citation_year` / `latest_citation_year` | integer \| null | MIN/MAX over citing works of their earliest publication year within 1000..currentYear+1; `null` without citations. |
+| `temporal_metrics.citation_span_years` | integer \| null | `latest − first + 1`. |
+| `impact_indicators.highly_cited` | boolean | `total_citations_received > 100`. |
+| `impact_indicators.citation_velocity` | string | `current` (latest citation year = this year), `recent` (≥ this year − 2), else `historical` (also when there are no citations). |
+| `meta.source` | string | `"bibliometric_analysis"`. |
 
-**Notes / caveats**
-
-- **Two citation totals can disagree.** `total_citations_received` counts RESOLVED `work_references` rows, while `/works` (and `/publications`) surface the denormalized `works.citation_count` as `cited_by_count`. For `7539537` this endpoint reports 43,419 while `/works` reports ~21,493 — they are computed from different sources. Decide per screen which is authoritative; do not expect them to match.
-- **Temporal fields are approximate.** `first_citation_year` / `latest_citation_year` derive from citing works' `publications.year`, which contains dirty data — expect floor artifacts (e.g. `1970`) and future years (e.g. `2027`), which inflate `citation_span_years` and deflate `citations_per_year`. Present these as soft/approximate, or clamp client-side.
-- Graceful degradation: on an internal error (for an *existing* work) the service returns zeroed metrics with `citation_velocity: "unknown"` rather than 500. A non-existent id still 404s (guard precedes the fallback).
-- See ../API_ISSUES.md for the citation-count-source discrepancy and dirty-year follow-ups.
+Citing-work years come from `publications.year` and contain dirty data (citing works dated before the cited work, future years such as 2027); treat the temporal fields as approximate.
 
 ---
 
 ## `GET /works/{id}/network`
 
-Builds a bounded citation-network graph (nodes + directed edges) around a central work, BFS-expanded over **resolved** `work_references` up to `depth` levels. Public, MariaDB. The graph is a **sample, not exhaustive**: hard caps ~120 nodes / 100 edges / 200 per level.
+Bounded citation-network graph around a central work: BFS over **RESOLVED** edges in both directions (references and citations) up to `depth` levels. No pagination.
 
-**Path parameters**
-
-| param | type | notes |
-|---|---|---|
-| `id` | integer ≥ 1 | Central work id. 404 if the work does not exist. |
-
-**Query parameters**
+### Query parameters
 
 | param | type | default | bounds | effect |
 |---|---|---|---|---|
-| `depth` | integer | 1 | 1..3 | BFS expansion levels. `depth=5` (or 0) → 400. |
+| `depth` | integer | 1 | 1..3 | BFS levels; out of range → 400. |
 
-No pagination — the whole graph is one payload.
+Caps: at most **100 edges**, ~120 nodes, 200 rows per direction per level. A work with 100 or more resolved edges fills the edge cap at depth 1, so `depth=2`/`3` return the same graph (measured 2026-10-14: `7539537` → 101 nodes / 100 edges / `max_depth: 1` at every depth). `22519667` → 48 nodes / 47 edges at depth 1, 98 nodes / 100 edges / `max_depth: 2` at depth 2.
 
-**Example requests**
-
-```
-GET /works/22519667/network
-GET /works/22519667/network?depth=2
-GET /works/22519667/network?depth=3
-```
-
-**Example response** (`22519667`, `depth=1` → 43 nodes / 42 edges; nodes map and edges array trimmed to one entry each):
+### Example response (`/works/22519667/network`, measured 2026-10-14; maps trimmed)
 
 ```json
 {
@@ -365,60 +255,33 @@ GET /works/22519667/network?depth=3
     "network_depth": 1,
     "nodes": {
       "22519667": { "id": 22519667, "title": "Theological Possibilities and the Anthropology of Eastern Orthodox Christianity", "year": 2026, "is_central": true },
-      "13047110": { "id": 13047110, "title": "Black Orthodox “Visual Piety”", "year": 2020, "is_central": false }
+      "2689413": { "id": 2689413, "title": "The Book of Jerry Falwell", "year": 2018, "is_central": false }
     },
     "edges": [
-      { "source": 22519667, "target": 13047110, "depth": 1, "citation_type": "NEUTRAL", "source_year": 2026, "target_year": 2020 }
+      { "source": 22519667, "target": 2689413, "depth": 1, "citation_type": null, "source_year": 2026, "target_year": 2018 }
     ],
-    "network_stats": { "total_nodes": 43, "total_edges": 42, "max_depth": 1 }
+    "network_stats": { "total_nodes": 48, "total_edges": 47, "max_depth": 1 }
   },
   "meta": {
-    "query_time_ms": 1,
+    "query_time_ms": 3,
     "source": "network_analysis",
-    "complexity": { "total_nodes": 43, "total_edges": 42, "max_depth": 1 },
+    "complexity": { "total_nodes": 48, "total_edges": 47, "max_depth": 1 },
     "request": { "method": "GET", "path": "/works/22519667/network" }
   }
 }
 ```
 
-**Fields**
+### Fields
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `data.central_work_id` | integer | The path id — the graph's center. |
-| `data.network_depth` | integer | Echoes the requested `depth` (raw display value; traversal internally clamps to 1..3). |
-| `data.nodes` | object (map) | **Keyed by work-id string** → node object. NOT an array — iterate `Object.values()`. Includes the central node plus every discovered node. |
-| `data.nodes.<id>.id` | integer | Work id (same as the map key, numeric). |
-| `data.nodes.<id>.title` | string \| null | Work title. |
-| `data.nodes.<id>.year` | integer \| null | MIN publication year of that work. |
-| `data.nodes.<id>.is_central` | boolean | `true` only for `central_work_id`; `false` for all others. Use to style the focal node. |
-| `data.edges[]` | array | Directed edges (`source` cites `target`). |
-| `data.edges[].source` | integer | Citing work id (present as a node). |
-| `data.edges[].target` | integer | Cited work id (present as a node). |
-| `data.edges[].depth` | integer | BFS level (1..maxDepth) at which the edge was discovered. |
-| `data.edges[].citation_type` | string \| null | `POSITIVE\|NEUTRAL\|NEGATIVE\|SELF`. Lives on edges only, not nodes. |
-| `data.edges[].source_year` | integer \| null | Year of the citing work. |
-| `data.edges[].target_year` | integer \| null | Year of the cited work. |
-| `data.network_stats.total_nodes` | integer | Distinct node count (≤ ~120 cap). |
-| `data.network_stats.total_edges` | integer | Edge count (≤ 100 cap). |
-| `data.network_stats.max_depth` | integer | Deepest edge depth present (`0` when the graph is empty). |
-| `meta.source` | string | Constant `"network_analysis"`. |
+| `data.central_work_id` | integer | The path id. |
+| `data.network_depth` | integer | The requested `depth` (see `max_depth` for the level actually reached). |
+| `data.nodes` | object (map) | **Keyed by work-id string**, not an array; includes the central node. |
+| `data.nodes.<id>.{id,title,year,is_central}` | mixed | `year` = earliest publication year; `is_central` only for the central work. |
+| `data.edges[]` | array | Directed: `source` cites `target`. `{ source, target, depth, citation_type, source_year, target_year }`; `depth` = BFS level at which the edge was found. |
+| `data.network_stats.total_nodes` / `total_edges` | integer | Graph size. |
+| `data.network_stats.max_depth` | integer | Deepest edge level present (`0` for an empty graph). |
 | `meta.complexity` | object | Duplicate of `network_stats`. |
-| `meta.query_time_ms` / `meta.request.*` | — | Standard. |
 
-**Notes / caveats**
-
-- **Bounded sample.** A deep or dense work returns a truncated graph — at `depth=2` a busy work hits the EDGE_CAP (100 edges / ~98 nodes for `22519667`). Do not treat the node/edge set as complete; there is no pagination to fetch the remainder.
-- Nodes carry only `id/title/year/is_central` — no publication `type`, no per-node citation type. Citation type is an **edge** attribute.
-- Traversal follows only **resolved** edges (unresolved DOI-only references never enter the graph), so the graph can be sparser than `/references` counts suggest.
-- Graceful degradation: on an internal error (for an existing work) the service returns an empty graph (`nodes: {}`, `edges: []`, all stats `0`) rather than 500. A non-existent id still 404s.
-- Rendering tip: build the node lookup from the `nodes` map, then draw `edges` as arrows `source → target`; highlight the node whose `is_central` is `true`.
-
----
-
-## Shared behaviour across this domain
-
-- **Existence guard (404).** All four endpoints run `SELECT id FROM works WHERE id=?` first; a missing work returns HTTP 404 with `code: "NOT_FOUND"` and a message like `"Citations for work with ID … not found"`.
-- **Validation (400).** `type=<bad>`, `limit=0`/`limit>100`, `depth` outside 1..3, and a non-integer `id` return HTTP 400 with `code: "VALIDATION_ERROR"` and the express-validator `errors[]` array (`path`/`msg`/`location`). See [../00-conventions.md](../00-conventions.md).
-- **Counts are exact.** `/citations` and `/references` totals are exact `COUNT` values — there is no statement-budget/`pagination_total_exact` degradation on this domain (unlike `/works`).
-- **`context` is always null** and the cross-direction id key (`cited_work_id` on `/citations`, `citing_work_id` on `/references`) is always null — both are shared-DTO artifacts. Don't build UI that depends on them being populated.
+The graph is a sample, sparser than `/references` when references are unresolved; citation type lives on edges only.

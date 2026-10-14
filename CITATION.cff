@@ -14,8 +14,8 @@ keywords:
   - academic-bibliography
   - rest-api
   - nodejs
-  - sphinx-search
+  - manticore-search
   - academic-research
   - bibliometric-analysis
-abstract: "RESTful API providing high-performance bibliographic research capabilities across all academic disciplines. Features 86 endpoints, serves over 1.16 million academic works, and delivers 221x search performance improvement through Sphinx integration with enterprise-grade security and comprehensive monitoring."
+abstract: "Read-only RESTful API for academic bibliographic research: 78 documented operations over 7.6 million works and 7.7 million publications, 4.9 million researchers, venues, institutions, subjects, course bibliographies, citations and bibliometric rankings, with Manticore Search full-text search for works and persons over a MariaDB corpus."
 license: MIT

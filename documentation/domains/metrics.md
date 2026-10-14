@@ -1,49 +1,43 @@
 # Metrics — aggregate ranking and yearly roll-up analytics
 
-The metrics domain exposes five **read-only, ranking-shaped** aggregate views over the corpus: a yearly publication roll-up (`/metrics/annual`) and four "top N" leaderboards over venues, institutions, persons, and co-authorship pairs. Every endpoint reads directly from a single base table's operator-maintained metric columns (`venues.works_count`, `organizations.publication_count`, `persons.total_works`, `publications.year`, an `authorships` self-join), so there is **no Manticore full-text involvement** anywhere in this domain — these are pure MariaDB aggregate queries. All five are **public** (no `X-Access-Key`), governed only by the shared rate limiter.
+The metrics domain exposes five **read-only** aggregate views: a yearly publication roll-up (`/metrics/annual`) and four leaderboards over venues, institutions, persons and co-authorship pairs. Each reads operator-maintained columns or tables (`metrics_annual_summary`, `venues.works_count`, `organizations.publication_count`, `persons.total_works`) except the pair ranking, which is an `authorships` self-join. There is no Manticore involvement. All five are **public** (no `X-Access-Key`), governed only by the shared rate limiter.
 
-The per-entity detail pages live in other domains — this domain is the leaderboard/dashboard surface. Cross-links: venue rows point at [./venues.md](./venues.md), institution rows at [./institutions.md](./institutions.md), person rows at [./persons.md](./persons.md), and the collaboration pair shape is byte-identical to the one served by `/collaborations/top` in [./collaborations.md](./collaborations.md).
+Per-entity detail pages live in other domains: venue rows point at [./venues.md](./venues.md), institution rows at [./institutions.md](./institutions.md), person rows at [./persons.md](./persons.md). The pair ranking is the same statement and shape as `/collaborations/top` in [./collaborations.md](./collaborations.md).
 
-All responses follow the shared envelope, pagination model, and error codes documented in [../00-conventions.md](../00-conventions.md). This chapter documents only what is metrics-specific.
+All responses follow the shared envelope, pagination model (default page size 10, `limit` 1..100, an explicit `offset` is served as given and echoed in `meta.pagination_extras.offset`) and error codes documented in [../00-conventions.md](../00-conventions.md). A query that exceeds its statement budget returns **503** `REQUEST_TIMEOUT`, except the pair ranking, which degrades (see below). Responses are cached for 24 h when Redis is available (`metrics:annual:v6`, `metrics:venues:v4`, `metrics:institutions:v4`, `metrics:persons:v6`, `metrics:collaborations:v6`).
 
-> **Swagger warning.** The generated OpenAPI `data[]` item `$ref`s (`Venue`, `Organization`, `Person`, `Collaboration`, and a flat annual schema) do **not** match the real payloads — the live responses are the compact, nested ranking objects documented below. Trust this chapter and the live API, not the referenced component schemas.
+## Shared traits of the four leaderboards
 
-## Shared traits of the four "top N" endpoints
-
-- **No `pagination_total_exact` flag.** Unlike `/works` and `/publications`, the metrics leaderboards count against a single indexed column, so `pagination.total` is always exact and the `meta.pagination_total_exact` flag is absent.
-- **`ranking` is page-relative.** Every data item carries a 1-based `ranking` = `offset + index + 1`. On page 2 with `limit=5`, the first row's `ranking` is `6`. It is a display ordinal, not a stable global rank id.
-- **`meta.summary`** is a per-endpoint rollup block computed over the **current page only** (except the `total_*_ranked` count, which is the full-corpus total). Treat page-scoped sums (`total_citations`, `avg_citations_per_work`) as page aggregates, not corpus aggregates.
-- **`meta.filters`** echoes the effective filters (including the injected `page`/`limit`/`offset`). Some values echo as strings (see per-endpoint notes).
-- **`productivity_score` is always `null`** on institutions and persons rows — reserved, never computed. Do not render it.
-- Pagination validation (all endpoints): `page` ≥ 1, `limit` 1..100 (default 20), `offset` ≥ 0. Both `page/limit` and `offset/limit` are accepted (see conventions).
+- **`ranking` is global.** Every row carries `ranking = offset + index + 1`: on page 2 with `limit=2` the first row is `3`.
+- **`meta.summary`** mixes one corpus-level count (`total_*_ranked` / `total_collaboration_pairs`, equal to `pagination.total`) with aggregates of the **current page only** (`top_*_works`, `avg_citations_per_work`, `total_citations`, `avg_collaboration_years`, the strength histogram, `venue_types`, `countries_represented`).
+- **`meta.filters`** echoes the effective `limit`/`page`/`offset` and the endpoint filters; `meta.performance.controller_time_ms` and `meta.generated_at` are always present.
+- **`productivity_score`** (institutions, persons) and **`primary_affiliation`** (persons) are always `null` — reserved, never computed.
 
 ---
 
 ## `GET /metrics/annual`
 
-Yearly roll-up of publications and works, grouped by `publications.year`, newest year first. Backed by `publications p INNER JOIN works w`; the year key is bounded to `1000..YEAR(CURDATE())+1`, so garbage future years are excluded and `2027` is the newest observed. **This endpoint was previously timing out at multi-year pages; it is now fixed** and returns full pages (a 10-year page completes in ~3 s).
+Yearly roll-up read from the operator-maintained `metrics_annual_summary` table (one row per year), newest year first. Years are bounded to `1000..YEAR(CURDATE())+1`. If the table were absent the API would fall back to a live aggregation over `publications` with the same row shape (`meta.summary.source = "live_aggregation"`, `scope = "current_page"`). Sub-second at any depth (~3 ms measured 2026-10-14).
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `year_from` | integer | none | validator 1900..currentYear+1 (service floor is 1000) | inclusive lower bound: `p.year >= year_from` |
-| `year_to` | integer | none | validator 1900..currentYear+1 | inclusive upper bound: `p.year <= year_to` |
-| `page` / `limit` / `offset` | — | 1 / 20 / 0 | `limit` 1..100 | pagination over the distinct-year list (271 years total) |
+| `year_from` | integer | — | 1900..currentYear+1 | Inclusive lower bound on `year`. Echoed as a string in `meta.filters`. |
+| `year_to` | integer | — | 1900..currentYear+1 | Inclusive upper bound. Echoed as a string. |
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | `limit` 1..100 | Pagination over the years (270 years in the table, 1543–2026). |
 
-There are **no** citation/sort params here; ordering is fixed `year DESC`.
+Ordering is fixed `year DESC`; there are no sort or citation params.
 
 ### Example requests
 
 ```
 GET /metrics/annual?limit=10
-GET /metrics/annual?year_from=2020&year_to=2022&limit=5
-GET /metrics/annual?limit=20&offset=20
+GET /metrics/annual?year_from=2015&year_to=2024&limit=3
+GET /metrics/annual?limit=10&offset=20
 ```
 
-### Example response
-
-`GET /metrics/annual?limit=10` (trimmed to 2 of 10 rows):
+### Example response (`?limit=2`, measured 2026-10-14; second row trimmed)
 
 ```json
 {
@@ -61,137 +55,102 @@ GET /metrics/annual?limit=20&offset=20
         "unique_organizations": 53449,
         "avg_citations": 0.02
       },
-      "growth": {
-        "publications_vs_previous": null,
-        "authors_vs_previous": null
-      }
-    },
-    {
-      "year": 2022,
-      "metrics": {
-        "total_publications": 353169,
-        "unique_works": 352771,
-        "open_access_count": 267688,
-        "open_access_percentage": 75.8,
-        "articles": 343480,
-        "books": 6514,
-        "unique_organizations": 63515,
-        "avg_citations": 0.6
-      },
       "growth": { "publications_vs_previous": null, "authors_vs_previous": null }
-    }
-    // ... (10 total: 2026, 2025, 2024 … 2017)
+    },
+    { "year": 2025, "metrics": { "total_publications": 370199 } }
   ],
-  "pagination": { "page": 1, "limit": 10, "total": 270, "totalPages": 27, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 270, "totalPages": 135, "hasNext": true, "hasPrev": false },
   "meta": {
     "summary": {
+      "scope": "all_years_in_range",
       "total_years": 270,
-      "date_range": "2017-2026",
-      "total_works_all_years": 2879970,
-      "avg_works_per_year": 287997,
-      "growth_trend": "increasing"
+      "date_range": "1543-2026",
+      "total_publications_all_years": 7219995,
+      "avg_publications_per_year": 26741,
+      "growth_trend": "stable",
+      "source": "metrics_annual_summary",
+      "refreshed_at": "2026-07-23T22:06:14.000Z"
     },
-    "filters": { "year_from": null, "year_to": null, "limit": 10, "page": 1, "offset": 0 },
-    "generated_at": "2026-07-23T22:08:18.140Z",
-    "performance": { "controller_time_ms": 4 },
-    "request": { "method": "GET", "path": "/metrics/annual?limit=10" },
+    "filters": { "year_from": null, "year_to": null, "limit": 2, "page": 1, "offset": 0 },
+    "generated_at": "2026-10-14T05:20:42.791Z",
+    "performance": { "controller_time_ms": 3 },
+    "request": { "method": "GET", "path": "/metrics/annual?limit=2" },
     "pagination_extras": { "offset": 0 }
   }
 }
 ```
 
+With `?year_from=2015&year_to=2024` the summary covers those ten years: `total_years: 10`, `date_range: "2015-2024"`, `total_publications_all_years: 2657544`, `growth_trend: "increasing"`.
+
 ### Fields — data item
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `year` | integer | grouping key, bounded 1000..currentYear+1. The newest bucket reflects the summary table's coverage (e.g. `2026`). |
-| `metrics.total_publications` | integer | publications in the year (precomputed `metrics_annual_summary.total_publications`). |
-| `metrics.unique_works` | integer | distinct works in the year — slightly below `total_publications` (multi-manifestation works). |
-| `metrics.open_access_count` | integer | publications with `open_access = 1`. |
-| `metrics.open_access_percentage` | number (float, 2dp) | derived `ROUND(open_access_count * 100 / total_publications, 2)`. |
-| `metrics.articles` | integer | count of `type = 'ARTICLE'`. |
-| `metrics.books` | integer | count of `type = 'BOOK'`. Other types are not broken out. |
-| `metrics.unique_organizations` | integer | **real** — distinct affiliated organizations active in the year (from the operator-maintained `metrics_annual_summary.unique_organizations`). `0` only for very sparse historical years. |
-| `metrics.avg_citations` | number (float, 2dp) | mean citations per publication in the year (precomputed). Low for recent years (citations accrue over time). |
-| `growth.publications_vs_previous` | null | **always `null`** — never computed. |
-| `growth.authors_vs_previous` | null | **always `null`** — never computed. |
+| `year` | integer | Grouping key. |
+| `metrics.total_publications` | integer | Publications in the year. |
+| `metrics.unique_works` | integer | Distinct works in the year (slightly below `total_publications`: multi-manifestation works). |
+| `metrics.open_access_count` | integer | Publications with `open_access = 1`. |
+| `metrics.open_access_percentage` | number | `ROUND(open_access_count * 100 / total_publications, 2)`. |
+| `metrics.articles` / `metrics.books` | integer | Publications of type `ARTICLE` / `BOOK`; other types are not broken out. |
+| `metrics.unique_organizations` | integer | Distinct affiliated organizations active in the year (precomputed). |
+| `metrics.avg_citations` | number | Mean citations per publication in the year (precomputed); low for recent years. |
+| `growth.publications_vs_previous` / `growth.authors_vs_previous` | null | Always `null` — not computed. |
 
-> `total_downloads` is **not** a field of this endpoint. Download counts are not computed in the database (`works.download_count` is universally unpopulated), so the field was removed from the response rather than served as a misleading `0`.
+There is no `total_downloads` field: download counts are not computed in the database.
 
-### Fields — `meta.summary` (page-scoped)
+### Fields — `meta.summary`
+
+The summary covers **every year in the requested range** (all 270 years when no bounds are given), not just the page.
 
 | field | type | notes |
 |---|---|---|
-| `total_years` | integer | distinct-year corpus total (= `pagination.total`, 271). |
-| `date_range` | string \| null | `"min-max"` over the current page's years, e.g. `"2018-2027"`. |
-| `total_works_all_years` | integer | sum of `total_publications` across the **page's** rows. |
-| `avg_works_per_year` | integer | `total_works_all_years / rows_on_page`. |
-| `growth_trend` | string \| null | enum `increasing` \| `stable` \| `decreasing` \| `insufficient_data`; `null` when fewer than 2 rows. Computed over page ordering (newest first), so `decreasing` means recent years have fewer works than older ones on the page. |
+| `scope` | string | `"all_years_in_range"`; `"current_page"` only on the live-aggregation fallback. |
+| `total_years` | integer | Years in range (= `pagination.total`). |
+| `date_range` | string \| null | `"min-max"` over the years in range. |
+| `total_publications_all_years` | integer | Sum of `total_publications` over the years in range. |
+| `avg_publications_per_year` | integer | `total_publications_all_years / total_years`, rounded. |
+| `growth_trend` | string | Mean of the 3 most recent **complete** years (the current year is excluded) vs the mean of the 3 years before: `increasing` above +10 %, `decreasing` below −10 %, else `stable`; `insufficient_data` with fewer than 6 complete years in range. |
+| `source` | string | `"metrics_annual_summary"` (or `"live_aggregation"`). |
+| `refreshed_at` | string(date-time) \| null | Latest `refreshed_at` of the summary table — how current the figures are. |
 
-### Notes / caveats
-
-- `meta.filters.year_from` / `year_to` echo as **strings** when provided (e.g. `"2020"`).
-- **Backed by the precomputed `metrics_annual_summary` table** (operator-maintained, keyed by `year`, refreshed on the stats cadence). Every page is a single indexed read, so responses are sub-second (`controller_time_ms` ~4 ms) regardless of page depth. If the summary table is ever absent, the API transparently falls back to a live aggregation over `publications` (paginate distinct years, then aggregate the page) with the same shape — see [../API_ISSUES.md](../API_ISSUES.md).
-- Both `growth.*` fields are structurally present but always `null` (not computed). `total_downloads` was removed entirely (no download data in the DB).
+The summary table is refreshed operator-side; on 2026-10-14 it dated from 2026-07-23, so recent years lag the live corpus slightly (e.g. 2025: 370,199 in the table vs 372,934 live publications). Check `refreshed_at` before presenting the figures as current.
 
 ---
 
 ## `GET /metrics/venues`
 
-Top venues ranked by `venues.works_count DESC` (tiebreak `total_score DESC`). Backed by the `venues` base table; fast (~45 ms). Real cardinality: **182,765** venues with `works_count > 0`. Related detail: [./venues.md](./venues.md).
+Venues ranked by `venues.works_count DESC` (tiebreak `total_score DESC`), restricted to `works_count > 0` (359,810 venues measured 2026-10-14). Pagination only; no filters, no sort override. ~0.1–0.6 s.
 
-### Query parameters
-
-Pagination only (`page` / `limit` / `offset`). No filters, no sort override.
-
-### Example requests
-
-```
-GET /metrics/venues?limit=3
-GET /metrics/venues?limit=20&page=2
-```
-
-### Example response
-
-`GET /metrics/venues?limit=3` (1 of 3 rows shown):
+### Example response (`?limit=2`, measured 2026-10-14; second row trimmed)
 
 ```json
 {
   "status": "success",
   "data": [
     {
-      "venue_id": 1343359,
+      "venue_id": 1074172,
       "ranking": 1,
-      "name": "IOP Conference Series: Materials Science and Engineering",
-      "abbreviated_name": "IOP Conf. Ser.: Materials Sci. Eng.",
-      "type": "CONFERENCE",
-      "metrics": {
-        "total_works": 73821,
-        "unique_authors": 0,
-        "open_access_works": 0,
-        "open_access_percentage": 0
-      },
-      "timespan": {
-        "first_publication_year": 2011,
-        "latest_publication_year": 2026,
-        "years_active": 16
-      }
-    }
-    // ... (3 total)
+      "name": "International Journal of Environmental Research and Public Health",
+      "abbreviated_name": "Int. J. Environ. Res. Public Heal.",
+      "type": "JOURNAL",
+      "metrics": { "total_works": 55552, "unique_authors": 0, "open_access_works": 0, "open_access_percentage": 0 },
+      "timespan": { "first_publication_year": 1992, "latest_publication_year": 2026, "years_active": 35 }
+    },
+    { "venue_id": 1013446, "ranking": 2, "name": "The English Historical Review", "metrics": { "total_works": 32492 } }
   ],
-  "pagination": { "page": 1, "limit": 3, "total": 182765, "totalPages": 60922, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 359810, "totalPages": 179905, "hasNext": true, "hasPrev": false },
   "meta": {
     "summary": {
-      "total_venues_ranked": 182765,
-      "top_venue_publications": 73821,
+      "total_venues_ranked": 359810,
+      "top_venue_publications": 55552,
       "total_unique_authors": 0,
       "avg_open_access_percentage": 0,
-      "venue_types": ["CONFERENCE", "JOURNAL"]
+      "venue_types": ["JOURNAL"]
     },
-    "filters": { "limit": 3, "page": 1, "offset": 0 },
-    "generated_at": "2026-07-23T18:56:58.774Z",
-    "performance": { "controller_time_ms": 45 },
-    "request": { "method": "GET", "path": "/metrics/venues?limit=3" },
+    "filters": { "limit": 2, "page": 1, "offset": 0 },
+    "generated_at": "2026-10-14T05:20:43.435Z",
+    "performance": { "controller_time_ms": 611 },
+    "request": { "method": "GET", "path": "/metrics/venues?limit=2" },
     "pagination_extras": { "offset": 0 }
   }
 }
@@ -201,98 +160,67 @@ GET /metrics/venues?limit=20&page=2
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `venue_id` | integer | `venues.id`; link to `/venues/{venue_id}`. |
-| `ranking` | integer | page-relative 1-based. |
-| `name` | string | `venues.name`. |
-| `abbreviated_name` | string \| null | `venues.abbreviated_name`. Always surfaced alongside `name`. |
-| `type` | string enum | `JOURNAL` \| `CONFERENCE` \| `REPOSITORY` \| `BOOK_SERIES` \| `SOURCE_BOOK` \| `OTHER`. |
+| `venue_id` | integer | Link to `/venues/{venue_id}`. |
+| `ranking` | integer | Global rank. |
+| `name` / `abbreviated_name` | string / string \| null | Always surfaced together. |
+| `type` | string enum | `JOURNAL \| CONFERENCE \| REPOSITORY \| BOOK_SERIES \| SOURCE_BOOK \| OTHER`. |
 | `metrics.total_works` | integer | `venues.works_count` — the ranking key. |
-| `metrics.unique_authors` | integer | **always `0`** — placeholder, not computed. |
-| `metrics.open_access_works` | integer | **always `0`** — placeholder, not computed. |
-| `metrics.open_access_percentage` | number | **always `0`** — placeholder, not computed. |
-| `timespan.first_publication_year` | integer \| null | = `venues.coverage_start_year`. |
-| `timespan.latest_publication_year` | integer \| null | = `venues.coverage_end_year`. |
-| `timespan.years_active` | integer | `latest - first + 1`, else `0` when either bound is null. |
+| `metrics.unique_authors` / `metrics.open_access_works` / `metrics.open_access_percentage` | integer / integer / number | **Always `0`** — placeholders, not computed. Do not chart them; venue OA data is on the venue detail. |
+| `timespan.first_publication_year` / `latest_publication_year` | integer \| null | The venue's declared coverage years (`coverage_start_year` / `coverage_end_year`), not MIN/MAX over its publications. |
+| `timespan.years_active` | integer | `latest - first + 1`, else `0`. |
 
-### Fields — `meta.summary`
-
-| field | type | notes |
-|---|---|---|
-| `total_venues_ranked` | integer | corpus total (= `pagination.total`). |
-| `top_venue_publications` | integer | `works_count` of the top row on the page. |
-| `total_unique_authors` | integer | **always `0`** (placeholder). |
-| `avg_open_access_percentage` | number | **always `0`** (placeholder). |
-| `venue_types` | string[] | distinct `type` values present on the current page. |
-
-### Notes / caveats
-
-- Three `metrics` fields (`unique_authors`, `open_access_works`, `open_access_percentage`) and one summary field (`total_unique_authors`, `avg_open_access_percentage`) are hardcoded placeholder zeros — **do not chart them**. For real OA data on a venue, use the venue detail endpoint. See [../API_ISSUES.md](../API_ISSUES.md).
-- `timespan` reflects the venue's declared coverage years, not an actual MIN/MAX over its publications.
+`meta.summary.total_unique_authors` and `avg_open_access_percentage` are placeholder zeros as well.
 
 ---
 
 ## `GET /metrics/institutions`
 
-Organizations ranked by `organizations.publication_count DESC` (tiebreak `id ASC`), restricted to `publication_count > 0`. Backed by the `organizations` base table plus a bounded `authorships + publications` join for the year range. Real cardinality: **~410,700** orgs with works. Related detail: [./institutions.md](./institutions.md).
+Organizations ranked by `organizations.publication_count DESC` (tiebreak `id ASC`), restricted to `publication_count > 0` (831,094 measured 2026-10-14). Stored metric columns are presented verbatim; the year range comes from an `authorships + publications` join over the page's organizations (`limit=100` takes ~3 s uncached).
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `country_code` | string | none | **exactly 2 chars**, ISO 3166-1 alpha-2 (e.g. `BR`, `US`) | filters to that country; echoed in `meta.filters.country_code` |
-| `page` / `limit` / `offset` | — | 1 / 20 / 0 | `limit` 1..100 | pagination |
+| `country_code` | string | — | exactly 2 chars (ISO 3166-1 alpha-2) | Filter; echoed in `meta.filters.country_code`. `BR` → 1,278 organizations. |
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | `limit` 1..100 | Pagination. |
 
-### Example requests
-
-```
-GET /metrics/institutions?limit=3
-GET /metrics/institutions?limit=2&country_code=BR
-GET /metrics/institutions?limit=10&page=3
-```
-
-### Example response
-
-`GET /metrics/institutions?limit=3` (1 of 3 rows shown):
+### Example response (`?limit=2`, measured 2026-10-14; second row trimmed)
 
 ```json
 {
   "status": "success",
   "data": [
     {
-      "organization_id": 2801117,
+      "organization_id": 4551628,
       "ranking": 1,
-      "name": "University of Toronto",
-      "country_code": "CA",
+      "name": "Universidade de São Paulo",
+      "country_code": "BR",
       "metrics": {
-        "total_works": 5412,
-        "total_citations": 7822,
-        "avg_citations": 1.45,
-        "unique_researchers": 4323,
-        "open_access_works_count": 5750,
-        "h_index": 35
+        "total_works": 27366,
+        "total_citations": 62073,
+        "avg_citations": 2.27,
+        "unique_researchers": 18045,
+        "open_access_works_count": 41989,
+        "h_index": 48
       },
-      "timespan": {
-        "first_publication_year": 1891,
-        "latest_publication_year": 2026,
-        "years_active": 136
-      },
+      "timespan": { "first_publication_year": 1940, "latest_publication_year": 2026, "years_active": 87 },
       "productivity_score": null
-    }
-    // ... (3 total)
+    },
+    { "organization_id": 4549817, "ranking": 2, "name": "University of Toronto", "metrics": { "total_works": 24839 } }
   ],
-  "pagination": { "page": 1, "limit": 3, "total": 410716, "totalPages": 136906, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 831094, "totalPages": 415547, "hasNext": true, "hasPrev": false },
   "meta": {
     "summary": {
-      "total_institutions_ranked": 410716,
-      "countries_represented": ["CA", "FR", "BR"],
-      "top_institution_works": 5412,
-      "avg_citations_per_work": 0.8,
-      "total_citations": 11889
+      "total_institutions_ranked": 831094,
+      "countries_represented": ["BR", "CA"],
+      "top_institution_works": 27366,
+      "avg_citations_per_work": 3.7,
+      "total_citations": 189128
     },
-    "filters": { "limit": 3, "page": 1, "offset": 0, "country_code": null },
-    "generated_at": "2026-07-23T18:56:58.941Z",
-    "performance": { "controller_time_ms": 160 },
-    "request": { "method": "GET", "path": "/metrics/institutions?limit=3" },
+    "filters": { "limit": 2, "page": 1, "offset": 0, "country_code": null },
+    "generated_at": "2026-10-14T05:20:44.039Z",
+    "performance": { "controller_time_ms": 479 },
+    "request": { "method": "GET", "path": "/metrics/institutions?limit=2" },
     "pagination_extras": { "offset": 0 }
   }
 }
@@ -302,103 +230,61 @@ GET /metrics/institutions?limit=10&page=3
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `organization_id` | integer | `organizations.id`; link to `/institutions/{organization_id}`. |
-| `ranking` | integer | page-relative 1-based. |
-| `name` | string | `organizations.name`. |
-| `country_code` | string \| null | ISO-2. |
-| `metrics.total_works` | integer | `organizations.publication_count` — the ranking key. |
-| `metrics.total_citations` | integer | `organizations.total_citations`. |
-| `metrics.avg_citations` | number \| null | derived `ROUND(total_citations / total_works, 2)`; `null` when `total_works = 0` (never happens here since browse is activity-anchored). |
-| `metrics.unique_researchers` | integer | `organizations.researcher_count`. |
-| `metrics.open_access_works_count` | integer | `organizations.open_access_works_count`. **Scope-mismatched — can EXCEED `total_works`** (e.g. USP `total_works` 4312 vs OA 6535). **Do not compute an OA% from these two fields.** |
-| `metrics.h_index` | integer \| null | `organizations.h_index`. |
-| `timespan.first_publication_year` | integer \| null | `MIN(pub.year)` over affiliated authorships (bounded query). |
-| `timespan.latest_publication_year` | integer \| null | `MAX(pub.year)`; may surface a garbage future year (USP shows `2027`). |
+| `organization_id` | integer | Link to `/institutions/{organization_id}`. |
+| `ranking` | integer | Global rank. |
+| `name` / `country_code` | string / string \| null | |
+| `metrics.total_works` | integer | Stored `publication_count` — the ranking key. |
+| `metrics.total_citations` | integer | Stored. |
+| `metrics.avg_citations` | number | `ROUND(total_citations / total_works, 2)`. |
+| `metrics.unique_researchers` | integer | Stored `researcher_count`. |
+| `metrics.open_access_works_count` | integer | Stored. **Scoped differently from `total_works` and can exceed it** (USP: 41,989 vs 27,366). Do not derive an OA percentage. |
+| `metrics.h_index` | integer \| null | Stored. |
+| `timespan.first_publication_year` / `latest_publication_year` | integer \| null | MIN/MAX publication year over affiliated works; the latest can be a future year present in the data. |
 | `timespan.years_active` | integer | `latest - first + 1`, else `0`. |
-| `productivity_score` | null | **always `null`** — reserved, not computed. |
+| `productivity_score` | null | Always `null`. |
 
-### Fields — `meta.summary`
-
-| field | type | notes |
-|---|---|---|
-| `total_institutions_ranked` | integer | corpus total for the active filter (= `pagination.total`). With `country_code=BR` this drops to 1031. |
-| `countries_represented` | string[] | distinct `country_code`s on the current page. |
-| `top_institution_works` | integer | `publication_count` of the page's top row. |
-| `avg_citations_per_work` | number | page aggregate. |
-| `total_citations` | integer | sum of `total_citations` across the **page**. |
-
-### Notes / caveats
-
-- `country_code` must be **exactly 2 characters** — a 1- or 3-char value returns 400 `VALIDATION` (the swagger once said `maxLength 3`; the validator requires 2). Value is uppercase ISO-2.
-- The OA scope mismatch is a known data issue — see [../API_ISSUES.md](../API_ISSUES.md). The general `/institutions` list deliberately omits an OA percentage for this reason; only this metrics endpoint surfaces the raw count.
-- Detail-by-id (`/institutions/{id}`) resolves any org regardless of activity; this leaderboard only shows `publication_count > 0`.
+`meta.summary.avg_citations_per_work` is the mean of the page rows' `avg_citations`; `total_citations` sums the page rows.
 
 ---
 
 ## `GET /metrics/persons`
 
-Researchers ranked by `persons.total_works DESC`, base filter `total_works > 0`. Backed by the `persons` base table directly; fast (~15–65 ms). Real cardinality: **~305,670** persons. Related detail: [./persons.md](./persons.md).
+Researchers ranked by `persons.total_works DESC`, then `persons.id DESC`, base filter `total_works > 0` (4,903,219 persons measured 2026-10-14). Page ids are selected index-only, so deep pages stay fast (page 40,000 at `limit=100`: 0.6 s).
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `min_works` | integer | **none** | ≥ 1 | filters `total_works >= min_works`. **No default is applied when omitted** (base filter stays `total_works > 0`), despite older swagger claiming `default: 5`. |
-| `organization_id` | integer | none | ≥ 1 | restrict to persons with an authorship whose `affiliation_id` equals this org id. Echoed (as a **string**) in `meta.filters.organization_id`. |
-| `page` / `limit` / `offset` | — | 1 / 20 / 0 | `limit` 1..100 | pagination |
+| `min_works` | integer | — | ≥ 0 (400 otherwise) | `total_works >= min_works`; `0` or omitted adds no filter. `min_works=500` → 49 persons. |
+| `organization_id` | integer | — | ≥ 1 | Persons with at least one authorship affiliated to this organization. Echoed as a **string** in `meta.filters.organization_id`. `4549817` → 13,190 persons. |
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | `limit` 1..100 | Pagination. |
 
-### Example requests
-
-```
-GET /metrics/persons?limit=3&min_works=500
-GET /metrics/persons?limit=2&organization_id=2801117
-GET /metrics/persons?limit=20
-```
-
-### Example response
-
-`GET /metrics/persons?limit=3&min_works=500` (2 of 3 rows shown):
+### Example response (`?min_works=500&limit=2`, measured 2026-10-14; second row trimmed)
 
 ```json
 {
   "status": "success",
   "data": [
     {
-      "person_id": 3589585,
+      "person_id": 10661218,
       "ranking": 1,
-      "name": "John C Campbell",
+      "name": "Philosophy Documentation Center",
       "identifiers": { "orcid": null },
       "is_verified": false,
       "primary_affiliation": null,
-      "metrics": { "total_works": 1244, "total_citations": 4845, "avg_citations": 3.89 },
-      "timespan": { "first_publication_year": 1922, "latest_publication_year": 2025, "years_active": 104 },
+      "metrics": { "total_works": 2063, "total_citations": 789, "avg_citations": 0.38 },
+      "timespan": { "first_publication_year": 1952, "latest_publication_year": 2026, "years_active": 75 },
       "productivity_score": null
     },
-    {
-      "person_id": 18165,
-      "ranking": 2,
-      "name": "D Lester",
-      "identifiers": { "orcid": "0000-0003-1357-8672" },
-      "is_verified": true,
-      "primary_affiliation": null,
-      "metrics": { "total_works": 1138, "total_citations": 227, "avg_citations": 0.2 },
-      "timespan": { "first_publication_year": 1950, "latest_publication_year": 2026, "years_active": 77 },
-      "productivity_score": null
-    }
-    // ... (3 total)
+    { "person_id": 215893, "ranking": 2, "name": "Barry Kernfeld", "metrics": { "total_works": 1359 } }
   ],
-  "pagination": { "page": 1, "limit": 3, "total": 36, "totalPages": 12, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 49, "totalPages": 25, "hasNext": true, "hasPrev": false },
   "meta": {
-    "summary": {
-      "total_persons_ranked": 36,
-      "top_person_works": 1244,
-      "avg_citations_per_work": 1.45,
-      "total_citations": 5347
-    },
-    "filters": { "limit": 3, "page": 1, "offset": 0, "organization_id": null },
-    "generated_at": "2026-07-23T18:57:04.252Z",
+    "summary": { "total_persons_ranked": 49, "top_person_works": 2063, "avg_citations_per_work": 0.19, "total_citations": 789 },
+    "filters": { "limit": 2, "page": 1, "offset": 0, "organization_id": null },
+    "generated_at": "2026-10-14T05:20:48.773Z",
     "performance": { "controller_time_ms": 1 },
-    "request": { "method": "GET", "path": "/metrics/persons?limit=3&min_works=500" },
+    "request": { "method": "GET", "path": "/metrics/persons?min_works=500&limit=2" },
     "pagination_extras": { "offset": 0 }
   }
 }
@@ -408,58 +294,36 @@ GET /metrics/persons?limit=20
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `person_id` | integer | `persons.id`; link to `/persons/{person_id}`. |
-| `ranking` | integer | page-relative 1-based. |
+| `person_id` | integer | Link to `/persons/{person_id}`. |
+| `ranking` | integer | Global rank. |
 | `name` | string | `persons.preferred_name`. |
-| `identifiers.orcid` | string \| null | `persons.orcid`. Only ORCID is surfaced here. |
+| `identifiers.orcid` | string \| null | Only ORCID is surfaced here. |
 | `is_verified` | boolean \| null | `persons.is_verified`. |
-| `primary_affiliation` | null | **always `null`** — not computed. Do not render. |
-| `metrics.total_works` | integer | `persons.total_works` — the ranking key. |
-| `metrics.total_citations` | integer | `persons.total_citations`. |
+| `primary_affiliation` | null | Always `null`. |
+| `metrics.total_works` / `metrics.total_citations` | integer | Stored person metrics; `total_works` is the ranking key. |
 | `metrics.avg_citations` | number | `ROUND(total_citations / total_works, 2)`. |
-| `timespan.first_publication_year` | integer \| null | `persons.first_publication_year`. |
-| `timespan.latest_publication_year` | integer \| null | `persons.latest_publication_year`. |
+| `timespan.first_publication_year` / `latest_publication_year` | integer \| null | Stored. |
 | `timespan.years_active` | integer | `latest - first + 1`, else `0`. |
-| `productivity_score` | null | **always `null`** — reserved. |
+| `productivity_score` | null | Always `null`. |
 
-### Fields — `meta.summary`
-
-| field | type | notes |
-|---|---|---|
-| `total_persons_ranked` | integer | corpus total for the active filter (= `pagination.total`; `min_works=500` → 36). |
-| `top_person_works` | integer | `total_works` of the page's top row. |
-| `avg_citations_per_work` | number | page aggregate. |
-| `total_citations` | integer | sum over the **page**. |
-
-### Notes / caveats
-
-- `meta.filters.organization_id` echoes as a **string** (e.g. `"2801117"`) when provided, `null` otherwise.
-- **Data-quality caveat.** The `total_works` leaderboard surfaces dedup/garbage entities near the top ("Fulano de Tal", "Et Al"-style names) because they aggregate many mis-attributed authorships. Treat the raw top-N as noisy; ORCID presence + `is_verified` are useful trust signals for the UI.
+**Data quality.** The head of this ranking contains non-person or placeholder entities that aggregate many attributions (e.g. "Philosophy Documentation Center", "Fulano de Tal"). ORCID presence and `is_verified` are useful trust signals.
 
 ---
 
 ## `GET /metrics/collaborations`
 
-Top co-authorship pairs computed over the **top ~2000 authors** (`persons.total_works >= 30`), ordered by `shared_works DESC`. Backed by an `authorships` self-join (heavy — ~2.5–3 s, bounded by a statement budget). The pair shape is **identical** to `/collaborations/top` and `/persons/{id}/collaborators` — see [./collaborations.md](./collaborations.md). Real cardinality at default: ~5,129 pairs.
+Top co-authorship pairs. Served by the **same ranking statement as `/collaborations/top`** — pairs among the 2,000 persons with the most works (`total_works >= 30`), AUTHOR role on both sides, each shared work counted once — so rows have the identical shape and strength scale. The differences: `min_collaborations` defaults to **2** here (5 there) and there are no year filters. ~1.1–2.1 s uncached.
 
 ### Query parameters
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `min_collaborations` | integer | **2** | 1..50 | `HAVING shared_works >= min_collaborations`. Echoed (as a **string**) in `meta.filters.min_collaborations`. |
-| `page` / `limit` / `offset` | — | 1 / 20 / 0 | `limit` 1..100 | pagination |
+| `min_collaborations` | integer | 2 | 1..50 | Keep pairs with `shared_works >= min_collaborations`. Echoed as a number. |
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | `limit` 1..100 | Pagination. |
 
-### Example requests
+Ordering: `shared_works DESC`, `avg_shared_citations DESC`, then the two person ids. Totals measured 2026-10-14: 5,677 pairs at the default, 1,126 at `min_collaborations=5`, 17,812 at `1`.
 
-```
-GET /metrics/collaborations?limit=3
-GET /metrics/collaborations?limit=3&min_collaborations=5
-GET /metrics/collaborations?limit=10&min_collaborations=10
-```
-
-### Example response
-
-`GET /metrics/collaborations?limit=3&min_collaborations=5` (2 of 3 rows shown):
+### Example response (`?limit=2`, measured 2026-10-14; second row trimmed)
 
 ```json
 {
@@ -468,69 +332,43 @@ GET /metrics/collaborations?limit=10&min_collaborations=10
     {
       "ranking": 1,
       "collaborators": {
-        "person_1": { "id": 400985, "name": "Et Al" },
-        "person_2": { "id": 5757439, "name": "et al et al" }
+        "person_1": { "id": 185263, "name": "Alfredo Fontes" },
+        "person_2": { "id": 10839772, "name": "A C" }
       },
-      "metrics": { "shared_works": 375, "avg_shared_citations": 15, "collaboration_strength": "very_strong" },
-      "timespan": { "first_collaboration_year": 1975, "latest_collaboration_year": 2024, "collaboration_years": 50 }
+      "metrics": { "shared_works": 779, "avg_shared_citations": 0.41, "collaboration_strength": "very_strong" },
+      "timespan": { "first_collaboration_year": 1926, "latest_collaboration_year": 2009, "collaboration_years": 84 }
     },
-    {
-      "ranking": 2,
-      "collaborators": {
-        "person_1": { "id": 85449, "name": "Carter G Woodson" },
-        "person_2": { "id": 3626787, "name": "C G Woodson" }
-      },
-      "metrics": { "shared_works": 237, "avg_shared_citations": 0.68, "collaboration_strength": "very_strong" },
-      "timespan": { "first_collaboration_year": 1916, "latest_collaboration_year": 1950, "collaboration_years": 35 }
-    }
-    // ... (3 total)
+    { "ranking": 2, "collaborators": { "person_1": { "id": 4908336, "name": "Fulano de Tal" }, "person_2": { "id": 10604863, "name": "No authorship indicated No authorship indicated" } } }
   ],
-  "pagination": { "page": 1, "limit": 3, "total": 785, "totalPages": 262, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 2, "total": 5677, "totalPages": 2839, "hasNext": true, "hasPrev": false },
   "meta": {
     "summary": {
-      "total_collaboration_pairs": 785,
-      "strongest_collaboration_count": 375,
-      "avg_collaboration_years": 49,
-      "collaboration_strength_distribution": { "very_strong": 3, "strong": 0, "moderate": 0, "weak": 0 }
+      "total_collaboration_pairs": 5677,
+      "strongest_collaboration_count": 779,
+      "avg_collaboration_years": 83,
+      "collaboration_strength_distribution": { "very_strong": 2, "strong": 0, "moderate": 0, "weak": 0 }
     },
-    "filters": { "limit": 3, "page": 1, "offset": 0, "min_collaborations": 5 },
-    "generated_at": "2026-07-23T18:57:06.742Z",
-    "performance": { "controller_time_ms": 2462 },
-    "request": { "method": "GET", "path": "/metrics/collaborations?limit=3&min_collaborations=5" },
+    "filters": { "limit": 2, "page": 1, "offset": 0, "min_collaborations": 2 },
+    "generated_at": "2026-10-14T05:20:50.986Z",
+    "performance": { "controller_time_ms": 2122 },
+    "pagination_total_exact": true,
+    "request": { "method": "GET", "path": "/metrics/collaborations?limit=2" },
     "pagination_extras": { "offset": 0 }
   }
 }
 ```
 
-### Fields — data item
+### Fields
 
-| field (dot-path) | type | notes |
-|---|---|---|
-| `ranking` | integer | page-relative 1-based. |
-| `collaborators.person_1.id` | integer | `LEAST(id_a, id_b)` — the lower person id of the pair. |
-| `collaborators.person_1.name` | string \| null | `persons.preferred_name`. |
-| `collaborators.person_2.id` | integer | `GREATEST(id_a, id_b)` — the higher id. |
-| `collaborators.person_2.name` | string \| null | `persons.preferred_name`. |
-| `metrics.shared_works` | integer | `COUNT(DISTINCT work_id)` co-authored by the pair — the ranking key. |
-| `metrics.avg_shared_citations` | number | `ROUND(AVG(w.citation_count), 2)` over the shared works. |
-| `metrics.collaboration_strength` | string enum | derived from `shared_works`: `>=10` → `very_strong`, `>=5` → `strong`, `>=3` → `moderate`, else `weak`. |
-| `timespan.first_collaboration_year` | integer \| null | `MIN(pub.year)` over shared works. |
-| `timespan.latest_collaboration_year` | integer \| null | `MAX(pub.year)`. |
-| `timespan.collaboration_years` | integer | `latest - first + 1`, else `0`. |
-
-### Fields — `meta.summary`
+The row fields (`ranking`, `collaborators.person_1/person_2`, `metrics.shared_works`, `metrics.avg_shared_citations`, `metrics.collaboration_strength`, `timespan.*`) are documented once in [./collaborations.md](./collaborations.md#get-collaborationstop). `meta` adds:
 
 | field | type | notes |
 |---|---|---|
-| `total_collaboration_pairs` | integer | pair count for the active filter (= `pagination.total`; `min_collaborations=5` → 785). |
-| `strongest_collaboration_count` | integer | `shared_works` of the page's top pair. |
-| `avg_collaboration_years` | integer | page aggregate. |
-| `collaboration_strength_distribution` | object | histogram `{ very_strong, strong, moderate, weak }` counted over the **current page** only. |
+| `meta.summary.total_collaboration_pairs` | integer | Exact pair count (= `pagination.total`). |
+| `meta.summary.strongest_collaboration_count` | integer | `shared_works` of the page's first pair. |
+| `meta.summary.avg_collaboration_years` | integer | Page mean of `collaboration_years`. |
+| `meta.summary.collaboration_strength_distribution` | object | Page histogram `{ very_strong, strong, moderate, weak }`. |
+| `meta.pagination_total_exact` | boolean | `true` normally; `false` together with `meta.degraded: true` when the statement exceeded its budget — the page is then empty and **is not** "no results". |
+| `meta.degraded` | boolean | Present only on a degraded page. Degraded pages are not cached. |
 
-### Notes / caveats
-
-- `meta.filters.min_collaborations` echoes as a **string** (e.g. `"5"`).
-- **Graceful degradation.** The self-join is heavy. If the statement budget fires, the service returns an **empty `data` array** with `meta.degraded = true` and a `meta.filters.scope = "top_authors_only"` marker (present only in the degraded branch). The UI must handle an empty page that is not "no results". Under normal load the query completes (~2.5–3 s).
-- **Scope.** Only pairs among the top ~2000 authors (`total_works >= 30`) are considered — this is not an exhaustive collaboration graph.
-- **Data-quality caveat.** The strongest "collaborations" are largely same-person duplicate clusters (`"Et Al"`/`"et al et al"`, `"Carter G Woodson"`/`"C G Woodson"`, `"M Strathern"`/`"Marilyn Strathern"`) rather than genuine co-authorships. Treat top rows as noisy; consider surfacing a data-cleaning caveat in any UI built on this.
-- Identical pair shape is also served by `/collaborations/top` — see [./collaborations.md](./collaborations.md).
+**Data quality.** The top pairs are dominated by placeholder persons and same-person duplicates (`Fulano de Tal` / `No authorship indicated`, `Et Al` / `et al et al`, `Sassen` / `Saskia Sassen`) rather than genuine partnerships.

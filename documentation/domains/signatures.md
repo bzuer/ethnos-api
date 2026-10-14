@@ -1,63 +1,66 @@
 # Signatures — normalized author name forms and their person/work linkages
 
-The signatures domain exposes **normalized author-name strings** (uppercased canonical forms such as `"SILVA"`, `"DA SILVA A M"`) and the persons and works attached to them. It is backed by the `signatures` base table (`id`, `signature`, `created_at`) joined to `persons.signature_id`. There is **no Manticore involvement** here — signature search is a plain MariaDB `LIKE` / `=` over `signatures.signature`; person and work rows are hydrated from MariaDB by id. The table is large (~3.0M signatures, essentially all linked to at least one person).
+The signatures domain exposes **normalized author-name strings**: uppercase canonical forms such as `"SILVA A"` and `"DA SILVA A M"`, with the persons and works attached to them. It is backed by the `signatures` base table (`id`, `signature`, `created_at`; 3,173,239 rows, all linked to at least one person, measured 2026-10-14) joined to `persons.signature_id`. Manticore is not involved: signature search is a MariaDB `LIKE` / `=` over `signatures.signature`, and person and work rows are hydrated from MariaDB by id.
 
-A signature groups author-name variants: many `persons` rows can share the same `signature_id`, and `/signatures/{id}/persons` and `/signatures/{id}/works` expand that grouping. This domain reuses the person list-item shape from [persons](./persons.md) and links out to [works](./works.md). Read [00-conventions](../00-conventions.md) first for the envelope, pagination, error codes, and boolean/date normalization — this chapter only covers what is specific to signatures.
+Many `persons` rows can share one `signature_id`; `/signatures/{id}/persons` and `/signatures/{id}/works` expand that grouping. The domain reuses the person list-item shape from [persons](./persons.md) and links out to [works](./works.md). Envelope, pagination (`page`/`limit` or `offset`/`limit`, default page size 10, an explicit `offset` is served as given), rate limiting and error codes follow [00-conventions](../00-conventions.md).
 
-> **No root collection listing.** `GET /signatures` is intentionally **not registered** (per the endpoint inventory) and 404s through the global not-found handler. Use `/signatures/search` to browse.
+> **No root collection listing.** `GET /signatures` is intentionally not registered and returns 404 from the global not-found handler. Use `/signatures/search` to browse.
 
-The five live endpoints:
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /signatures/search` | substring / exact search over the signature string |
-| `GET /signatures/statistics` | aggregate stats over the whole table |
-| `GET /signatures/{id}` | single signature detail |
-| `GET /signatures/{id}/persons` | persons sharing this signature |
-| `GET /signatures/{id}/works` | works authored under this signature |
+| Endpoint | Purpose | Cache |
+|---|---|---|
+| `GET /signatures/search` | substring or exact search over the signature string | 30 min |
+| `GET /signatures/statistics` | aggregate stats over the whole table | 48 h |
+| `GET /signatures/{id}` | single signature detail | 1 h |
+| `GET /signatures/{id}/persons` | persons sharing this signature | 30 min |
+| `GET /signatures/{id}/works` | works contributed by any person carrying this signature | 1 h |
 
 ---
 
 ## `GET /signatures/search`
 
-Substring (default) or exact search over the normalized signature string. Public. Backed by MariaDB `LIKE` / `=` on `signatures.signature` (no full-text engine). Returns matching signatures, each with a `persons_count`.
+Substring (default) or exact search over the normalized signature string. Matching is case- and accent-insensitive (`silva a` finds `SILVA A`; `alcantara-silva` finds `ALCÂNTARA-SILVA T`).
 
 **Query parameters**
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `q` | string | — | **required**, 1..100 chars, trimmed | search term. Empty or missing → **400** `VALIDATION_ERROR` |
-| `exact` | boolean | `false` | true/false (normalized) | `true` → `signature = q` exact match; otherwise `signature LIKE %q%` |
-| `limit` | integer | `20` | 1..100 (clamped to 100) | page size |
-| `offset` | integer | `0` | `>= 0` | rows to skip |
+| `q` | string | — | **required**, 2..100 chars after trimming | Search term. Missing, empty or one-character → **400** `VALIDATION_ERROR`. |
+| `exact` | boolean | `false` | `true` / `1` / `false` / `0` | `true` or `1` → `signature = q`; otherwise substring `LIKE %q%`, with `%`, `_` and `\` in `q` matched literally. |
+| `page` | integer | 1 | ≥ 1 | Page number. |
+| `limit` | integer | 10 | 1..100 | Page size. |
+| `offset` | integer | — | ≥ 0 | Rows to skip; takes precedence over `page`. |
 
-This endpoint is **offset/limit only** (no `page` param; pass `offset`). The response still normalizes to the standard `{page,limit,total,...}` pagination block, and echoes the raw offset under `meta.pagination_extras.offset`.
+**Ordering** is alphabetical by `signature`, then by `id`. Substring matches are not ranked by how many persons share them.
+
+**Totals.** The count runs under a 2 s budget. When it finishes, `pagination.total` is exact and `meta.pagination_total_exact` is `true`. When it does not, `meta.pagination_total_exact` is `false` and `pagination.total` is only a lower bound: rows seen so far, plus one when the page is full. Paginate with `data.length < limit` as the terminator in that case.
+
+**Cost.** Measured 2026-10-14: common terms took 0.5–0.7 s (`silva`: 7,900 matches), exact searches 2 ms. A term that matches few or no signatures walks the whole index (`ZZQX`, no match: 3.2 s). A page that exceeds its statement budget returns **503** `REQUEST_TIMEOUT`.
 
 **Example requests**
 
 ```
 GET /signatures/search?q=silva&limit=5
+GET /signatures/search?q=silva&limit=5&page=2
 GET /signatures/search?q=silva&limit=20&offset=40
-GET /signatures/search?q=SILVA%20A&exact=true
-GET /signatures/search           # 400 — q is required
+GET /signatures/search?q=SILVA%20A&exact=1
+GET /signatures/search?q=a           # 400 — q needs at least 2 characters
 ```
 
-**Example response** (`?q=silva&limit=5`)
+**Example response** (`?q=silva&limit=5`, three of five rows shown)
 
 ```json
 {
   "status": "success",
   "data": [
-    { "id": 14490421, "signature": "SILVA",        "created_at": "2026-01-11T22:14:39.000Z", "persons_count": 1 },
-    { "id": 259377,   "signature": "DA SILVA A M",  "created_at": "2025-11-16T18:32:32.000Z", "persons_count": 91 },
-    { "id": 17164,    "signature": "SILVA A",       "created_at": "2025-11-16T18:30:18.000Z", "persons_count": 82 },
-    { "id": 87140,    "signature": "DA SILVA M A",  "created_at": "2025-11-16T18:30:56.000Z", "persons_count": 81 },
-    { "id": 17497,    "signature": "SILVA M",       "created_at": "2025-11-16T18:30:18.000Z", "persons_count": 73 }
+    { "id": 28217694, "signature": "ABAYASIRI-SILVA K", "created_at": "2026-04-10T06:08:46.000Z", "persons_count": 1, "_links": { "self": "/signatures/28217694" } },
+    { "id": 28789523, "signature": "ABREU-SILVA R S",   "created_at": "2026-04-12T17:22:05.000Z", "persons_count": 1, "_links": { "self": "/signatures/28789523" } },
+    { "id": 8538496,  "signature": "ABUFOM-SILVA P",    "created_at": "2025-12-14T05:05:43.000Z", "persons_count": 1, "_links": { "self": "/signatures/8538496" } }
   ],
-  "pagination": { "page": 1, "limit": 5, "total": 7773, "totalPages": 1555, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 5, "total": 7900, "totalPages": 1580, "hasNext": true, "hasPrev": false },
   "meta": {
     "searchTerm": "silva",
     "exact": false,
+    "pagination_total_exact": true,
     "request": { "method": "GET", "path": "/signatures/search?q=silva&limit=5" },
     "pagination_extras": { "offset": 0 }
   }
@@ -68,50 +71,42 @@ GET /signatures/search           # 400 — q is required
 
 | field | type | notes |
 |---|---|---|
-| `id` | integer | signature id — pass to `/signatures/{id}` and the nested endpoints |
-| `signature` | string | normalized name form, uppercased (e.g. `"SILVA"`, `"DA SILVA A M"`) |
-| `created_at` | string(date-time) | ISO-8601 UTC |
-| `persons_count` | integer | distinct `persons` rows with this `signature_id` (`COUNT(p.id)`); `0` possible |
+| `id` | integer | Signature id; pass to `/signatures/{id}` and the nested endpoints. |
+| `signature` | string | Normalized, uppercase name form. |
+| `created_at` | string(date-time) \| null | ISO 8601. |
+| `persons_count` | integer | `persons` rows carrying this signature, counted for the returned rows only. |
+| `_links.self` | string | `/signatures/{id}`. |
 
-`meta` extras specific to this endpoint:
+**Meta**
 
 | field | type | notes |
 |---|---|---|
-| `meta.searchTerm` | string | echo of the trimmed `q` |
-| `meta.exact` | boolean | echo of the `exact` flag |
-| `meta.pagination_extras.offset` | integer | effective offset applied |
+| `meta.searchTerm` | string | Echo of the trimmed `q`. |
+| `meta.exact` | boolean | Whether exact matching was applied. |
+| `meta.pagination_total_exact` | boolean | `false` when the count exceeded its budget (see above). |
+| `meta.pagination_extras.offset` | integer | Offset served. |
 
-**Notes / caveats**
-- **Ordering**: exact-string matches first (`CASE WHEN signature = q`), then `persons_count DESC`, then `signature ASC`. So a search for `silva` surfaces the shortest exact stem near the top only if it equals `q`; otherwise the most-shared signatures lead.
-- `pagination.total` is **exact** (`COUNT(DISTINCT s.id)`) — no budget/estimate flag on this path. Result sets can be huge (`silva` → 7773), so paginate.
-- Search `data[]` items are **raw service rows** — they do **not** carry `_links.self` (unlike the `/signatures/{id}` detail item). If you need a self link, construct `/signatures/{id}` from `id`.
-- The match is a plain `LIKE %q%` substring over the uppercased canonical form; it is case-insensitive at the collation level but there is no fuzzy/stemmed matching. To find a person by natural name, prefer [`/search/persons`](./search.md).
+To find a person by natural name rather than by signature, prefer [`/search/persons`](./search.md).
 
 ---
 
 ## `GET /signatures/statistics`
 
-Aggregate statistics over the entire `signatures` table (length buckets and person linkage). Public. No query parameters. Cached ~48h.
+Aggregate statistics over the entire `signatures` table: length buckets and person linkage. No parameters. A cold call measured 2.0 s.
 
-**Example request**
-
-```
-GET /signatures/statistics
-```
-
-**Example response**
+**Example response** (measured 2026-10-14)
 
 ```json
 {
   "status": "success",
   "data": {
-    "total_signatures": 2998653,
-    "short_signatures": 1629340,
-    "medium_signatures": 1341847,
-    "long_signatures": 27466,
-    "avg_signature_length": 10.6634,
-    "linked_signatures": 2998652,
-    "unlinked_signatures": 1
+    "total_signatures": 3173239,
+    "short_signatures": 1763369,
+    "medium_signatures": 1391406,
+    "long_signatures": 18464,
+    "avg_signature_length": 10.5339,
+    "linked_signatures": 3173239,
+    "unlinked_signatures": 0
   },
   "meta": { "request": { "method": "GET", "path": "/signatures/statistics" } }
 }
@@ -121,36 +116,23 @@ GET /signatures/statistics
 
 | field | type | notes |
 |---|---|---|
-| `total_signatures` | integer | `COUNT(*)` of the table (~3.0M) |
-| `short_signatures` | integer | signatures with `LENGTH(signature) <= 10` |
-| `medium_signatures` | integer | `LENGTH(signature)` in 11..20 |
-| `long_signatures` | integer | `LENGTH(signature) > 20` |
-| `avg_signature_length` | number(float) | `AVG(LENGTH(signature))`, e.g. `10.6634` |
-| `linked_signatures` | integer | signatures referenced by at least one `persons.signature_id` |
-| `unlinked_signatures` | integer | `total_signatures - linked_signatures` (near-zero; effectively all signatures are linked) |
+| `total_signatures` | integer | `COUNT(*)` of the table. |
+| `short_signatures` | integer | Signatures of at most 10 characters. |
+| `medium_signatures` | integer | 11 to 20 characters. |
+| `long_signatures` | integer | More than 20 characters. |
+| `avg_signature_length` | number | Mean length in characters. |
+| `linked_signatures` | integer | Signatures referenced by at least one `persons.signature_id`. |
+| `unlinked_signatures` | integer | `total_signatures - linked_signatures`. |
 
-**Notes / caveats**
-- The linked vs. unlinked split is essentially fully linked (observed `unlinked_signatures` fluctuates around 0–1 as data updates). Treat "unlinked" as a rounding-error tail, not a meaningful browse dimension.
-- No `pagination` block (single object payload). There is no time budget / estimate flag on this endpoint — counts are the real aggregate.
+Lengths are counted in characters (`CHAR_LENGTH`), so accented names are bucketed by what a reader sees.
 
 ---
 
 ## `GET /signatures/{id}`
 
-Single signature detail. Same shape as a search row but adds `_links.self`. Public. Cached ~1h.
+Single signature detail.
 
-**Path parameters**
-
-| param | type | bounds | notes |
-|---|---|---|---|
-| `id` | integer | `>= 1` (positive integer) | signature id; non-integer → 400, non-existent → 404 |
-
-**Example requests**
-
-```
-GET /signatures/259377
-GET /signatures/99999999999    # 404 — Signature not found
-```
+**Path parameters:** `id` (integer ≥ 1). A non-integer value returns 400; a non-existent id returns **404** `NOT_FOUND` with message `"Signature not found"`.
 
 **Example response** (`/signatures/259377`)
 
@@ -160,57 +142,31 @@ GET /signatures/99999999999    # 404 — Signature not found
   "data": {
     "id": 259377,
     "signature": "DA SILVA A M",
-    "created_at": "2025-11-16T18:32:32.000Z",
-    "persons_count": 91,
+    "created_at": "2025-11-16T15:32:32.000Z",
+    "persons_count": 93,
     "_links": { "self": "/signatures/259377" }
   },
   "meta": { "request": { "method": "GET", "path": "/signatures/259377" } }
 }
 ```
 
-**Fields**
-
-| field | type | notes |
-|---|---|---|
-| `id` | integer | signature id |
-| `signature` | string | normalized name form |
-| `created_at` | string(date-time) \| null | ISO-8601 UTC |
-| `persons_count` | integer \| null | distinct linked persons |
-| `_links.self` | string | `/signatures/{id}` |
-
-**Notes / caveats**
-- **404** `NOT_FOUND` with message `"Signature not found"` when the id does not exist.
-- To expand this signature, follow with `/signatures/{id}/persons` (the linked researchers) and `/signatures/{id}/works` (their works).
+The fields are the same as a search row: `id`, `signature`, `created_at`, `persons_count`, `_links.self`. To expand the signature, follow with `/signatures/{id}/persons` and `/signatures/{id}/works`.
 
 ---
 
 ## `GET /signatures/{id}/persons`
 
-Paginated list of the `persons` that share this signature (`persons.signature_id = id`). Public. Returns the **shared person list-item DTO** (same shape as [persons](./persons.md) list rows), **not** a signature shape.
-
-**Path parameters**
-
-| param | type | bounds | notes |
-|---|---|---|---|
-| `id` | integer | `>= 1` | signature id; 404 if it does not exist |
+Paginated list of the `persons` that share this signature (`persons.signature_id = id`), ordered by `preferred_name`, then `id`. Returns the shared person list-item shape, not a signature shape.
 
 **Query parameters**
 
 | param | type | default | bounds | effect |
 |---|---|---|---|---|
-| `limit` | integer | `20` | 1..100 (clamped) | page size |
-| `offset` | integer | `0` | `>= 0` | rows to skip |
+| `page` | integer | 1 | ≥ 1 | Page number. |
+| `limit` | integer | 10 | 1..100 | Page size. |
+| `offset` | integer | — | ≥ 0 | Rows to skip; takes precedence over `page`. |
 
-Offset/limit paging (raw offset echoed at `meta.pagination_extras.offset`). No `page` param on this route.
-
-**Example requests**
-
-```
-GET /signatures/259377/persons
-GET /signatures/259377/persons?limit=50&offset=50
-```
-
-**Example response** (`/signatures/259377/persons?limit=3`)
+**Example response** (`/signatures/259377/persons?limit=3`, one of three rows shown)
 
 ```json
 {
@@ -223,19 +179,12 @@ GET /signatures/259377/persons?limit=50&offset=50
       "given_names": "Aarão Miranda",
       "family_name": "da Silva",
       "name_signature": null,
-      "identifiers": {
-        "orcid": null,
-        "lattes_id": null,
-        "scopus_id": null,
-        "wikidata_id": null,
-        "openalex_id": null,
-        "url": null
-      },
+      "identifiers": { "orcid": null, "lattes_id": null, "scopus_id": null, "wikidata_id": null, "openalex_id": null, "url": null },
       "is_verified": false,
       "metrics": { "works_count": 1, "latest_publication_year": 2014 }
     }
   ],
-  "pagination": { "page": 1, "limit": 3, "total": 91, "totalPages": 31, "hasNext": true, "hasPrev": false },
+  "pagination": { "page": 1, "limit": 3, "total": 93, "totalPages": 31, "hasNext": true, "hasPrev": false },
   "meta": {
     "request": { "method": "GET", "path": "/signatures/259377/persons?limit=3" },
     "pagination_extras": { "offset": 0 }
@@ -243,98 +192,79 @@ GET /signatures/259377/persons?limit=50&offset=50
 }
 ```
 
-**Fields** (each `data[]` element — the person list-item shape)
+**Fields** (the [persons](./persons.md) list-item shape)
 
 | field | type | notes |
 |---|---|---|
-| `id` | integer | person id — follow `_links.self` to `/persons/{id}` |
-| `_links.self` | string | `/persons/{id}` |
-| `preferred_name` | string \| null | display name |
-| `given_names` | string \| null | |
-| `family_name` | string \| null | |
-| `name_signature` | string \| null | person's own signature-name field (from the person DTO); typically `null` here |
-| `identifiers.orcid` | string \| null | ORCID |
-| `identifiers.lattes_id` | string \| null | Lattes id |
-| `identifiers.scopus_id` | string \| null | Scopus author id |
-| `identifiers.wikidata_id` | string \| null | Wikidata id |
-| `identifiers.openalex_id` | string \| null | OpenAlex id |
-| `identifiers.url` | string \| null | canonical URL |
-| `is_verified` | boolean | person verification flag |
-| `metrics.works_count` | integer | from `persons.total_works` |
-| `metrics.latest_publication_year` | integer \| null | most recent publication year for the person |
+| `id` / `_links.self` | integer / string | Person id and `/persons/{id}`. |
+| `preferred_name` / `given_names` / `family_name` | string \| null | Name parts. |
+| `name_signature` | string \| null | Always `null` here (the query does not select it). |
+| `identifiers.{orcid,lattes_id,scopus_id,wikidata_id,openalex_id,url}` | string \| null | Only `orcid`, `lattes_id` and `scopus_id` are selected on this route; the others are `null`. |
+| `is_verified` | boolean | Person verification flag. |
+| `metrics.works_count` | integer | `persons.total_works`. |
+| `metrics.latest_publication_year` | integer \| null | Most recent publication year for the person. |
 
-**Notes / caveats**
-- **404** `NOT_FOUND` (`"Signature not found"`) when the signature id does not exist (the service returns null when there is no matching signature row).
-- `pagination.total` is **exact** (`COUNT` of persons with this `signature_id`).
-- This is the same DTO used by [persons](./persons.md) listings; the `identifiers{}` nesting and `metrics{}` block match there. Do not expect flat top-level identifier keys.
+**Notes:** `pagination.total` is an exact count of persons with this `signature_id`. A non-existent signature returns **404** `NOT_FOUND` (`"Signature not found"`).
 
 ---
 
 ## `GET /signatures/{id}/works`
 
-Paginated list of works authored by **any** person carrying this signature. Public. Uses the `formatSignatureWork` DTO — an author-centric work row.
-
-**Path parameters**
-
-| param | type | bounds | notes |
-|---|---|---|---|
-| `id` | integer | `>= 1` | signature id; 404 if it does not exist |
+Paginated list of works contributed by **any** person carrying this signature, one row per work.
 
 **Query parameters**
 
 | param | type | default | bounds | effect |
 |---|---|---|---|---|
-| `page` | integer | `1` | `>= 1` | page number (this route is **page-based**, not offset) |
-| `limit` | integer | `20` | 1..100 (clamped) | page size |
+| `page` | integer | 1 | ≥ 1 | Page number. |
+| `limit` | integer | 10 | 1..100 | Page size. |
+| `offset` | integer | — | ≥ 0 | Rows to skip; takes precedence over `page`. |
 
-> This endpoint accepts **only** `page` and `limit`. It does **not** honor the shared work-listing sort/citation/type/language/year filters (`sort_by`, `cited_by_min`, `type`, etc.). Ordering is fixed.
+The shared work-listing filters and sorts (`sort_by`, `cited_by_min`, `type`, …) are not available here. **Ordering** is by the year of the work's latest publication, descending, with works that have no year **last**, then by work id descending.
 
-**Example requests**
+**Representative authorship.** When several persons under the signature contributed to a work, or one person did so under several roles, the `authorship` block describes a single authorship row. That row is picked by role (`AUTHOR`, then `EDITOR`, `TRANSLATOR`, `REVIEWER`), then by lowest position, then by lowest person id. `person_id`, `person_name`, `role`, `position` and `is_corresponding` all come from that same row.
 
-```
-GET /signatures/259377/works
-GET /signatures/259377/works?limit=3
-GET /signatures/259377/works?page=2&limit=50
-```
-
-**Example response** (`/signatures/259377/works?limit=3`, one element shown)
+**Example response** (`/signatures/259377/works?limit=3`, one of three rows shown)
 
 ```json
 {
   "status": "success",
   "data": [
     {
-      "id": 22435033,
-      "title": "Racismo, Cultura e Matemática",
-      "subtitle": "Uma revisão sobre a Educação Quilombola à luz dos Estudos Culturais",
+      "id": 24213548,
+      "title": "Itinerários terapêuticos de um usuário de um Caps infantojuvenil e práticas de saúde de seu território",
+      "subtitle": null,
       "type": "ARTICLE",
-      "language": "es",
-      "doi": "10.23899/dftyhy63",
+      "language": null,
+      "doi": "10.1590/s0104-12902026250475pt",
       "open_access": true,
       "authorship": {
         "role": "AUTHOR",
-        "position": 2,
+        "position": 1,
         "is_corresponding": false,
-        "person_id": 10395464,
-        "person_name": "Amanda Morais da Silva"
+        "person_id": 11178501,
+        "person_name": "Alexandre Morais da Silva"
       },
       "publication": {
         "year": 2026,
-        "journal": "RELACult - Revista Latino-Americana de Estudos em Cultura e Sociedade",
-        "volume": "12",
-        "issue": "3",
+        "journal": "Saúde e Sociedade",
+        "volume": "35",
+        "issue": "4",
         "pages": null,
         "open_access": true
       },
       "authors": {
-        "total_count": 4,
-        "author_string": "Pedro Lucas Olinto Moura; Amanda Morais da Silva; Keilla Das Dores Teixeira; Patrícia Ignácio"
+        "total_count": 3,
+        "author_string": "Alexandre Morais da Silva; Eunice Nakamura; Andrea Perosa Saigh Jurdi"
       },
-      "created_at": "2026-07-19T22:55:47.000Z"
+      "created_at": "2026-10-07T23:31:28.000Z"
     }
   ],
-  "pagination": { "page": 1, "limit": 3, "total": 204, "totalPages": 68, "hasNext": true, "hasPrev": false },
-  "meta": { "request": { "method": "GET", "path": "/signatures/259377/works?limit=3" } }
+  "pagination": { "page": 1, "limit": 3, "total": 211, "totalPages": 71, "hasNext": true, "hasPrev": false },
+  "meta": {
+    "request": { "method": "GET", "path": "/signatures/259377/works?limit=3" },
+    "pagination_extras": { "offset": 0 }
+  }
 }
 ```
 
@@ -342,43 +272,35 @@ GET /signatures/259377/works?page=2&limit=50
 
 | field | type | notes |
 |---|---|---|
-| `id` | integer | work id — link to `/works/{id}` (see [works](./works.md)) |
-| `title` | string \| null | work title |
-| `subtitle` | string \| null | work subtitle |
-| `type` | string \| null | displayed publication type of the latest publication: `ARTICLE`, `BOOK`, `CHAPTER`, `THESIS`, `CONFERENCE`, `CONFERENCE_PAPER`, `REPORT`, `DATASET`, `PREPRINT`, `REVIEW`, `EDITORIAL`, `OTHER` |
-| `language` | string \| null | ISO 639-1 |
-| `doi` | string \| null | DOI |
-| `open_access` | boolean \| null | top-level convenience flag (from the latest publication's `open_access`) |
-| `authorship.role` | string | `AUTHOR` \| `EDITOR` (MIN over this person's authorships on the work) |
-| `authorship.position` | integer | author-list position |
-| `authorship.is_corresponding` | boolean | corresponding-author flag |
-| `authorship.person_id` | integer | the (lowest) person id under this signature that authored the work |
-| `authorship.person_name` | string \| null | that person's `preferred_name` |
-| `publication.year` | integer \| null | year of the latest publication |
-| `publication.journal` | string \| null | venue name |
-| `publication.volume` | string \| null | |
-| `publication.issue` | string \| null | |
-| `publication.pages` | string \| null | page range/article number (e.g. `"e025004"`) |
-| `publication.open_access` | boolean | duplicate of top-level `open_access` |
-| `authors.total_count` | integer | total authorships on the work |
-| `authors.author_string` | string \| null | `; `-joined full author names (hydrated) |
-| `created_at` | string(date-time) \| null | work `created_at`, ISO-8601 UTC |
+| `id` | integer | Work id; link to `/works/{id}` (see [works](./works.md)). |
+| `title` / `subtitle` | string \| null | Work title and subtitle. |
+| `type` | string \| null | `type` of the latest publication (`ARTICLE`, `BOOK`, `CHAPTER`, …). |
+| `language` | string \| null | ISO 639-1. |
+| `doi` | string \| null | DOI of the latest publication. |
+| `open_access` | boolean \| null | Open-access flag of the latest publication. |
+| `authorship.role` | string | `AUTHOR`, `EDITOR`, `TRANSLATOR` or `REVIEWER` of the representative authorship. |
+| `authorship.position` | integer | Its position, 1-based within its role. |
+| `authorship.is_corresponding` | boolean | Its corresponding-author flag. |
+| `authorship.person_id` / `person_name` | integer / string \| null | The person on that authorship row. |
+| `publication.year` | integer \| null | Year of the latest publication. |
+| `publication.journal` | string \| null | Venue name. |
+| `publication.volume` / `issue` / `pages` | string \| null | Publication locators. |
+| `publication.open_access` | boolean | Same value as the top-level `open_access`. |
+| `authors.total_count` | integer | Distinct contributors (people) on the work. |
+| `authors.author_string` | string \| null | `; `-joined contributor names. |
+| `created_at` | string(date-time) \| null | Work `created_at`, ISO 8601. |
 
-**Notes / caveats**
-- **Ordering is fixed**: `COALESCE(publication.year, 2024) DESC, work_id DESC`. Works with a null publication year are treated as year 2024 for sorting. You cannot re-sort or citation-filter this endpoint — for filtered/sorted work lists, use [`/works`](./works.md) or [`/persons/{id}/works`](./persons.md).
-- **404** `NOT_FOUND` (`"Signature not found"`) when the signature id does not exist.
-- `pagination.total = COUNT(DISTINCT work_id)` and is **exact** — no estimate/budget flag on this path.
-- The `authorship` block reflects one representative linked person (the MIN person id under the signature), not necessarily the person you searched for. If you need per-person authorship, resolve via `/signatures/{id}/persons` then [`/persons/{id}/works`](./persons.md).
+**Notes:** `pagination.total` is an exact count of distinct works. A non-existent signature returns **404** `NOT_FOUND` with message `"Signature with ID {id} not found"`. For per-person authorship, resolve through `/signatures/{id}/persons`, then [`/persons/{id}/works`](./persons.md). A cold page on the largest signature (`3292`, 10.7k works, `limit=100`) measured 1.1 s.
 
 ---
 
-## Errors & edge cases (domain summary)
+## Errors and edge cases
 
 | Case | HTTP | Body |
 |---|---|---|
-| `q` missing/empty on `/search` | 400 | `VALIDATION_ERROR` with `errors[]` (`path: "q"`) |
-| Non-integer `id` | 400 | `VALIDATION_ERROR` (`Signature ID must be a positive integer`) |
-| Non-existent signature id (detail / persons / works) | 404 | `NOT_FOUND`, `message: "Signature not found"`, with `meta.request` |
-| `GET /signatures` (root listing) | 404 | global not-found: `"Can't find /signatures on this server!"` — no `meta.request` block. Intentionally disabled |
-
-All list endpoints in this domain report **exact** `pagination.total`; none set `pagination_total_exact`/`page_degraded`, so no graceful-degradation handling is needed here (unlike works/publications — see [00-conventions §6](../00-conventions.md)).
+| `q` missing, empty or one character on `/search` | 400 | `VALIDATION_ERROR` with `errors[]` (`path: "q"`). |
+| Non-integer `id` | 400 | `VALIDATION_ERROR` (`Signature ID must be a positive integer`). |
+| Unknown signature on detail / persons | 404 | `NOT_FOUND`, `"Signature not found"`, with `meta.request`. |
+| Unknown signature on works | 404 | `NOT_FOUND`, `"Signature with ID {id} not found"`, with `meta.request`. |
+| A search page exceeding its statement budget | 503 | `REQUEST_TIMEOUT`. |
+| `GET /signatures` (root listing) | 404 | Global not-found, `"Can't find /signatures on this server!"`, without `meta.request`. |

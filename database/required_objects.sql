@@ -30,25 +30,54 @@
 --     cadence. Left as 0 until provided; not blocking.
 
 -- -----------------------------------------------------------------------------
--- PENDING (2026-10-14, venues index audit): optional redundant-index cleanup.
--- OPTIONAL — no venues query depends on it either way. Apply only if wanted.
+-- PENDING (2026-10-14, full API review): optional redundant-index cleanup.
+-- OPTIONAL — no API query depends on any of these indexes. Each one duplicates
+-- an index that serves every lookup it could serve, and only costs a second
+-- B-tree maintained on every write. No routine in the 2026-10-14 snapshot
+-- names them; drop one only if no pipeline query outside the database names it
+-- in an index hint (FORCE/USE INDEX). Dropping a secondary index is in place.
 -- -----------------------------------------------------------------------------
 
--- (venues) idx_eissn (eissn) duplicates UNIQUE KEY `eissn` (eissn) column for
---     column and order, so every lookup it could serve is served by the unique
---     key; it only costs a second B-tree maintained on every venues write. No
---     routine in the 2026-10-14 snapshot names it. Drop it only if no pipeline
---     query outside the database names it in an index hint (FORCE/USE INDEX).
+-- (venues) idx_eissn (eissn) duplicates UNIQUE KEY `eissn` (eissn).
 ALTER TABLE venues DROP INDEX IF EXISTS idx_eissn;
 
--- Audit result recorded for the next reader: the /venues endpoints need NO new
--- index. Every access path is already indexed (publications.venue_id via
--- idx_publications_venue_year_oa, venue_subjects PK, venues.publisher_id via
--- idx_venues_publisher, PK lookups); the 2026-10-14 slowdowns (venue detail up
--- to 4.9 s) were query-shape defects fixed API-side. A (total_score DESC, name)
--- index would make the default /venues sort index-ordered, but the narrow
--- id-selection already answers in ~0.2 s uncached on a 2 h-cached listing, so
--- it is not requested.
+-- (persons) idx_persons_preferred_name duplicates UNIQUE uq_preferred_name;
+--     idx_family_name (family_name) is the prefix of idx_persons_family_given.
+ALTER TABLE persons DROP INDEX IF EXISTS idx_persons_preferred_name;
+ALTER TABLE persons DROP INDEX IF EXISTS idx_family_name;
+
+-- (signatures) idx_signatures_signature (signature) and idx_signature_search
+--     (signature(20)) both duplicate UNIQUE uq_signature (signature).
+ALTER TABLE signatures DROP INDEX IF EXISTS idx_signatures_signature;
+ALTER TABLE signatures DROP INDEX IF EXISTS idx_signature_search;
+
+-- (work_subjects) idx_subject (subject_id) is the prefix of
+--     idx_work_subjects_subject_work (subject_id, work_id), which also backs the
+--     subject_id foreign key. Beyond being redundant it is harmful: with both
+--     present MariaDB picks an index_merge intersection of the two for any
+--     subject query that reads a non-indexed column (3.7 s on subject 341907).
+ALTER TABLE work_subjects DROP INDEX IF EXISTS idx_subject;
+
+-- -----------------------------------------------------------------------------
+-- PENDING (2026-10-14, full API review): read-only database account.
+-- RECOMMENDED. The API connects as `dev`, which holds GRANT ALL PRIVILEGES ON
+-- *.* WITH GRANT OPTION on the replication master; the consumer-only contract is
+-- enforced by convention alone. The operator should create a SELECT-only account
+-- for the API (and the Manticore indexer source), set its password in
+-- /etc/node-backend.env (DB_USER / DB_PASSWORD) and render the Manticore config
+-- again. The statements need a secret, so they are described rather than listed:
+--   CREATE USER 'ethnos_api_ro'@'localhost' IDENTIFIED BY '<secret>';
+--   GRANT SELECT ON data.* TO 'ethnos_api_ro'@'localhost';
+-- /etc/node-backend.env should also be chmod 640 (it is 0655 today, readable by
+-- every local account, and holds the database password and eight API keys).
+
+-- Audit result recorded for the next reader: no API endpoint needs a new index.
+-- Every slow path found in the 2026-10-14 review (venue detail 4.9 s, works and
+-- publications filter+sort 503s, collaboration rankings, signature search,
+-- subject works) was a query-shape defect fixed API-side. A (total_score DESC,
+-- name) index on venues would make the default /venues sort index-ordered, but
+-- the narrow id-selection already answers in ~0.2 s uncached on a cached
+-- listing, so it is not requested.
 
 -- Previously applied (recorded in backups/data.schema.<date>.sql):
 --   * metrics_annual_summary (PK year; total_publications, unique_works,

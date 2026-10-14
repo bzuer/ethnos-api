@@ -2,28 +2,37 @@
 
 [![DOI](https://zenodo.org/badge/1049971688.svg)](https://doi.org/10.5281/zenodo.17049435)
 
-Public RESTful API for academic bibliographic research with high-performance search, researcher profiles, institutional analytics, and bibliometric analysis.
+Public RESTful API for academic bibliographic research: works and their publications, researchers, venues, institutions, subjects, course bibliographies, citations, collaborations and bibliometric rankings.
 
 ## System Status
 
-Production-ready system with 78 documented endpoints (per OpenAPI). Full-text search for `works` and `persons` runs on a Manticore Search daemon; `venues`, `subjects`, and `organizations` use their own MariaDB FULLTEXT indexes. Redis caching and standardized response envelopes throughout.
+78 documented operations (OpenAPI). Full-text search for `works` and `persons` runs on a Manticore Search daemon; institution search uses a MariaDB FULLTEXT index, `/venues` search a substring match, and the `/publications` venue filter the `ft_venues_search` FULLTEXT index. Redis caching and standardized response envelopes throughout. Corpus on 2026-10-14: 7,657,142 works, 7,744,534 publications, 4,903,220 persons, 359,932 venues, 1,086,287 organizations.
+
+The frontend-facing reference is [`documentation/`](documentation/README.md): shared conventions, one chapter per domain with live examples, and the audit log [`documentation/API_ISSUES.md`](documentation/API_ISSUES.md).
 
 ## Database Schema
 
-Source of truth: the latest dated snapshot under `backups/` (e.g. `backups/data.schema.YYYY-MM-DD.sql`), regenerated via `scripts/maintenance/publications/regenerate_schema_dump.sh`. Operator-side DDL the API depends on is tracked in `database/required_objects.sql`.
+The API is a strict read-only consumer of the MariaDB database `data`: it issues `SELECT` statements only and never changes structure or rows. Source of truth: the latest dated snapshot under `backups/` (`backups/data.schema.YYYY-MM-DD.sql`), regenerated with `scripts/maintenance/publications/regenerate_schema_dump.sh`. Operator-side DDL the API depends on is tracked in `database/required_objects.sql`.
 
 ## Prerequisites
 
-- Node.js >= 18.0.0
-- MariaDB >= 10.5
-- Redis >= 6.0
-
-### System packages (Ubuntu/Debian)
+- Node.js >= 24
+- MariaDB >= 10.6 with the `data` database
+- Redis >= 6
+- Manticore Search (SphinxQL on `127.0.0.1:9306`) with the `works` and `persons` tables built from `config/manticore.conf`
+- nginx (the API is only ever published through it)
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y mariadb-server redis-server libmariadb3
-sudo systemctl enable --now mariadb redis-server
+sudo apt-get install -y mariadb-server redis-server nginx libmariadb3
+sudo systemctl enable --now mariadb redis-server nginx
+```
+
+Install Manticore Search from its official repository, then build the index once (about 30-80 minutes on the full corpus):
+
+```bash
+sudo scripts/manticore/render-config.sh
+sudo scripts/manticore/reindex.sh init
 ```
 
 ## Installation
@@ -31,60 +40,45 @@ sudo systemctl enable --now mariadb redis-server
 1. Clone and install dependencies:
 
 ```bash
-git clone https://github.com/bzuer/ethnos_api
-mv ethnos_api api && cd api
+git clone https://github.com/bzuer/ethnos_api api && cd api
 npm install --include=dev
 ```
 
-2. Create the runtime environment file (single source of truth):
+2. Create the runtime environment file `/etc/node-backend.env` (the single source of truth; never commit it). It holds the database connection (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`), Redis (`REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`), Manticore (`MANTICORE_HOST`, `MANTICORE_PORT`), the listeners (`PORT`, default `1201`; `API_BIND_HOST`, default `127.0.0.1`; `NGINX_PUBLIC_PORT`, default `1211`; `NGINX_LISTEN_ADDRESS`), `CORS_ORIGINS`, and at least one access key (`API_KEY`). Keep it readable only by its owner and group:
 
 ```bash
-sudo cp node-backend.env.example /etc/node-backend.env
-sudo chown $(whoami) /etc/node-backend.env
+sudo chmod 640 /etc/node-backend.env
 ```
 
-3. Edit `/etc/node-backend.env` with your real credentials and settings.
-
-4. Create the database and user:
+3. Give the API a read-only database account:
 
 ```bash
-set -a
-source /etc/node-backend.env
-set +a
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost'; FLUSH PRIVILEGES;"
+set -a; source /etc/node-backend.env; set +a
+sudo mariadb -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
+sudo mariadb -e "GRANT SELECT ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
 ```
 
-5. Start the API:
+4. Install the system unit and the nginx vhost, then start:
 
 ```bash
-./server.sh start
+scripts/manage.sh systemd:install
+scripts/manage.sh nginx
+scripts/manage.sh start
 ```
 
-## Systemd (recommended)
+## Operations
 
-```bash
-sudo cp scripts/systemd/ethnos-api.service /etc/systemd/system/ethnos-api.service
-sudo sed -i "s/^User=.*/User=$(whoami)/" /etc/systemd/system/ethnos-api.service
-sudo sed -i "s/^Group=.*/Group=$(whoami)/" /etc/systemd/system/ethnos-api.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now ethnos-api
-```
+`scripts/manage.sh` verifies and repairs the infrastructure (MariaDB, Redis, nginx, the API unit) on every command:
 
-## Deployment
+- `start` / `stop` / `restart` / `status`
+- `deploy`: stop, clean, install dependencies, generate the OpenAPI documents, run the unit tests (a failure aborts), install the vhost, start and validate
+- `nginx` (or `nginx --print` to review the rendered vhost without root)
+- `systemd:install`
+- `test --endpoints` (unit suite) / `test --data` (read-only structural precheck)
 
-```bash
-scripts/manage.sh deploy
-```
+Manticore is not checked by `manage.sh`; verify it with `systemctl status manticore` and `GET /search/health`, and rebuild the index operator-side with `scripts/manticore/reindex.sh` (`delta` within 48 hours of any data change, `all` for a full rebuild).
 
-Deploy sequence:
-- Stop API
-- Clear caches
-- Install dependencies (including dev)
-- Generate Swagger artifacts
-- Run tests
-- Restart API
+Logs: `journalctl -u ethnos-api` and the daily files under `logs/`.
 
 ## API Documentation
 
@@ -92,83 +86,50 @@ Deploy sequence:
 - Swagger UI: `http://localhost:1211/docs`
 - OpenAPI JSON: `http://localhost:1211/docs.json`
 - OpenAPI YAML: `http://localhost:1211/docs.yaml`
-- Application listen port: `1201` on loopback (`PORT` / `API_BIND_HOST`); the API is only ever published through nginx — install the vhost with `scripts/manage.sh nginx`
-- Test-only fallback port: `3000` (`NODE_ENV=test` without explicit `PORT`)
-- Regenerate docs: `npm run docs:generate` (JSON + YAML) or `npm run docs:generate:yaml` (YAML only)
-
-## Security Headers
-
-- Security headers are enforced by `helmet` in `src/app.js` (CSP, HSTS, frameguard, no-sniff, referrer policy, DNS prefetch control).
-- When updating CSP, ensure Swagger UI and fonts remain functional.
-- Do not loosen headers in production unless strictly required and documented.
+- Regenerate the documents: `npm run docs:generate` (JSON + YAML) or `npm run docs:generate:yaml`
 
 ## Access Control and Rate Limiting
 
-- Data and metrics endpoints are public: no key is required. Unauthenticated traffic is capped at 120 requests/min per IP (`RATE_LIMIT_GENERAL`, window `RATE_LIMIT_WINDOW_MS`, default 60s); requests over the cap get `429`.
-- A valid `X-Access-Key` (case-insensitive aliases: `x-access-key`, `x-internal-key`, `x-api-key`) removes the rate limit and is **required** for `/dashboard`, `/security/*`, `/health/readiness`, and `/health/metrics`.
-- Key validation is handled by `requireInternalAccessKey` / `createAccessKeyGuard` in `src/middleware/accessKey.js`; the rate-limit bypass for keyed and localhost traffic lives in `shouldSkipRateLimit` in `src/middleware/rateLimiting.js`.
-- Keys must be provided only via `/etc/node-backend.env` and never logged or exposed in responses.
-- If rotating keys, update the env file and restart the service to apply changes.
-- The whole limiter can be turned off with `RATE_LIMIT_DISABLED=true` (default: enabled).
+- Data and metrics endpoints are public: no key is required. Unauthenticated traffic shares one bucket of 120 requests/min per client IP (`RATE_LIMIT_GENERAL`, window `RATE_LIMIT_WINDOW_MS`); requests over the cap get `429`.
+- A valid access key (header `X-Access-Key`, aliases `x-internal-key` / `x-api-key`) lifts the limit and is **required** for `/dashboard/*`, `/security/*`, `/health/readiness` and `/health/metrics`.
+- The client IP is read past the loopback proxies (nginx, a local tunnel) from `X-Forwarded-For`; the vhost must keep setting that header.
+- Keys live only in `/etc/node-backend.env`; restart the service after rotating them.
 
-## Deployment Hygiene
+## Security Headers
 
-- Use `scripts/manage.sh deploy` as the only deploy pipeline.
-- Ensure logs and caches are cleared on deploy/restart as defined in `scripts/manage.sh`.
-- Do not commit generated artifacts (`docs/`), logs, or caches. Dated schema snapshots under `backups/` are tracked deliberately.
+Security headers are set by `helmet` in `src/app.js` (CSP, HSTS, frameguard, no-sniff, referrer policy, DNS prefetch control). When updating the CSP, keep Swagger UI and its fonts working. TLS terminates at nginx, never in Node.
 
 ## Response Format
 
 - Success envelope: `{ status: 'success', data, pagination?, meta? }`
 - Error envelope: `{ status: 'error', message, code, timestamp, meta? }`
-- Pagination is mandatory for list endpoints and supports `page/limit` or `offset/limit`.
-
-## Environment Management
-
-- Runtime: `/etc/node-backend.env` only
-- Tests: `.env.test`
-- Example: `node-backend.env.example`
+- Listings accept `page`/`limit` or `offset`/`limit` (default 10, maximum 100). A query that exceeds its time budget answers `503 REQUEST_TIMEOUT`.
 
 ## Project Structure
 
 ```
 /api
-  /src
-    /controllers
-    /routes
-    /services
-    /dto
-    /middleware
-    /utils
-  /config
-  /database
-  /docs
-  /scripts
-  /tests
-  server.sh
+  /src            controllers, routes, services, dto, middleware, utils, config
+  /config         swagger.config.js, openapi.schemas.js, manticore.conf, nginx.conf
+  /scripts        manage.sh, process.sh, manticore/, nginx/, systemd/, maintenance/
+  /tests          unit suite and integration smoke
+  /documentation  frontend-facing reference
+  /database       required_objects.sql (operator DDL contract)
+  /backups        dated schema snapshots
 ```
-
-## Search Engine
-
-Full-text search for `works` and `persons` runs against a Manticore Search daemon (SphinxQL on `127.0.0.1:9306`), selected by `SEARCH_BACKEND=manticore`. Matching ids resolve in Manticore and hydrate from MariaDB. The remaining lookups use MariaDB FULLTEXT indexes on the base tables:
-- `venues.ft_venues_search` over `name` + `abbreviated_name` for the `venue_name` filter and venue search.
-- `persons.ft_persons_names`, `subjects.ft_subjects_term`, `organizations.ft_organizations_name` for their respective lookups.
-
-There is no Sphinx daemon, RT index, or `summary_*` denormalized layer. On `/publications`, `meta.engine` is `"Manticore"` when a full-text term participates, else `"MariaDB"`.
 
 ## Testing
 
 ```bash
-npm test
-npm run test:watch
-npm run test:coverage
+npm test                    # unit suite, mocks the service layer
+npm run test:integration    # smoke suite against a running instance (INTEGRATION_BASE_URL, an access key)
 ```
 
 ## Quick Checks
 
 ```bash
 curl -s http://localhost:1211/health/liveness
-curl -s http://localhost:1211/docs
+curl -s http://localhost:1211/search/health
 ```
 
 ## License

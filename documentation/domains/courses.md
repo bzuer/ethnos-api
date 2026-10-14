@@ -1,30 +1,30 @@
 # Courses — teaching syllabi, reading lists, and instructor rosters
 
-The `courses` domain exposes academic course records (syllabi) and their three satellite relations: the instructor roster, the reading list (bibliography), and the subjects derived from that reading list. It is backed entirely by MariaDB (`courses`, `course_instructors`, `course_bibliography`, joined through to `persons`, `works`, `publications`, `work_subjects`, `subjects`) — **no Manticore involvement**; the only text filter is a plain SQL `LIKE`. Course records reference a `program_id` FK into the `programs` table (degree programs by institution), but that table is currently empty, so `program_id` is a bare integer with no joinable program entity. Bibliography rows link to `works` (see [./works.md](./works.md)) and instructors are `persons` (see [./persons.md](./persons.md)); the same course→work reading-list relation also surfaces from the [./bibliographies.md](./bibliographies.md) domain.
+The `courses` domain exposes academic course records (syllabi) and three satellite relations: the instructor roster, the reading list (bibliography), and the subjects derived from that reading list. It is backed entirely by MariaDB: `courses`, `course_instructors` and `course_bibliography`, joined through to `persons`, `works`, `publications`, `work_subjects` and `subjects`. Manticore is not involved; the only text filter is a plain SQL `LIKE`. Each course references a `program_id` in `programs` (degree programs by institution), but no program endpoint exists, so `program_id` is exposed as a bare integer. Bibliography rows link to `works` (see [./works.md](./works.md)) and instructors are `persons` (see [./persons.md](./persons.md)); the same course→work reading-list relation also surfaces in the [./bibliographies.md](./bibliographies.md) domain.
 
-All shared conventions — the `{ status, data, pagination, meta }` envelope, `page`/`limit` + `offset`/`limit` pagination, rate limiting, error codes/envelope, and automatic boolean/date normalization — are documented in [../00-conventions.md](../00-conventions.md) and are not repeated here. This domain requires no auth key; it is served under the general rate limiter.
+Envelope, pagination (`page`/`limit` or `offset`/`limit`, default page size 10, an explicit `offset` is served as given and echoed in `meta.pagination_extras.offset`), rate limiting and error codes follow [../00-conventions.md](../00-conventions.md). No access key is required.
 
-> **Data-sparsity warning.** At the time of writing the domain is seeded with a **single test course** (`id=11111`, `code="B11111C"`, "Social Anthropology") that has **one instructor and zero bibliography/subject rows**. Every response below is real but minimal: the nested reading-list and subject listings are legitimately empty, and the statistics collapse to counts of 1. The DTO item shapes for bibliography and subject rows are therefore documented from the corrected swagger + DTO contract, and flagged as not-yet-observable with live data. Build the UI to the shapes below, not to the current row counts.
+> Course data is a single seed record: `courses`, `course_instructors` and `programs` hold one row each and `course_bibliography` is empty (measured 2026-10-14). Bibliography and subject listings are therefore empty today; loading is operator-side — see [../API_ISSUES.md](../API_ISSUES.md).
 
 ---
 
 ## `GET /courses`
 
-List courses with instructor/bibliography rollup counts and a 3-name instructor preview. Backed by MariaDB; sort is fixed (`year DESC, semester, name`) and not client-controllable.
+List courses with instructor and bibliography rollup counts and an instructor-name preview. The sort is fixed (`year DESC, semester, name`). Cached 30 minutes.
 
 **Query parameters**
 
 | param | type | default | accepted values / bounds | effect |
 |---|---|---|---|---|
-| `page` | integer | 1 | ≥ 1 | Page number (offset derived). |
-| `limit` | integer | **10** | 1..100 | Page size. Out-of-range values are **silently clamped to 100**, not rejected — the controller does not enforce the attached validators, so `limit=999` returns 200 with `limit=100`. |
-| `offset` | integer | 0 | ≥ 0 | Offset pagination; `offset`/`limit` and `page`/`limit` are both accepted. |
-| `search` | string | — | 1..100 chars | Case-insensitive `LIKE %v%` over `c.name` **or** `c.code`. |
-| `program_id` | integer | — | — | Exact match on `program_id`. |
-| `year` | integer | — | — | Exact match on academic `year`. |
-| `semester` | string | — | e.g. `"1"` | Exact match on the `semester` label (string, not int). |
+| `page` | integer | 1 | ≥ 1 | Page number. |
+| `limit` | integer | 10 | 1..100 | Page size. |
+| `offset` | integer | — | ≥ 0 | Rows to skip; takes precedence over `page`. |
+| `search` | string | — | 1..100 chars | Case-insensitive `LIKE %v%` over `courses.name` **or** `courses.code`. |
+| `program_id` | integer | — | ≥ 1 | Exact match on `program_id`. |
+| `year` | integer | — | 1000..next year | Exact match on the academic `year`. |
+| `semester` | string | — | 1..20 chars | Exact match on the semester label (`1`, `2`, `SUMMER`, `WINTER`, `YEAR_LONG`). |
 
-There are no citation/sort params here — this listing has no client-controllable sort.
+A value outside these bounds (e.g. `limit=500`, `page=abc`, `year=abc`, `program_id=0`) returns **400 `VALIDATION_ERROR`** with the express-validator `errors[]` array.
 
 **Example requests**
 
@@ -51,10 +51,7 @@ GET /courses?offset=0&limit=20&program_id=1
       "program_id": 1,
       "semester": "1",
       "year": 2026,
-      "metrics": {
-        "instructor_count": 1,
-        "bibliography_count": 0
-      },
+      "metrics": { "instructor_count": 1, "bibliography_count": 0 },
       "instructors_preview": ["Bruno Cesar Cunha Cruz"],
       "created_at": "2026-07-18T20:46:20.000Z"
     }
@@ -62,7 +59,6 @@ GET /courses?offset=0&limit=20&program_id=1
   "pagination": { "page": 1, "limit": 3, "total": 1, "totalPages": 1, "hasNext": false, "hasPrev": false },
   "meta": {
     "filters": { "program_id": null, "year": null, "semester": null, "search": null },
-    "performance": { "query_time_ms": 0 },
     "request": { "method": "GET", "path": "/courses?limit=3" },
     "pagination_extras": { "offset": 0 }
   }
@@ -77,40 +73,26 @@ GET /courses?offset=0&limit=20&program_id=1
 | `_links.self` | string | `/courses/{id}`. |
 | `code` | string \| null | Course code, e.g. `"B11111C"`. |
 | `name` | string \| null | Course name. |
-| `credits` | integer \| null | Credit count. DTO applies `credits \|\| null`, so a stored `0` surfaces as `null`. |
-| `program_id` | integer \| null | FK into the (currently empty) `programs` table; no joinable program object. |
-| `semester` | string \| null | Semester label, e.g. `"1"`. String, not integer. |
+| `credits` | integer \| null | Credit count. A stored `0` surfaces as `null`. |
+| `program_id` | integer \| null | FK into `programs`; no program object is embedded. |
+| `semester` | string \| null | Semester label, e.g. `"1"`. A string, not an integer. |
 | `year` | integer \| null | Academic year. |
-| `metrics.instructor_count` | integer | DISTINCT instructors on the course. |
-| `metrics.bibliography_count` | integer | DISTINCT bibliography works on the course. |
-| `instructors_preview` | string[] | Up to 3 instructor `preferred_name`s (from a `GROUP_CONCAT`, split client-side by the API). |
+| `metrics.instructor_count` | integer | Distinct instructors on the course. |
+| `metrics.bibliography_count` | integer | Distinct bibliography works on the course. |
+| `instructors_preview` | string[] | Up to 3 distinct instructor `preferred_name`s, alphabetical. |
 | `created_at` | string(date-time) \| null | ISO 8601. |
 
-**Meta**
+**Meta:** `meta.filters` echoes `program_id`, `year`, `semester` and `search` (`null` when absent).
 
-| field | type | notes |
-|---|---|---|
-| `meta.filters` | object | Echoes applied filters (`program_id`, `year`, `semester`, `search`); `null` when absent. |
-| `meta.performance.query_time_ms` | integer | **Placeholder, always `0`** (computed as `Date.now() - Date.now()`). Do not surface as a real latency. |
-| `meta.pagination_extras.offset` | integer | Resolved offset for the page. |
-| `meta.request` | object | `{ method, path }`. |
-
-**Notes / caveats**
-- `metrics` on the **list** carries only `instructor_count` and `bibliography_count` — there is **no `subject_count` key** here (the list SQL never computes it). `subject_count` appears only on the detail endpoint. See [../API_ISSUES.md](../API_ISSUES.md).
-- `pagination.total` is an exact `COUNT(*)` (no statement-budget estimate on this small table); `pagination_total_exact` is not emitted for this domain.
-- Sort is fixed and not overridable.
+**Notes**
+- List rows carry no `metrics.subject_count`; it appears only on the detail endpoint.
+- `pagination.total` is an exact `COUNT(DISTINCT course)`.
 
 ---
 
 ## `GET /courses/statistics`
 
-Aggregate course counts plus year and semester distributions. No query params, no pagination.
-
-**Example request**
-
-```
-GET /courses/statistics
-```
+Aggregate course counts plus year and semester distributions. No parameters, no pagination. Cached 1 hour (`courses:statistics`).
 
 **Example response**
 
@@ -137,54 +119,40 @@ GET /courses/statistics
 | field (dot-path) | type | notes |
 |---|---|---|
 | `total_courses` | integer | `COUNT(*)` of courses. |
-| `programs_count` | integer | DISTINCT `program_id`. |
-| `earliest_year` | integer \| null | `MIN(year)`. |
-| `latest_year` | integer \| null | `MAX(year)`. |
-| `semesters_count` | integer | DISTINCT `semester`. |
-| `avg_credits` | **string** \| null | `AVG(credits)` as a MariaDB DECIMAL **string**, e.g. `"1.0000"` — NOT a JSON number; `parseFloat` before display. `null` when no credited courses exist. |
-| `courses_with_credits` | integer | Count of courses with a non-null `credits`. |
-| `year_distribution[]` | array | Top 10 years, DESC by year. |
-| `year_distribution[].year` | integer | Academic year. |
-| `year_distribution[].course_count` | integer | Courses in that year. |
-| `year_distribution[].program_count` | integer | DISTINCT programs in that year. |
-| `semester_distribution[]` | array | Per-semester counts (unbounded). |
-| `semester_distribution[].semester` | string | Semester label. |
-| `semester_distribution[].course_count` | integer | Courses in that semester. |
-
-**Notes / caveats**
-- `avg_credits` type/nullability mismatch vs the swagger `number` example is a known doc issue — treat it as a decimal string. See [../API_ISSUES.md](../API_ISSUES.md).
-- `year_distribution` is capped at 10 rows; `semester_distribution` is not.
+| `programs_count` | integer | Distinct `program_id`. |
+| `earliest_year` / `latest_year` | integer \| null | `MIN(year)` / `MAX(year)`. |
+| `semesters_count` | integer | Distinct `semester`. |
+| `avg_credits` | string \| null | `AVG(credits)` as a decimal **string** (e.g. `"1.0000"`); `null` when no course has credits. Parse before display. |
+| `courses_with_credits` | integer | Courses with non-null `credits`. |
+| `year_distribution[]` | array | Ten most recent years, `year DESC`: `{ year, course_count, program_count }`. |
+| `semester_distribution[]` | array | Every semester label: `{ semester, course_count }`. |
 
 ---
 
 ## `GET /courses/{id}`
 
-Full course detail: base fields plus embedded bibliography, instructor, and derived-subject lists, each with a per-facet statistics block. Returns **404 `COURSE_NOT_FOUND`** for an unknown id.
+Full course detail: base fields plus embedded bibliography, instructor and derived-subject lists, each with a statistics block. Returns **404 `COURSE_NOT_FOUND`** for an unknown id. Cached 30 minutes.
 
-**Path parameters**
+**Path parameters:** `id` (integer ≥ 1).
 
-| param | type | notes |
-|---|---|---|
-| `id` | integer (≥ 1) | Course id. |
+**Query parameters**
 
-**Query parameters** (all optional; honoured by the controller)
+| param | type | default | accepted values | effect |
+|---|---|---|---|---|
+| `include_bibliography` | boolean | `true` | `true` / `false` / `1` / `0` | `false`/`0` omits `bibliography` and `bibliography_statistics`. |
+| `include_instructors` | boolean | `true` | `true` / `false` / `1` / `0` | `false`/`0` omits `instructors` and `instructor_statistics`. |
+| `include_subjects` | boolean | `true` | `true` / `false` / `1` / `0` | `false`/`0` omits `subjects` and `subject_statistics`. |
+| `bibliography_limit` | integer | 50 | 1..100 | Cap on embedded bibliography rows. |
+| `instructors_limit` | integer | 20 | 1..100 | Cap on embedded instructor rows. |
+| `subjects_limit` | integer | 30 | 1..100 | Cap on embedded subject rows. |
 
-| param | type | default | effect |
-|---|---|---|---|
-| `include_bibliography` | boolean | `true` | `=false` drops `bibliography` and `bibliography_statistics`. |
-| `include_instructors` | boolean | `true` | `=false` drops `instructors` and `instructor_statistics`. |
-| `include_subjects` | boolean | `true` | `=false` drops `subjects` and `subject_statistics`. |
-| `bibliography_limit` | integer | 50 | Cap on embedded bibliography rows (echoed in `meta.limits.bibliography`). |
-| `instructors_limit` | integer | 20 | Cap on embedded instructor rows (echoed in `meta.limits.instructors`). |
-| `subjects_limit` | integer | 30 | Cap on embedded subject rows (echoed in `meta.limits.subjects`). |
-
-Booleans follow the shared falsy/normalization rules in [../00-conventions.md](../00-conventions.md).
+Any other value (e.g. `bibliography_limit=-5`, `include_instructors=maybe`) returns **400 `VALIDATION_ERROR`**.
 
 **Example requests**
 
 ```
 GET /courses/11111
-GET /courses/11111?include_bibliography=false&include_subjects=false
+GET /courses/11111?include_bibliography=0&include_subjects=false
 GET /courses/11111?instructors_limit=1&bibliography_limit=100
 ```
 
@@ -231,106 +199,46 @@ GET /courses/11111?instructors_limit=1&bibliography_limit=100
 }
 ```
 
-**Fields — base (superset of the list-item fields)**
+**Fields: base** (superset of the list item)
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `id`, `_links.self`, `code`, `name`, `credits`, `program_id`, `semester`, `year`, `created_at` | — | Same semantics as the list item above. |
-| `metrics.instructor_count` | integer | DISTINCT instructors. |
-| `metrics.bibliography_count` | integer | DISTINCT bibliography works. |
-| `metrics.subject_count` | integer | DISTINCT derived subjects — **computed on detail only** (0 when no bibliography linkage). |
-| `instructors_preview` | string[] | Up to 3 instructor names. |
-| `source_file` | string \| null | Provenance filename of the ingested syllabus; `null` when unknown. |
+| `id`, `_links.self`, `code`, `name`, `credits`, `program_id`, `semester`, `year`, `created_at`, `instructors_preview` | — | As in the list item. |
+| `metrics.instructor_count` / `metrics.bibliography_count` | integer | As in the list item. |
+| `metrics.subject_count` | integer | Distinct subjects carried by the course's bibliography works (detail only). |
+| `source_file` | string \| null | Provenance filename of the ingested syllabus. |
 
-**Fields — `bibliography[]`** (embedded; empty for the seed course — shape from DTO)
+**Fields: `bibliography[]`** (same shape as [`/courses/{id}/bibliographies`](#get-coursesidbibliographies) items)
 
-| field (dot-path) | type | notes |
-|---|---|---|
-| `bibliography[].work_id` | integer | FK to `works`. |
-| `bibliography[].title` | string \| null | Work title. |
-| `bibliography[].publication_year` | integer \| null | From the work's latest publication (`pub.year`). |
-| `bibliography[].language` | string \| null | ISO 639-1 from `works.language`. |
-| `bibliography[].document_type` | string \| null | `publications.type` of the latest pub (`ARTICLE`/`BOOK`/`CHAPTER`/…). |
-| `bibliography[].open_access` | boolean | True if the latest pub is open access. |
-| `bibliography[].reading_type` | string \| null | One of `REQUIRED` / `RECOMMENDED` / `SUPPLEMENTARY` / `OPTIONAL`. |
-| `bibliography[].week_number` | integer \| null | Syllabus week the reading is assigned to. |
-| `bibliography[].notes` | string \| null | Free-text instructor note. |
-| `bibliography[].authors_preview` | string[] | Author `preferred_name`s in authorship order. |
-| `bibliography[].author_count` | integer | Total authors on the work. |
-| `bibliography[].first_author_name` | string \| null | Convenience first-author name. |
+**Fields: `instructors[]`** (same shape as [`/courses/{id}/instructors`](#get-coursesidinstructors) items)
 
-**Fields — `instructors[]`** (embedded)
+**Fields: `subjects[]`** (same shape as [`/courses/{id}/subjects`](#get-coursesidsubjects) items)
+
+**Fields: statistics blocks**
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `instructors[].person_id` | integer | `canonical_person_id`, falling back to `person_id`. |
-| `instructors[].preferred_name` | string \| null | Display name. |
-| `instructors[].given_names` | string \| null | |
-| `instructors[].family_name` | string \| null | |
-| `instructors[].role` | string \| null | e.g. `PROFESSOR`. |
-| `instructors[].identifiers.orcid` | string \| null | ORCID iD. |
-| `instructors[].is_verified` | boolean | Whether the person record is verified. |
-
-**Fields — `subjects[]`** (embedded; derived from `course_bibliography → work_subjects → subjects`; empty for seed course)
-
-| field (dot-path) | type | notes |
-|---|---|---|
-| `subjects[].id` | integer | Subject id. |
-| `subjects[].term` | string \| null | Subject term. |
-| `subjects[].vocabulary` | string \| null | Controlled vocabulary (e.g. `Keyword`). |
-| `subjects[].parent_id` | integer \| null | Parent subject (term hierarchy). |
-| `subjects[].work_count` | integer | DISTINCT works in this course's bibliography carrying the subject. |
-
-**Fields — statistics blocks**
-
-| field (dot-path) | type | notes |
-|---|---|---|
-| `bibliography_statistics.by_type` | object map | `{ reading_type: { count, first_week, last_week } }`; `{}` when no bibliography. |
-| `bibliography_statistics.by_week[]` | array | `[{ week_number, count, reading_types }]` where `reading_types` is a comma-joined string; `[]` when none. |
+| `bibliography_statistics.by_type` | object map | `{ reading_type: { count, first_week, last_week } }`; `{}` when empty. |
+| `bibliography_statistics.by_week[]` | array | `[{ week_number, count, reading_types }]`; `reading_types` is a comma-joined string. |
 | `instructor_statistics.by_role` | object map | `{ role: count }`, e.g. `{ "PROFESSOR": 1 }`. |
-| `subject_statistics.by_vocabulary` | object map | `{ vocabulary: { unique_subjects, works_covered } }`; `{}` when no subjects. |
+| `subject_statistics.by_vocabulary` | object map | `{ vocabulary: { unique_subjects, works_covered } }`; `{}` when empty. |
 
-**Meta**
+**Meta:** `meta.includes` reflects the include flags applied; `meta.limits` echoes the effective caps.
 
-| field | type | notes |
-|---|---|---|
-| `meta.includes` | object | `{ bibliography, instructors, subjects }` booleans reflecting the include flags actually applied. |
-| `meta.limits` | object | `{ bibliography, instructors, subjects }` — the effective row caps. |
-| `meta.request` | object | `{ method, path }`. |
-
-**Notes / caveats**
-- 404 `COURSE_NOT_FOUND` when the id does not exist (see the 404 envelope example under `/courses/{id}/instructors`).
-- The embedded `bibliography`/`subjects` arrays and their statistics blocks are omitted entirely (not emptied) when the corresponding `include_*` flag is `false`; `meta.includes` mirrors this.
-- Embedded arrays are convenience previews capped by the `*_limit` params; use the dedicated nested listings below for full pagination.
+**Notes:** a block whose `include_*` flag is off is omitted entirely, not emptied. The embedded arrays are capped previews; use the nested listings below to paginate.
 
 ---
 
 ## `GET /courses/{id}/instructors`
 
-Paginated instructor roster for a course. Sort is fixed (`role, preferred_name`). **404 `COURSE_NOT_FOUND`** when the course id does not exist (existence guard).
-
-**Path parameters**
-
-| param | type | notes |
-|---|---|---|
-| `id` | integer (≥ 1) | Course id. |
+Paginated instructor roster for a course, sorted by `role, preferred_name`. Returns **404 `COURSE_NOT_FOUND`** when the course does not exist. Cached 30 minutes.
 
 **Query parameters**
 
-| param | type | default | accepted values / bounds | effect |
-|---|---|---|---|---|
-| `page` | integer | 1 | ≥ 1 | Page number. |
-| `limit` | integer | **10** | 1..100 | Page size. |
-| `offset` | integer | 0 | ≥ 0 | Offset pagination. |
-| `role` | string | — | e.g. `PROFESSOR` | Exact match on `course_instructors.role`. |
-
-**Example requests**
-
-```
-GET /courses/11111/instructors
-GET /courses/11111/instructors?role=PROFESSOR
-GET /courses/11111/instructors?limit=50&page=1
-```
+| param | type | default | effect |
+|---|---|---|---|
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | Pagination; `page` ≥ 1, `limit` 1..100, `offset` ≥ 0 (400 otherwise). |
+| `role` | string | — | Case-insensitive match on `course_instructors.role`: `PROFESSOR`, `ASSISTANT`, `TA` or `GUEST` (400 otherwise). |
 
 **Example response**
 
@@ -358,19 +266,15 @@ GET /courses/11111/instructors?limit=50&page=1
 }
 ```
 
-**Fields (item)** — identical to the detail `instructors[]` shape.
+**Fields (item)**
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `person_id` | integer | `canonical_person_id` (falls back to `person_id`). |
-| `preferred_name` | string \| null | |
-| `given_names` | string \| null | |
-| `family_name` | string \| null | |
+| `person_id` | integer | `canonical_person_id` (falls back to `person_id`); see [persons](./persons.md) and [instructors](./instructors.md). |
+| `preferred_name` / `given_names` / `family_name` | string \| null | Name parts. |
 | `role` | string \| null | e.g. `PROFESSOR`. |
-| `identifiers.orcid` | string \| null | |
-| `is_verified` | boolean | |
-
-**Meta**: `meta.course_id`, `meta.filters.role` (echo; `null` when absent), `meta.pagination_extras.offset`.
+| `identifiers.orcid` | string \| null | ORCID iD. |
+| `is_verified` | boolean | `persons.is_verified`. |
 
 **404 envelope** (`GET /courses/99999999999/instructors`)
 
@@ -378,42 +282,28 @@ GET /courses/11111/instructors?limit=50&page=1
 {
   "status": "error",
   "message": "Course not found with ID 99999999999",
-  "timestamp": "2026-07-23T18:54:27.450Z",
+  "timestamp": "2026-10-14T05:20:22.086Z",
   "code": "COURSE_NOT_FOUND",
   "meta": { "request": { "method": "GET", "path": "/courses/99999999999/instructors" } }
 }
 ```
 
-**Notes / caveats**
-- This is the **only** nested course listing with an existence guard. `/subjects` and `/bibliographies` return 200-empty for an unknown id instead of 404 (see below). See [../API_ISSUES.md](../API_ISSUES.md).
-- Related person detail at [./persons.md](./persons.md); the same person as course instructor is also reachable via the [./instructors.md](./instructors.md) domain.
+This is the only nested course listing with an existence guard.
 
 ---
 
 ## `GET /courses/{id}/subjects`
 
-Subjects derived from the course's bibliography works (`course_bibliography → work_subjects → subjects`). Sort is fixed (`work_count DESC, term`). **No existence guard** — an unknown course id returns HTTP 200 with an empty page.
-
-**Path parameters**: `id` (integer ≥ 1).
+Subjects derived from the course's bibliography works (`course_bibliography → work_subjects → subjects`), sorted by `work_count DESC, term`. An unknown course id returns HTTP 200 with an empty page. Cached 30 minutes.
 
 **Query parameters**
 
-| param | type | default | accepted values | effect |
-|---|---|---|---|---|
-| `page` | integer | 1 | ≥ 1 | Page number. |
-| `limit` | integer | **10** | 1..100 | Page size. |
-| `offset` | integer | 0 | ≥ 0 | Offset pagination. |
-| `vocabulary` | string | — | — | Exact match on `subjects.vocabulary`. |
+| param | type | default | effect |
+|---|---|---|---|
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | Pagination; `page` ≥ 1, `limit` 1..100, `offset` ≥ 0 (400 otherwise). |
+| `vocabulary` | string | — | Exact match on `subjects.vocabulary` (1..50 characters). |
 
-**Example requests**
-
-```
-GET /courses/11111/subjects
-GET /courses/11111/subjects?vocabulary=Keyword
-GET /courses/11111/subjects?limit=30
-```
-
-**Example response** (empty — the seed course has no bibliography→subject linkage)
+**Example response** (empty today)
 
 ```json
 {
@@ -429,49 +319,31 @@ GET /courses/11111/subjects?limit=30
 }
 ```
 
-**Fields (item)** — shape from DTO (not observable with current data)
+**Fields (item)**
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `id` | integer | Subject id. |
+| `id` | integer | Subject id (see [subjects](./subjects.md)). |
 | `term` | string \| null | Subject term. |
-| `vocabulary` | string \| null | Controlled vocabulary. |
-| `parent_id` | integer \| null | Parent subject (hierarchy). |
-| `work_count` | integer | DISTINCT works in the course bibliography carrying that subject. |
-
-**Meta**: `meta.course_id`, `meta.filters.vocabulary`, `meta.pagination_extras.offset`.
-
-**Notes / caveats**
-- Returns 200-empty (not 404) for an unknown course id — no existence guard.
-- Empty for the seed course because its `course_bibliography` has zero rows; these subjects are a projection of the reading list, so they only appear once bibliography rows exist. Full subject entities live in [./subjects.md](./subjects.md).
+| `vocabulary` | string \| null | Controlled vocabulary, e.g. `Keyword`. |
+| `parent_id` | integer \| null | Parent subject. |
+| `work_count` | integer | Distinct works in the course bibliography carrying the subject. |
 
 ---
 
 ## `GET /courses/{id}/bibliographies`
 
-Paginated reading list for a course, each row carrying an author preview. Sort is fixed (`week_number, reading_type, title`). **No existence guard** — an unknown course id returns HTTP 200 with an empty page.
-
-**Path parameters**: `id` (integer ≥ 1).
+Paginated reading list for a course, sorted by `week_number, reading_type, title`. An unknown course id returns HTTP 200 with an empty page. Cached 30 minutes.
 
 **Query parameters**
 
-| param | type | default | accepted values | effect |
-|---|---|---|---|---|
-| `page` | integer | 1 | ≥ 1 | Page number. |
-| `limit` | integer | **10** | 1..100 | Page size. |
-| `offset` | integer | 0 | ≥ 0 | Offset pagination. |
-| `reading_type` | string | — | `REQUIRED` \| `RECOMMENDED` \| `SUPPLEMENTARY` \| `OPTIONAL` | Exact match on reading type. |
-| `week_number` | integer | — | — | Exact match on syllabus week. |
+| param | type | default | effect |
+|---|---|---|---|
+| `page` / `limit` / `offset` | integer | 1 / 10 / — | Pagination; `page` ≥ 1, `limit` 1..100, `offset` ≥ 0 (400 otherwise). |
+| `reading_type` | string | — | Case-insensitive: `REQUIRED`, `RECOMMENDED` or `SUPPLEMENTARY` (400 otherwise). |
+| `week_number` | integer | — | Exact match on the syllabus week (0..1000; 400 otherwise). |
 
-**Example requests**
-
-```
-GET /courses/11111/bibliographies
-GET /courses/11111/bibliographies?reading_type=REQUIRED
-GET /courses/11111/bibliographies?week_number=1&limit=50
-```
-
-**Example response** (empty — no bibliography rows for the seed course)
+**Example response** (empty today)
 
 ```json
 {
@@ -487,25 +359,19 @@ GET /courses/11111/bibliographies?week_number=1&limit=50
 }
 ```
 
-**Fields (item)** — shape from DTO (not observable with current data)
+**Fields (item)**
 
 | field (dot-path) | type | notes |
 |---|---|---|
-| `work_id` | integer | FK to `works`. |
+| `work_id` | integer | FK to `works`; see [works](./works.md). |
 | `title` | string \| null | Work title. |
-| `publication_year` | integer \| null | From the latest publication (`pub.year`). |
-| `language` | string \| null | ISO 639-1 from `works.language`. |
-| `document_type` | string \| null | `publications.type` of the latest pub (`ARTICLE`/`BOOK`/`CHAPTER`/…). |
-| `open_access` | boolean | True if the latest pub is open access. |
-| `reading_type` | string \| null | `REQUIRED` / `RECOMMENDED` / `SUPPLEMENTARY` / `OPTIONAL`. |
-| `week_number` | integer \| null | Assigned syllabus week. |
+| `publication_year` | integer \| null | Year of the work's latest publication (highest `publications.id`). |
+| `language` | string \| null | `works.language` (ISO 639-1). |
+| `document_type` | string \| null | `type` of that latest publication. |
+| `open_access` | boolean | `true` if that latest publication is open access. |
+| `reading_type` | string \| null | `REQUIRED`, `RECOMMENDED` or `SUPPLEMENTARY`. |
+| `week_number` | integer \| null | Syllabus week. |
 | `notes` | string \| null | Instructor note. |
-| `authors_preview` | string[] | Author `preferred_name`s in authorship order. |
-| `author_count` | integer | Total authors on the work. |
-| `first_author_name` | string \| null | Convenience first-author name. |
-
-**Meta**: `meta.course_id`, `meta.filters` (`reading_type`, `week_number`), `meta.pagination_extras.offset`.
-
-**Notes / caveats**
-- Returns 200-empty (not 404) for an unknown course id — no existence guard.
-- Empty for the seed course because `course_bibliography` has no rows for it. Each row projects a `works` record; use [./works.md](./works.md) / [./publications.md](./publications.md) for the full work/publication detail, and [./bibliographies.md](./bibliographies.md) for the cross-entity reading-list surface (also reachable as `/works/{id}/bibliographies`).
+| `authors_preview` | string[] | **Every** contributor name on the work (not capped), one per person, ordered by role (`AUTHOR` first), then position. |
+| `author_count` | integer | Number of names in `authors_preview` (distinct people). |
+| `first_author_name` | string \| null | First entry of `authors_preview`: the first `AUTHOR` when the work has one. |

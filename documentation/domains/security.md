@@ -1,10 +1,10 @@
 # Security — rate-limit config, HTTP-header inspection, access-key audit, IP unblock
 
-This domain exposes an operator/administrative surface for inspecting the API's own protective posture. It is **not backed by any database table**: every response is computed at request time from in-process state — the rate-limiter configuration and (in-memory) block list from `src/middleware/rateLimiting.js`, the live HTTP response headers set by `helmet`, the CORS config from env, and a static reflection over the Express router stacks. There is no Manticore or MariaDB involvement. All four operations are **guarded by `X-Access-Key`** (unlike most of the API, which is open — see [00-conventions.md](../00-conventions.md)). Related administrative surfaces: the internal telemetry under [dashboard.md](./dashboard.md) and the health probes under [system.md](./system.md), which share the same access-key guard.
+This domain exposes an operator/administrative surface for inspecting the API's own protective posture. It is **not backed by any database table**: every response is computed at request time from in-process state — the rate-limiter configuration and the in-memory list of clients currently over the limit from `src/middleware/rateLimiting.js`, the live HTTP response headers set by `helmet`, the CORS config from env, and a static reflection over the Express router stacks. There is no Manticore or MariaDB involvement. All four operations are **guarded by `X-Access-Key`** (unlike most of the API, which is open — see [00-conventions.md](../00-conventions.md)). Related administrative surfaces: the internal telemetry under [dashboard.md](./dashboard.md) and the health probes under [system.md](./system.md), which share the same access-key guard.
 
 ## Authentication (applies to all four endpoints)
 
-Every `/security/*` route requires a valid internal access key. Supply it as a header (aliases, case-insensitive): `x-access-key`, `x-internal-key`, `x-api-key`; or as a query-string parameter: `access_key`, `accessKey`, `api_key`. The guard accepts a value matching any of these env vars: `API_KEY`, `SECURITY_ACCESS_KEY`, `INTERNAL_ACCESS_KEY`, `API_ACCESS_KEY`, `ETHNOS_API_KEY`, `ETHNOS_API_ACCESS_KEY`, `API_SECRET_KEY`.
+Every `/security/*` route requires a valid internal access key. Supply it as a header (aliases, case-insensitive): `x-access-key`, `x-internal-key`, `x-api-key`; or as a query-string parameter: `access_key`, `accessKey`, `api_key`. The guard accepts a value matching any of these env vars: `API_KEY`, `SECURITY_ACCESS_KEY`, `INTERNAL_ACCESS_KEY`, `API_ACCESS_KEY`, `ETHNOS_API_KEY`, `ETHNOS_API_ACCESS_KEY`, `API_SECRET_KEY`, `ETHNOS_API_KEY_2`.
 
 | Condition | Status | Body |
 |---|---|---|
@@ -18,7 +18,7 @@ In examples below the key is masked as `$KEY`. All success responses use the sta
 
 ## `GET /security/stats`
 
-Return the effective rate-limiter configuration, the (always-empty) in-memory blocked-IP list, and block/violation counters. Auth required. No backing table — reads live limiter config via `getViolationStats()` / `getBlockedIPs()`.
+Return the effective rate-limiter configuration and the clients currently over the per-IP limit. Auth required. No backing table — reads the live limiter config via `getViolationStats()` and the in-process list of limited clients via `getBlockedIPs()`.
 
 There are **no query parameters**.
 
@@ -39,21 +39,19 @@ GET /security/stats?access_key=$KEY   (key via query-string alias)
       "disabled": false,
       "windowMs": 60000,
       "general": 120,
-      "search": 1200,
-      "metrics": 3000,
-      "relational": 240,
       "slowDown": { "delayAfter": 5000, "delayMs": 50, "maxDelayMs": 1000 }
     },
-    "blocked_ips": [],
+    "blocked_ips": [
+      { "ip": "198.51.100.23", "limited_since": "2026-10-14T05:31:12.408Z", "resets_at": "2026-10-14T05:32:04.000Z" }
+    ],
     "stats": {
-      "total_blocked": 0,
-      "total_violations": 0,
+      "total_blocked": 1,
       "block_tracking_persisted": false
     }
   },
   "meta": {
-    "generated_at": "2026-07-23T18:57:07.141Z",
-    "note": "Rate limiting uses in-memory rolling windows; per-IP violation and block tracking is not persisted.",
+    "generated_at": "2026-10-14T05:31:40.141Z",
+    "note": "blocked_ips lists the clients currently over the per-IP limit in this process; the rolling windows are in memory and reset on restart.",
     "performance": { "controller_time_ms": 0 },
     "request": { "method": "GET", "path": "/security/stats" }
   }
@@ -67,26 +65,26 @@ GET /security/stats?access_key=$KEY   (key via query-string alias)
 | status | string | Always `"success"`. |
 | data.rate_limit_config.disabled | boolean | `RATE_LIMIT_DISABLED`. `false` in production (limiting active). |
 | data.rate_limit_config.windowMs | number | Rolling-window length in milliseconds. Default `60000` (1 min). |
-| data.rate_limit_config.general | number | Requests/window on the general limiter. Default `120`. |
-| data.rate_limit_config.search | number | Requests/window on the search limiter. Observed `1200`. |
-| data.rate_limit_config.metrics | number | Requests/window on the metrics limiter. Observed `3000`. |
-| data.rate_limit_config.relational | number | Requests/window on the relational limiter. Observed `240`. |
+| data.rate_limit_config.general | number | Requests per IP per window (`RATE_LIMIT_GENERAL`, default `120`). This is the single bucket every open endpoint draws from — there are no separate search/metrics/relational limits. |
 | data.rate_limit_config.slowDown.delayAfter | number | Number of requests in the window after which the speed-limiter starts adding delay. Observed `5000`. |
 | data.rate_limit_config.slowDown.delayMs | number | Milliseconds of delay added per request past the threshold. Observed `50`. |
 | data.rate_limit_config.slowDown.maxDelayMs | number | Ceiling on total added delay (ms). Observed `1000`. |
-| data.blocked_ips | string[] | Currently blocked IPs. **Always `[]`** — there is no persistent block list. |
-| data.stats.total_blocked | number | `blocked_ips.length`; always `0`. |
-| data.stats.total_violations | number | Hard-coded `0` — per-IP violations are not tracked. |
-| data.stats.block_tracking_persisted | boolean | Always `false`; documents that block tracking is not persisted. |
+| data.blocked_ips | object[] | Clients currently over the per-IP limit in this process. `[]` when nobody is limited (the usual state). An entry disappears once its window resets. |
+| data.blocked_ips[].ip | string | Client address as the API sees it — the first non-loopback hop in `X-Forwarded-For`. |
+| data.blocked_ips[].limited_since | string (ISO 8601) | When the client first exceeded the limit in the current window. |
+| data.blocked_ips[].resets_at | string (ISO 8601) | When the client's window resets and requests are accepted again. |
+| data.stats.total_blocked | number | `blocked_ips.length`. |
+| data.stats.block_tracking_persisted | boolean | Always `false`: the limiter state lives in memory. |
 | meta.generated_at | string (ISO 8601) | Response timestamp. |
-| meta.note | string | Disclaimer about in-memory limiting. |
+| meta.note | string | Explains what `blocked_ips` holds. |
 | meta.performance.controller_time_ms | number | Handler wall-time in ms (typically `0`). |
 | meta.request | object | `{ method, path }`, injected globally. |
 
 ### Notes / caveats
 
-- The blocked-IP list and violation counters are structurally present but **inert**: rate limiting uses in-memory rolling windows with no per-IP persistence, so `blocked_ips` is always empty and `total_violations`/`total_blocked` are always `0`. Design a UI that treats this block as a **read-only config viewer**, not a live security feed.
-- Swagger historically documented a `data.violations` object here; the live API returns `data.rate_limit_config` instead. Trust this chapter. See [../API_ISSUES.md](../API_ISSUES.md).
+- `blocked_ips` is live but **per process and in memory**: it lists who is over the limit right now, empties as windows reset, and is lost on restart. It is not a ban list and nothing is blocked beyond the current window (60 s by default).
+- A client is limited per address, not per proxy: the API trusts only loopback hops, so traffic arriving through nginx or a local tunnel is counted by the real client address.
+- Until 2026-10-14 this endpoint reported separate `search` / `metrics` / `relational` limits and a hard-coded `total_violations: 0`, while `blocked_ips` was always empty. The class limiters were never effective (the general limit bound first) and were removed; `blocked_ips` now reflects real state. See [../API_ISSUES.md](../API_ISSUES.md).
 
 ---
 
@@ -128,7 +126,7 @@ GET /security/headers           (header: X-Access-Key: $KEY)
     "missing_headers": ["x-permitted-cross-domain-policies"]
   },
   "meta": {
-    "inspected_at": "2026-07-23T18:57:07.146Z",
+    "inspected_at": "2026-10-14T05:27:15.188Z",
     "request": { "method": "GET", "path": "/security/headers" }
   }
 }
@@ -201,7 +199,7 @@ GET /security/audit             (header: X-Access-Key: $KEY)
     "missing": []
   },
   "meta": {
-    "inspected_at": "2026-07-23T18:57:07.152Z",
+    "inspected_at": "2026-10-14T05:27:15.194Z",
     "request": { "method": "GET", "path": "/security/audit" }
   }
 }
@@ -227,13 +225,13 @@ GET /security/audit             (header: X-Access-Key: $KEY)
 
 ## `POST /security/unblock/{ip}`
 
-Remove an IP from the in-memory blocked list. Because there is no persistent block list, this is effectively **always a no-op** — a valid IP returns `200` with `unblocked:false`, never `404`. Auth required. No backing table.
+Reset a client's rate-limit and slow-down counters, lifting a current limit immediately. The counters are reset whether or not the client was limited; `data.unblocked` says whether it was. A valid IP always returns `200`, never `404`. Auth required. No backing table.
 
 ### Path parameters
 
 | param | type | required | validation | effect |
 |---|---|---|---|---|
-| ip | string | yes | Must be a valid IPv4 or IPv6 address (`express-validator` `isIP()`). | The address to unblock; echoed back in `data.ip`. Invalid values return `400 VALIDATION_ERROR`. |
+| ip | string | yes | Must be a valid IPv4 or IPv6 address (`express-validator` `isIP()`). | The address whose counters are reset; echoed back in `data.ip`. Invalid values return `400 VALIDATION_ERROR`. |
 
 There are **no query parameters** and **no request body**.
 
@@ -245,15 +243,15 @@ POST /security/unblock/2001:db8::1         (IPv6)
 POST /security/unblock/not-an-ip           (invalid → 400)
 ```
 
-### Example response (200 — valid IP, not currently blocked)
+### Example response (200 — valid IP, not currently limited)
 
 ```json
 {
   "status": "success",
   "data": { "ip": "203.0.113.1", "unblocked": false },
   "meta": {
-    "generated_at": "2026-07-23T18:57:07.158Z",
-    "note": "Rate limiting uses in-memory rolling windows; there is no persistent block list, so no IP is currently blocked.",
+    "generated_at": "2026-10-14T05:31:52.158Z",
+    "note": "The client was not over the limit; its rate-limit and slow-down counters were reset anyway.",
     "request": { "method": "POST", "path": "/security/unblock/203.0.113.1" }
   }
 }
@@ -265,7 +263,7 @@ POST /security/unblock/not-an-ip           (invalid → 400)
 {
   "status": "error",
   "message": "Validation failed",
-  "timestamp": "2026-07-23T18:57:07.163Z",
+  "timestamp": "2026-10-14T05:31:52.163Z",
   "code": "VALIDATION_ERROR",
   "errors": [
     {
@@ -285,9 +283,9 @@ POST /security/unblock/not-an-ip           (invalid → 400)
 | field (dot-path) | type | notes |
 |---|---|---|
 | data.ip | string | The IP echoed back from the path (e.g. `203.0.113.1`, `2001:db8::1`). |
-| data.unblocked | boolean | `true` only if the IP was actually in the in-memory block list at call time. Since that list is always empty, effectively **always `false`**. |
+| data.unblocked | boolean | `true` when the client was over the per-IP limit at call time (it was listed in `/security/stats` `blocked_ips`). |
 | meta.generated_at | string (ISO 8601) | Timestamp. |
-| meta.note | string | Wording depends on outcome: `"IP removed from the block list."` when `unblocked:true`, else the no-persistent-block-list disclaimer shown above. |
+| meta.note | string | `"The client was over the limit; its rate-limit and slow-down counters were reset."` when `unblocked:true`, else the text shown above. |
 | meta.request | object | `{ method, path }`. |
 
 ### Fields (400 validation error)
@@ -307,7 +305,8 @@ POST /security/unblock/not-an-ip           (invalid → 400)
 
 ### Notes / caveats
 
-- **No 404 path exists.** A valid, non-blocked IP always returns `200` with `unblocked:false`; it never 404s. UI should treat `unblocked:false` as "IP was not blocked" (a benign/expected outcome), not as an error.
+- **No 404 path exists.** A valid IP that was not limited returns `200` with `unblocked:false`; UI should treat that as "the client was not limited" (a benign outcome), not as an error. The counters were still reset.
+- The reset is per process and immediate; the client's next request starts a fresh window.
 - Both IPv4 and IPv6 are accepted. Only malformed strings hit the `400`.
 - On an unexpected internal error the handler returns the error envelope with `code:"UNBLOCK_ERROR"` (HTTP 500).
-- This endpoint is a placeholder for a future persistent block store; today it has no operational effect. See [../API_ISSUES.md](../API_ISSUES.md) for the in-memory-limiting follow-up.
+- Use the address exactly as `/security/stats` lists it: `unblocked` is computed against that exact string. For IPv6 the limiter counts per /56 prefix, so any address inside the prefix resets the same counters.

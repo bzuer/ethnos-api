@@ -28,6 +28,7 @@ Consequences a frontend or a status dashboard must handle:
 - **`502` means the app is down while nginx is up.** It is HTML, not the JSON envelope — see [Gateway errors](../00-conventions.md#gateway-errors). A status page should render it as "API unavailable", never parse it for `message`.
 - **A restart is visible as a 502 window, not as an error envelope.** nginx keeps the public port bound while the application is stopped, so clients get 502 rather than a refused connection for the duration.
 - **Rate limits apply to localhost too.** Traffic through the proxy carries `X-Forwarded-For`, which disables the loopback exemption; `http://localhost:1211` is rate-limited exactly like any other origin.
+- **The client IP is the first non-loopback hop.** The application trusts only loopback proxies, so it reads the client address from `X-Forwarded-For` past any loopback hops (nginx, a local tunnel). Every client is limited on its own address; a local tunnel in front of nginx does not collapse them into one shared bucket.
 
 ---
 
@@ -51,20 +52,20 @@ GET http://localhost:1211/
   "data": {
     "name": "Ethnos.app Academic Bibliography API",
     "version": "2.0.0",
-    "description": "Public RESTful API for academic bibliographic research with 7,136,695 works, 7,220,125 publications, 4,727,444 researchers",
+    "description": "Public RESTful API for academic bibliographic research with 7,657,142 works, 7,744,534 publications, 4,903,220 researchers",
     "environment": "production",
-    "timestamp": "2026-07-23T18:57:15.978Z",
+    "timestamp": "2026-10-14T05:40:02.114Z",
     "documentation": { "swagger_ui": "/docs", "openapi_spec": "/docs.json" },
     "system_status": {
-      "database": "7,136,695 works, 7,220,125 publications",
-      "search_engine": "Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search",
-      "cache": "Redis with 30min TTL",
+      "database": "7,657,142 works, 7,744,534 publications",
+      "search_engine": "Manticore Search (SphinxQL) full-text for works and persons, including the works venue filter; MariaDB FULLTEXT for organizations (ft_organizations_name) and the /publications venue filter (ft_venues_search)",
+      "cache": "Redis; per-endpoint TTLs from 1 minute to 48 hours",
       "rate_limiting": "Public requests limited to 120/min per IP; a valid X-Access-Key removes the limit",
       "authentication": "No key required for data and metrics endpoints; X-Access-Key still gates /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics)"
     },
     "main_categories": {
       "search_discovery": {
-        "description": "Search across works, persons, and publications backed by Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues, subjects, organizations (institutions search disabled for performance)",
+        "description": "Search across works, persons, and publications backed by Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations and the /publications venue filter",
         "endpoints": ["/search/works", "/search/persons", "/search/advanced", "/search/autocomplete", "/search/global"]
       },
       "academic_works": {
@@ -97,20 +98,20 @@ GET http://localhost:1211/
       }
     },
     "data_statistics": {
-      "total_works": "7,136,695",
-      "total_publications": "7,220,125",
-      "total_researchers": "4,727,444",
-      "total_organizations": "639,573",
-      "total_venues": "189,076",
+      "total_works": "7,657,142",
+      "total_publications": "7,744,534",
+      "total_researchers": "4,903,220",
+      "total_organizations": "1,086,287",
+      "total_venues": "359,932",
       "total_courses": "1",
-      "collected_at": "2026-07-23T18:24:32.678Z"
+      "collected_at": "2026-10-14T05:17:15.877Z"
     },
     "technical_features": {
-      "search_performance": "Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for venues (ft_venues_search), subjects (ft_subjects_term), organizations (ft_organizations_name); the venue filter uses ft_venues_search; institutions search disabled for optimal performance",
+      "search_performance": "Manticore Search (SphinxQL) full-text for works and persons; MariaDB FULLTEXT for organizations (ft_organizations_name) and the /publications venue filter (ft_venues_search)",
       "authentication": "Open access: data and metrics endpoints need no key. An optional X-Access-Key (header: x-access-key | x-internal-key | x-api-key) lifts the rate limit and unlocks /dashboard, /security/* and the internal health probes (/health/readiness, /health/metrics).",
       "rate_limits": "Unauthenticated requests: 120/min per IP. No limit when a valid X-Access-Key is supplied.",
       "response_format": "JSON with pagination {page, limit, total, totalPages, hasNext, hasPrev}",
-      "cache_ttl": "30 minutes",
+      "cache_ttl": "per endpoint, 1 minute to 48 hours",
       "security": "XSS protection, SQL injection prevention, abuse detection"
     },
     "quick_examples": {
@@ -142,14 +143,14 @@ GET http://localhost:1211/
 | data.documentation.swagger_ui | string | `"/docs"` — Swagger UI path. |
 | data.documentation.openapi_spec | string | `"/docs.json"` — raw OpenAPI JSON. |
 | data.system_status.database | string | `"{works} works, {publications} publications"` (comma-grouped). |
-| data.system_status.search_engine | string | Human blurb describing the engine split (Manticore for works/persons; MariaDB FULLTEXT for venues/subjects/organizations). Display text only. |
-| data.system_status.cache | string | `"Redis with 30min TTL"`. |
+| data.system_status.search_engine | string | Human blurb describing the engine split (Manticore for works/persons and the works venue filter; MariaDB FULLTEXT for organizations and the `/publications` venue filter). Display text only. |
+| data.system_status.cache | string | `"Redis; per-endpoint TTLs from 1 minute to 48 hours"`. |
 | data.system_status.rate_limiting | string | Rate-limit blurb. |
 | data.system_status.authentication | string | Auth blurb. |
 | data.main_categories | object | Discovery map: 8 fixed keys — `search_discovery`, `academic_works`, `researchers_authors`, `institutions`, `academic_venues`, `courses_teaching`, `bibliography_analysis`, `metrics_analytics`. |
 | data.main_categories.{key}.description | string | Human label for the group. |
 | data.main_categories.{key}.endpoints | string[] | Example path templates for that group (some carry `{id}` placeholders — not literal URLs). |
-| data.data_statistics.total_works | string | **Comma-grouped number string** (e.g. `"7,136,695"`), NOT an integer — strip commas before parsing. |
+| data.data_statistics.total_works | string | **Comma-grouped number string** (e.g. `"7,657,142"`), NOT an integer — strip commas before parsing. |
 | data.data_statistics.total_publications | string | Comma-grouped. |
 | data.data_statistics.total_researchers | string | Comma-grouped (distinct persons). |
 | data.data_statistics.total_organizations | string | Comma-grouped. |
@@ -160,7 +161,7 @@ GET http://localhost:1211/
 | data.technical_features.authentication | string | Auth blurb. |
 | data.technical_features.rate_limits | string | Rate-limit blurb. |
 | data.technical_features.response_format | string | Documents the pagination key set `{page, limit, total, totalPages, hasNext, hasPrev}`. |
-| data.technical_features.cache_ttl | string | `"30 minutes"`. |
+| data.technical_features.cache_ttl | string | `"per endpoint, 1 minute to 48 hours"` — there is no single TTL; see the Caching notes in [../00-conventions.md](../00-conventions.md). |
 | data.technical_features.security | string | Security-feature blurb. |
 | data.quick_examples.search_works | string | Copy-pasteable example call. |
 | data.quick_examples.get_work_details | string | Example call (real work id). |
@@ -286,25 +287,27 @@ GET http://localhost:1211/health/metrics -H "X-Access-Key: $KEY"   # 200
 {
   "status": "success",
   "data": {
-    "uptime_ms": 1965385,
-    "uptime_human": "32m 45s",
+    "uptime_ms": 537575,
+    "uptime_human": "8m 57s",
     "requests": {
-      "total": 404,
-      "by_status": { "200": 357, "400": 16, "401": 5, "404": 25 },
+      "total": 343,
+      "by_status": { "200": 283, "400": 39, "401": 2, "404": 18 },
       "top_endpoints": [
-        { "endpoint": "GET /publications", "count": 19 },
-        { "endpoint": "GET /works", "count": 17 },
-        { "endpoint": "GET /persons", "count": 15 }
+        { "endpoint": "GET /works", "count": 38 },
+        { "endpoint": "GET /publications", "count": 20 },
+        { "endpoint": "GET /search/works", "count": 19 },
+        { "endpoint": "GET /subjects/:id/works", "count": 11 },
+        { "endpoint": "GET /works/:id", "count": 8 }
       ],
-      "performance": { "avg_response_time_ms": 158, "p95_response_time_ms": 1013, "total_samples": 254 }
+      "performance": { "avg_response_time_ms": 447, "p95_response_time_ms": 2619, "total_samples": 342 }
     },
-    "errors": { "total": 2, "by_type": { "AppError": 2 }, "recent_count": 2, "error_rate": 0.5 },
+    "errors": { "total": 0, "by_type": { "AppError": 4 }, "recent_count": 4, "error_rate": 0 },
     "system": {
-      "memory": { "rss": 148688896, "heapTotal": 54874112, "heapUsed": 50090616, "external": 2959870, "arrayBuffers": 447762 },
+      "memory": { "rss": 138436608, "heapTotal": 52727808, "heapUsed": 47846288, "external": 3686139, "arrayBuffers": 635822 },
       "cpu_cores": 12,
-      "load_average": [ 0.58, 0.52, 0.64 ],
-      "free_memory_mb": 16116,
-      "total_memory_mb": 31432
+      "load_average": [ 0.6, 0.8, 0.78 ],
+      "free_memory_mb": 10166,
+      "total_memory_mb": 27436
     }
   },
   "meta": { "request": { "method": "GET", "path": "/health/metrics" } }
@@ -320,15 +323,15 @@ GET http://localhost:1211/health/metrics -H "X-Access-Key: $KEY"   # 200
 | data.requests.total | integer | Total requests counted since boot. |
 | data.requests.by_status | object<string,int> | Map of HTTP status code (as a string key: `"200"`,`"400"`,`"401"`,`"404"`,`"503"`,…) → count. Only observed statuses appear as keys. |
 | data.requests.top_endpoints | array | Up to the top 10 endpoints by hit count, descending. |
-| data.requests.top_endpoints[].endpoint | string | `"METHOD /path"`, raw path — ids are NOT templated (`GET /works/123` and `GET /works/456` count separately). |
-| data.requests.top_endpoints[].count | integer | Hit count for that raw endpoint string. |
+| data.requests.top_endpoints[].endpoint | string | `"METHOD /route"`, keyed by the matched route pattern — ids are templated (`GET /works/123` and `GET /works/456` both count as `GET /works/:id`). Paths no route matched are grouped as `"METHOD (unmatched)"`, and the table stops adding keys at 500, so scanners cannot grow it. |
+| data.requests.top_endpoints[].count | integer | Hit count for that route. |
 | data.requests.performance.avg_response_time_ms | integer | Mean response time over the recent sample window. |
 | data.requests.performance.p95_response_time_ms | integer | 95th-percentile response time over the window. |
 | data.requests.performance.total_samples | integer | Number of samples in the window (overall sample buffer capped ~1000). |
-| data.errors.total | integer | Total errors counted. |
-| data.errors.by_type | object<string,int> | Error-constructor-name → count (e.g. `AppError`). `{}` when none. |
-| data.errors.recent_count | integer | Size of the recent-errors ring buffer (max ~50). |
-| data.errors.error_rate | number (float) | Errors ÷ requests × 100, 2 decimal places (a percentage, e.g. `0.5`). |
+| data.errors.total | integer | Server errors (5xx responses) since boot. 4xx responses are client errors and are not counted here (they appear in `requests.by_status`). |
+| data.errors.by_type | object<string,int> | Error-constructor-name → count over every error that reached the error handler, 4xx included (e.g. `AppError` for validation 400s/404s). `{}` when none. |
+| data.errors.recent_count | integer | Size of the recent-errors ring buffer (max 50), 4xx included. |
+| data.errors.error_rate | number (float) | 5xx responses ÷ requests × 100, 2 decimal places (a percentage, e.g. `0.5`). |
 | data.system.memory.rss | integer | Resident set size, bytes (`process.memoryUsage()`). |
 | data.system.memory.heapTotal | integer | V8 heap allocated, bytes. |
 | data.system.memory.heapUsed | integer | V8 heap in use, bytes. |
@@ -342,7 +345,8 @@ GET http://localhost:1211/health/metrics -H "X-Access-Key: $KEY"   # 200
 **Notes / caveats**
 - All counters are **in-memory and reset on restart**; `uptime_ms` tells you how long the current window covers. Do not treat as durable analytics.
 - Memory figures under `data.system.memory` are **bytes**; `free_memory_mb` / `total_memory_mb` are **megabytes**. Divide/format accordingly.
-- `error_rate` is already a percentage (not a 0–1 fraction).
+- `error_rate` is already a percentage (not a 0–1 fraction), and it counts only 5xx responses: a burst of validation 400s leaves it at `0` while `errors.by_type` and `recent_count` grow (the example shows exactly that).
+- The example lists five `top_endpoints` for brevity; the live payload returns up to ten.
 - Swagger models this as `HealthMetrics` / `HealthMetricsSuccess`; the `system.memory` sub-object is declared as a generic int map, so the concrete keys above (including `arrayBuffers`) are the authoritative shape.
 
 ---

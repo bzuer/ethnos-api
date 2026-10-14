@@ -10,16 +10,16 @@ The companion document [`API_ISSUES.md`](./API_ISSUES.md) records the behaviour 
 
 A public, **read-only** RESTful API over an academic bibliographic corpus:
 
-| Entity | Scale (approx.) | Endpoints |
+| Entity | Scale (2026-10-14) | Endpoints |
 |---|---|---|
-| Works (multi-manifestation records) | 7,136,695 | `/works`, `/search/works` |
-| Publications (one per published instance of a work) | 7,220,125 | `/publications` |
-| Persons (researchers) | 4,727,444 | `/persons`, `/search/persons` |
-| Venues (journals, book series, repositories…) | 189,076 | `/venues` |
-| Organizations (institutions, publishers, funders) | — | `/institutions` |
-| Subjects (controlled vocabulary) | 169,159 | `/subjects/*` |
-| Signatures (normalized author name forms) | — | `/signatures/*` |
-| Courses / Instructors / Bibliographies | sparse | `/courses`, `/instructors`, `/bibliographies` |
+| Works (multi-manifestation records) | 7,657,142 | `/works`, `/search/works` |
+| Publications (one per published instance of a work) | 7,744,534 | `/publications` |
+| Persons (researchers) | 4,903,220 | `/persons`, `/search/persons` |
+| Venues (journals, book series, repositories…) | 359,932 | `/venues` |
+| Organizations (institutions, publishers, funders) | 1,086,287 | `/institutions` |
+| Subjects (controlled vocabulary) | 247,543 | `/subjects/*` |
+| Signatures (normalized author name forms) | 3,173,239 | `/signatures/*` |
+| Courses / Instructors / Bibliographies | 1 / 1 / 0 rows | `/courses`, `/instructors`, `/bibliographies` |
 
 A **work** is a *multi-manifestation* record: its type lives per-publication on `publications.type`, so one work can carry publications of different types. Work listings use **`any_publication`** semantics (a work matches a filter if any of its publications matches).
 
@@ -45,7 +45,7 @@ Both base URLs are served by **nginx**, which reverse-proxies to the application
 
 The application port `1201` is always loopback-bound and never reachable. How far `1211` itself reaches depends on the deployment: it may be scoped to loopback with an upstream edge terminating TLS in front of it, or bound on the host's interfaces. Either way a client on another machine uses the production base URL, not `host:1211`.
 
-Nothing about the API surface changes because of the proxy — the path, the envelope, the headers and the status codes are the same — with one exception, described under [Gateway errors](#gateway-errors) below. The rate limiter counts the **real client IP**, which nginx forwards as `X-Forwarded-For`; requests are not exempted just because the proxy itself is on loopback.
+Nothing about the API surface changes because of the proxy — the path, the envelope, the headers and the status codes are the same — with one exception, described under [Gateway errors](#gateway-errors) below. The rate limiter counts the **real client IP**: every loopback hop in front of the application (the edge tunnel, nginx) appends to `X-Forwarded-For`, and the application skips loopback hops when reading it; requests are not exempted just because a proxy is on loopback.
 
 Do not hardcode `1201` to "skip the proxy". It is not exposed, and bypassing nginx would also bypass the client-IP forwarding the rate limiter depends on.
 
@@ -71,13 +71,13 @@ Every response is a JSON object with a `status` discriminator.
   "status": "error",
   "message": "Human-readable message",
   "code": "MACHINE_CODE",
-  "timestamp": "2026-07-23T18:24:42.455Z",
+  "timestamp": "2026-10-14T18:24:42.455Z",
   "errors": [ ... ],         // only on validation failures (express-validator array)
   "meta": { "request": { "method": "GET", "path": "/works" } }
 }
 ```
 
-Always branch on `status` first. On success, read `data`; on error, read `code` (stable) and `message` (human).
+Always branch on `status` first. On success, read `data`; on error, read `code` (stable) and `message` (human). `status` is `"error"` for every 4xx and 5xx produced by the application.
 
 <a id="gateway-errors"></a>
 **Gateway errors are not in this envelope**
@@ -106,16 +106,16 @@ Every other error — validation, not-found, rate limit, internal — comes from
 
 ## 3. Pagination
 
-Every listing accepts pagination **two interchangeable ways**:
+Every listing accepts pagination **two ways**:
 
 - `page` + `limit` (1-based page), or
-- `offset` + `limit` (0-based offset).
+- `offset` + `limit` (0-based offset, served exactly as given — `offset=15&limit=10` returns rows 16–25).
 
-If both `page` and `offset` are supplied, `page` is derived from `offset` (`page = floor(offset/limit) + 1`).
+If both are supplied, `offset` wins and `pagination.page` reports `floor(offset/limit) + 1`.
 
 | Param | Default | Bounds |
 |---|---|---|
-| `limit` | `10` | `1..100` (values above 100 are clamped to 100) |
+| `limit` | `10` (`/venues` and a few domain listings use `20`; see each chapter) | `1..100`; out-of-range values are a **400** on validated listings |
 | `page` | `1` | `>= 1` |
 | `offset` | `0` | `>= 0` |
 
@@ -130,7 +130,9 @@ The `pagination` object on list responses:
 | `hasNext` | bool | more pages after this one |
 | `hasPrev` | bool | pages before this one |
 
-When `offset`/`cursor` were supplied, the effective offset is echoed under `meta.pagination_extras.offset`.
+The served offset is echoed under `meta.pagination_extras.offset` (the request's own `offset` when one was sent).
+
+Full-text listings served by Manticore can be paged through the first **100,000** matches; a request whose `offset + limit` goes past that is a **400** — narrow the query or sort differently.
 
 > **Terminator rule.** On JOIN-heavy or full-text listings `total` can be a non-exact estimate (see §6). Do not treat `total` as authoritative unless `meta.pagination_total_exact === true`. Always also stop paging when a page returns fewer than `limit` rows (`data.length < limit`).
 
@@ -142,9 +144,9 @@ Every response passes through a normalizer, so clients can rely on stable types:
 
 - **Booleans**: fields matching `is_*`, `has_*`, `*_flag`, `*_enabled`, `open_access`, `peer_reviewed`, `is_in_doaj`, `is_in_scielo`, `is_indexed_in_scopus`, `active`, etc. are always real JSON booleans (`0/1` and `"true"/"false"` are coerced). Numeric-looking exceptions like `works_count`, `year`, `total`, `limit`, `offset` are **not** coerced.
 - **Dates**: fields matching `*_at`, `*_date`, `*timestamp`, `created_at`, `updated_at`, `publication_date`, etc. are ISO-8601 UTC strings (`YYYY-MM-DDT...Z`). Date-only values become `T00:00:00.000Z`.
-- **Nullish strings**: the strings `"null"` / `"undefined"` and JS `undefined` become JSON `null`.
+- **Absent values**: missing values are JSON `null` (never `""`). Stored text is presented verbatim — a work titled `Null` keeps its title.
 
-So: booleans are booleans, dates are ISO strings, and absent values are `null` (not `""` or `"null"`).
+So: booleans are booleans, dates are ISO strings, and absent values are `null`.
 
 ---
 
@@ -160,18 +162,9 @@ So: booleans are booleans, dates are ISO strings, and absent values are `null` (
 
 `/health/liveness`, `/docs`, and the OpenAPI documents are public.
 
-**Rate limiting** is on by default, per IP, in a 60 s window. Over the cap → **429**. The cap is **not one number**: endpoints are grouped into limiter classes, and the applicable one is reported per response.
+**Rate limiting** is on by default: one bucket per client IP, **120 requests per 60 s window** across every endpoint, plus a progressive slow-down after a configured number of requests. Over the cap → **429** `RATE_LIMITED`. Read `RateLimit-Limit` from the response rather than assuming a value — the cap is configuration, not contract. A valid key **removes** the cap on the open endpoints (it is an optional rate-limit bypass there).
 
-| Class | Cap / min | Applies to (measured) |
-|---|---|---|
-| general | 120 | the default for anything not in a class below |
-| relational | 240 | listing/detail endpoints such as `/works`, `/venues` |
-| search | 1200 | `/search/*` |
-| metrics | 3000 | `/metrics/*` |
-
-Read `RateLimit-Limit` from the response rather than assuming a value — the caps are configuration, not contract. A valid key **removes** the cap on the open endpoints (it is an optional rate-limit bypass there).
-
-The counted IP is the **real client address**, taken from the `X-Forwarded-For` that nginx sets — not the proxy's own loopback address, and not a value a client can forge by sending its own `X-Forwarded-For`. The exemption for loopback traffic applies only to a process calling the API directly on the host, which is never how a browser or a deployed frontend reaches it: **assume you are rate-limited, including in local development against `localhost:1211`**. Responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, so a client can pace itself instead of discovering the cap at 429.
+The counted IP is the **real client address**, taken from `X-Forwarded-For` past every loopback proxy hop — not a proxy's own loopback address, and not a value a client can forge by sending its own `X-Forwarded-For`. The exemption for loopback traffic applies only to a process calling the API directly on the host, which is never how a browser or a deployed frontend reaches it: **assume you are rate-limited, including in local development against `localhost:1211`**. Responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, so a client can pace itself instead of discovering the cap at 429.
 
 Header aliases (case-insensitive): `x-access-key`, `x-internal-key`, `x-api-key`. Query-string aliases: `access_key`, `accessKey`, `api_key`.
 
@@ -186,18 +179,19 @@ In OpenAPI the security scheme `XAccessKey` is declared globally as **optional**
 | Flag | Where | Meaning |
 |---|---|---|
 | `request.{method,path}` | everywhere | echo of the request |
-| `pagination_total_exact` | work/publication/institution listings | `false` → `pagination.total` is an estimate (unfiltered browse, or the count exceeded the ~2 s budget); gate on this before trusting `total` |
+| `pagination_total_exact` | work/publication/institution/subject/person/signature listings, search, collaborations | `false` → `pagination.total` is an estimate (unfiltered browse, a count that exceeded its ~2 s budget, or a capped full-text set); gate on this before trusting `total` |
 | `match_mode` | work listings / affiliated works | `"any_publication"` on `/works`; `"affiliation"` / `"funder"` on institution nested works |
 | `engine` / `performance.engine` | works, publications, search | `"Manticore"` when a full-text term participated, else `"MariaDB"` |
 | `performance.*` | works, publications | server-side timing (`primary_query_ms`, `total_rows_examined`, `query_type`) |
 | `fulltext_truncated` / `fulltext_work_cap` | `/publications` with full-text | the full-text work-id set was capped (default 5000) |
-| `page_degraded` | `/publications` | the page query hit the statement budget and returned empty; narrow the filter or change the sort |
-| `has_files_source` | `/publications?has_files=true` | `"files_index"` when the fast path served the page (with `has_files_note` if extra filters may under-fill) |
+| `page_degraded` (+ `note`) | `/works`, `/works/showcase`, `/publications`, `/persons`, `/subjects/{id}/works` | the page query hit the statement budget and returned empty; narrow the filter or ask for a shallower page |
+| `degraded` | collaboration rankings | the ranking exceeded its budget; the empty page is not a real zero |
+| `has_files_source` | `/publications?has_files=true` | `"files_index"` when the fast path served the page (`has_files=true` alone, default sort) |
 | `sort` / `sort.{by,order}` | venues, institutions | the effective sort applied |
 | `summary` | metrics/collaborations | aggregate roll-ups |
 | `pagination_extras.offset` | any list called with `offset` | the effective offset |
 
-**Graceful degradation.** Heavy reads are bounded below the 5 s request ceiling. When a query exceeds its budget the endpoint degrades (empty/estimated page + a `meta` flag) instead of returning `5xx`. Design the UI to read the flags rather than assume every page is exact and full.
+**Graceful degradation.** Every database statement is bounded below the 5 s request ceiling (4.5 s by default, 2 s for counts), and every full-text query carries a 4 s search budget. Listings that can degrade return an empty or estimated page plus one of the flags above; anywhere else an exceeded budget is a **503 `REQUEST_TIMEOUT`**. A full-text page that runs out of search time is a 503, never a silently shorter page; a full-text count that runs out keeps its page and reports `pagination_total_exact: false` with a lower-bound total. Design the UI to read the flags rather than assume every page is exact and full, and treat 503 as retryable with a narrower request.
 
 ---
 
@@ -212,21 +206,20 @@ Available on `/works`, `/works/showcase`, `/publications`, `/search/works`, `/se
 | `sort_by` | `cited_by_count` \| `references_count` \| `publication_year` \| `id` \| (`relevance` on full-text paths). Aliases `sortBy`, and `citation_count`/`reference_count`/`year`/`work_id` |
 | `sort_order` | `ASC` \| `DESC` (alias `sortOrder`); numeric fields default `DESC` |
 
-With `sort_by` omitted: DB-backed listings default to `publication_year DESC, id DESC`; full-text paths default to relevance. Work list items expose `cited_by_count` / `references_count`; publication list items expose `citation_count` / `reference_count`.
+With `sort_by` omitted: `/works`, `/works/showcase` and filter-only search default to `id DESC`, `/publications` to `id DESC`, the person/venue/institution work listings to `publication_year DESC` (with an id tiebreak); full-text paths default to relevance. Year sorts put works without a year last (except the ascending `publication_year` sort on `/works`, which starts with them). Work list items expose `cited_by_count` / `references_count`; publication list items expose `citation_count` / `reference_count`.
 
 ### Common filters
-`type` (per the domain's enum), `language` (ISO 639-1), `year_from` / `year_to`, `open_access` (bool), `peer_reviewed` (bool). Empty-string params (`param=`) are treated as absent.
+`type` (per the domain's enum, case-insensitive), `language` (ISO 639-1), `year_from` / `year_to` (from year 1000), `open_access` (bool), `peer_reviewed` (bool). Booleans accept `true`/`false`/`1`/`0`. Empty-string params (`param=`) are treated as absent. On work listings a publication-level filter matches if **any** publication matches, and the row shows the latest **matching** publication.
 
 ---
 
 ## 8. Search-engine model
 
-- **Manticore Search** (SphinxQL) powers free-text `q` and the `author` / `subject` metadata filters for **works** and **persons**. `q` spans `title, subtitle, abstract, authors, subjects, venue`; `author` → the authors field, `subject` → the subjects field (AND semantics). Matching ids are hydrated from MariaDB. Manticore `COUNT(*)` totals are **exact**.
-- **MariaDB FULLTEXT** powers `venues` (`ft_venues_search` — also the `venue` / `venue_name` filter on works/publications), `subjects` (`ft_subjects_term`), and `organizations` (`ft_organizations_name`, plus exact acronym match).
+- **Manticore Search** (SphinxQL) powers free-text `q` and the `author` / `subject` / `venue_name` filters for **works** and **persons**. `q` spans `title, subtitle, abstract, authors, subjects, venue`; `author` → the authors field (AUTHOR-role contributors only — editors and translators are not matched), `subject` → the subjects field, `venue_name` → the venue field (AND semantics). Matching ids are hydrated from MariaDB. Manticore `COUNT(*)` totals are **exact**.
+- **Query text is literal.** Only letters, digits and `_` are word characters; every other character (quotes, `?`, `%`, `*`, `&`, `:`, …) separates words, and operator words such as `NEAR` or `MAYBE` are searched as plain words. There are no wildcards or phrase operators.
+- **MariaDB** serves the rest: `/venues` search is a substring `LIKE` over name, abbreviation, ISSNs and publisher name; the `/publications` `venue` filter uses `ft_venues_search` (word match); there is no subject term search; `/institutions` requires every query word in `ft_organizations_name` or an exact acronym; `/signatures/search` is a substring match.
 - **Word forms.** Each `q` term matches inflected variants in the content fields (`title`, `subtitle`, `abstract`, `subjects`) through Portuguese and English stemming — `movimentos` also finds *movimento*, `ethnographies` also finds *ethnography* and *ethnographic* — while matching `authors` and `venue` verbatim, so proper names are never stemmed into something else. A term is satisfied by either side, and multi-word queries require every term (AND). The `author` / `subject` / `venue` filters keep the behaviour of the field they target: names verbatim, subjects stemmed.
 - `meta.engine` tells you which engine served a given response.
-
-> Historical note: earlier docs described a MariaDB works FULLTEXT (`ft_works_content` / `ft_works_metadata`). Those indexes **no longer exist**; works/persons full-text is Manticore-only. Any lingering mention elsewhere is stale.
 
 ---
 
@@ -243,16 +236,19 @@ Every primary resource nests its external identifiers under an `identifiers{}` o
 | HTTP | When | `code` (examples) |
 |---|---|---|
 | 200 | success | — |
-| 400 | validation failure (bad param) | `VALIDATION_ERROR` (+ `errors[]` with `path`/`msg`/`location`) |
+| 400 | validation failure (bad param), malformed JSON body or path encoding, a full-text page beyond 100,000 matches | `VALIDATION_ERROR` (+ `errors[]` with `path`/`msg`/`location` on parameter failures) |
 | 401 | missing/invalid key on a gated endpoint | `UNAUTHORIZED` |
 | 404 | resource / parent id not found | `NOT_FOUND` (+ domain codes like `COURSE_NOT_FOUND`, `INSTRUCTOR_NOT_FOUND`) |
 | 429 | rate limit exceeded | `RATE_LIMITED` |
-| 500 | unexpected server error | `INTERNAL_ERROR` (+ domain `*_FAILED` codes) |
-| 503 | timeout / dependency unavailable | `TIMEOUT` |
+| 413 | request body over 16 kB | `VALIDATION_ERROR` |
+| 500 | unexpected server error (message masked) | `INTERNAL_ERROR` (+ domain `*_FAILED` codes) |
+| 503 | a query exceeded its time budget, or the request exceeded 5 s | `REQUEST_TIMEOUT` |
 | 502 | **from nginx, not the API** — the application is down or restarting | none; body is HTML |
 | 504 | **from nginx, not the API** — no answer within the proxy's 30 s ceiling | none; body is HTML |
 
-`code` values are stable — branch UI logic on `code`, show `message` to users. The last two rows are the exception: they are produced by the reverse proxy before the request reaches the application, so they carry no envelope and no `code` — see [Gateway errors](#gateway-errors). Nested listings **404** when the parent id does not exist (e.g. `/venues/{id}/works`, `/works/{id}/citations`, `/persons/{id}/collaborators`, `/courses/{id}/instructors`).
+`code` values are stable — branch UI logic on `code`, show `message` to users. The last two rows are the exception: they are produced by the reverse proxy before the request reaches the application, so they carry no envelope and no `code` — see [Gateway errors](#gateway-errors). Nested listings **404** when the parent id does not exist (e.g. `/venues/{id}/works`, `/works/{id}/citations`, `/persons/{id}/collaborators`, `/courses/{id}/instructors`); an existing parent with no children is an empty 200. A browser origin that is not on the CORS allow-list gets a normal response without CORS headers (the browser then blocks it), never a 500.
+
+**Caching.** Responses are cached in Redis per endpoint for between 1 minute and 48 hours (statistics the longest, search the shortest), so a change made by the data pipeline can take that long to appear.
 
 ---
 

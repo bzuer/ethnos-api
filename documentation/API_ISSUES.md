@@ -8,6 +8,8 @@ Estado da auditoria: 92 endpoints `ok`, 9 `ok_empty` (válidos, dados ausentes p
 
 Legenda: 🟢 corrigido+validado · 📋 operador (fora do alcance da API).
 
+Revisão integral de 2026-10-14 (código, scripts e documentação): ver **Bloco H**. Ela substitui as soluções de P2 (fonte do `/search/popular`) e P4 (fast path de `has_files`).
+
 Arquivos alterados nesta fase: `src/services/{metrics,autocomplete,subjects,publications,collaborations,instructors}.service.js`, `src/controllers/{metrics,persons,works}.controller.js`, `src/dto/{course,dashboard}.dto.js`, `src/routes/{dashboard,persons}.js`, `src/services/citations.service.js`, `src/app.js`, `database/required_objects.sql`.
 
 ---
@@ -25,6 +27,7 @@ Arquivos alterados nesta fase: `src/services/{metrics,autocomplete,subjects,publ
 - **Causa raiz:** `getPopularTerms` fazia cross-join `works × publications × números(1..10)` com `SUBSTRING_INDEX` sobre cada palavra de título, **sem `withTimeout`**; Redis só cacheava não-vazio, nunca aquecia.
 - **Solução** (`src/services/autocomplete.service.js` `getPopularTerms`): substituída a fonte pesada por agregação sobre o analytics já gravado no Redis (`search_analytics:YYYY-MM-DD`, últimos 7 dias, `lrange` limitado a 2000/dia), tally de frequência de query, top-N, filtrando `stopWords` e termos <2 chars. Nunca executa SQL; cacheia inclusive vazio (TTL 600s); fallback `[]`.
 - **Validação (1210):** `GET /search/popular` → **HTTP 200 em ~1ms**, retornando os termos realmente buscados (`silva`, `kins`). Semanticamente correto ("popular" = mais buscado).
+- **Nota (2026-10-14):** a única entrada gravada era o autocomplete (cada tecla); agora gravam `/search/works` e `/search/global`, e a contagem lê as até 5 000 entradas retidas por dia — ver P35.
 
 ### P3 · 🟢 `GET /subjects/{id}/works` → era 500 INTERNAL_ERROR (subjects grandes)
 - **Causa raiz:** `getSubjectWorks` usava `withTimeout` mas **não capturava** `isStatementTimeout` → timeout virava 500. Ordenava por `ws.relevance_score` (sem índice composto com `subject_id`, e é placeholder uniforme) e contava via `COUNT(DISTINCT w.id)` caro.
@@ -35,6 +38,7 @@ Arquivos alterados nesta fase: `src/services/{metrics,autocomplete,subjects,publ
 - **Causa raiz:** (1) count (budget 2s) e id-selection (budget 4,5s) rodavam **sequenciais** → soma >5s → 503 antes do budget de statement disparar. (2) `EXISTS(files)` correlacionado + `ORDER BY p.id DESC` gerava varredura de `publications` (>8s).
 - **Solução** (`src/services/publications.service.js`): count e id-selection agora **concorrentes** (`Promise.all`) → wall-clock ≈ max(budgets) < 5s, degradando a `page_degraded` em vez de 503. Fast-path para `has_files===true` (sem full-text/venue e sort default): id-selection dirigida pela tabela `files` (`SELECT DISTINCT f.publication_id … ORDER BY … LIMIT/OFFSET`, 0,01s) → dados reais. Flag `meta.has_files_source: "files_index"`.
 - **Validação (1210):** `has_files=true&limit=2` → **HTTP 200 em ~4ms**, 2 rows, todas com arquivos, `meta.has_files_source=files_index`. Combinado `has_files=true&type=ARTICLE` → **200 em 2s** com `meta.has_files_note` de under-fill.
+- **Nota (2026-10-14):** o fast path passou a valer só para `has_files` sozinho na ordem padrão; com outros filtros ele devolvia páginas vazias sob um total errado — ver P37.
 
 ---
 
@@ -211,6 +215,74 @@ Origem: verificação do estado e do funcionamento efetivo do Manticore em produ
 - **Validação (1210, antes → depois):** `/venues` 0,97 → 0,20 s; `sortBy=id` 0,70 → 0,04 s; `search=anthropology` 0,75 → 0,36 s; `/venues/1074172` 4,91 → 0,30 s; `/venues/1012326` 4,51 → 0,07 s (com `recent_works`); `/venues/1074172/works?sort_by=cited_by_count` 0,54 → 0,06 s. Payloads idênticos ao código anterior, exceto o novo identificador, os empates agora resolvidos por id e as contagens de `top_authors` corrigidas. 72/72 unitários; 3 asserções de smoke novas (ordem e `recent_works` = página 1, busca pelo nome da editora, páginas disjuntas) — 44/44 verdes.
 - **Operador (📋, opcional):** `idx_eissn` duplica a `UNIQUE KEY eissn`; o `DROP` está proposto em `database/required_objects.sql`.
 
+## Bloco H — Revisão integral (código, scripts, documentação) — RESOLVIDO 2026-10-14
+
+Validação comum a todo o bloco: instância temporária em `PORT=1210` com o código novo (a `:1201`/`:1211` viva não foi tocada); 81/81 testes unitários, 53/53 de smoke contra o banco real, varredura de 109 casos (todas as 78 operações + bordas) com 0 falhas e nenhuma resposta fria acima de 1,9 s; ESLint (`no-undef`, `no-unused-vars`) limpo em `src/`, `scripts/` e `config/`; precheck estrutural 34/34.
+
+### P32 · 🟢 O cache Redis nunca gravava nada
+- **Problema:** produção rodava, na prática, sem cache.
+- **Causa raiz:** `cache.service.js` chamava `setex` num cliente node-redis v6 (o método é `setEx`); toda escrita lançava exceção e era engolida. TTLs numéricos passados pelos serviços eram ignorados.
+- **Solução:** `cache.service.js` reescrito sobre o cliente compartilhado (`getActiveRedisClient`, `setEx`, `resolveTtl`); fallback em memória limitado a 5 000 entradas; conexão com tentativa limitada (1 s, 3 retries) e 10 s de espera, para que uma queda do Redis nunca trave requisições.
+- **Validação:** teste unitário de `resolveTtl`; com Redis ativo, a segunda chamada idêntica é servida do cache.
+
+### P33 · 🟢 Todos os clientes da internet dividiam um único balde de rate limit
+- **Causa raiz:** o túnel cloudflared conecta-se ao nginx por loopback; com `trust proxy = 1`, o salto do cloudflared virava `req.ip`, e todo o tráfego externo contava como um só cliente (120/min para todos).
+- **Solução:** `trust proxy = 'loopback'` (todo salto loopback é descartado). Limitadores por classe (inertes, mas sobrescreviam os cabeçalhos `RateLimit-*`) e quatro reaplicações do limitador geral (contagem dupla) removidos; um balde por IP. `/security/stats` lista os clientes realmente limitados (`{ip, limited_since, resets_at}`) e `POST /security/unblock/{ip}` zera os contadores (antes era sempre um no-op).
+- **Validação:** `X-Forwarded-For` com cadeia loopback resolve o IP real; `/security/stats` e `/security/unblock` com os payloads documentados em `domains/security.md`.
+
+### P34 · 🟢 Consultas sem orçamento seguiam rodando no master depois do 503
+- **Causa raiz:** ~105 pontos de consulta sem `withTimeout`; uma requisição encerrada em 503 deixava a consulta rodando por até 32 s no master.
+- **Solução:** as duas pools (Sequelize e mysql2) iniciam toda conexão com `SET SESSION max_statement_time` abaixo do teto da requisição; `withTimeout` continua reduzindo o orçamento onde preciso (contagens: 2 s). `res.error` e o handler global mapeiam estouro de orçamento para **503 `REQUEST_TIMEOUT`**.
+- **Validação:** nenhuma consulta da API sobrevive à sua requisição; o componente OpenAPI `RequestTimeout` documenta o 503.
+
+### P35 · 🟢 Busca: palavras SQL rejeitadas, curingas vivos, resultados truncados em silêncio
+- **Problemas:** `q=european union` dava 400 (lista negra de palavras SQL); o sanitizador do `MATCH` mantinha `?` e `%`, curingas reais (`q=culture?` casava 6% de `culture`) e o formato que derruba o `searchd` 29.9.0 sob o ranker de expressão; páginas além da janela de 100 000 resultados davam 500; o `/search/popular` só recebia as teclas do autocomplete.
+- **Causa raiz adicional (encontrada nesta revisão):** com `max_query_time` estourado, o Manticore **não falha**: devolve o que achou até ali (um `COUNT(*)` pode voltar `0`) com apenas um `warning` em `SHOW META`, e a API reportava esse resultado parcial como exato.
+- **Solução:** sanitizador por lista branca (letras, marcas, dígitos, `_`, espaço); lista negra SQL removida; janela de 100 000 → 400; `max_query_time=4000` em toda consulta e leitura de `SHOW META` (`queryWithMeta`): página truncada → 503 `REQUEST_TIMEOUT`, contagem truncada → `pagination_total_exact: false` com limite inferior, e esses resultados não entram no cache. `/search/works` e `/search/global` gravam o analytics; o autocomplete não.
+- **Validação:** reproduzido no `searchd` (`COUNT(*) … max_query_time=1` → `0` + warning); dois testes unitários novos cobrem página e contagem truncadas; `q=european union` → 200.
+
+### P36 · 🟢 `/works`: filtros com ordenação davam 503 e filtros raros esvaziavam páginas
+- **Problemas:** `type=ARTICLE&sort_by=cited_by_count` → 503; `sort_by=references_count&sort_order=asc` → 500; `venue_id` ignorado; `peer_reviewed=false` colidia com `true` na chave de cache. A primeira correção (varrer o índice de `works` testando cada obra) resolveu os filtros comuns, mas regrediu os raros: `type=PREPRINT&limit=100&page=2` levava 4,5 s e devolvia página vazia degradada.
+- **Solução:** três planos de seleção de ids — (1) ordem por id com filtro de publicação: página lida do índice de `publications` (`GROUP BY p.work_id ORDER BY p.work_id`); (2) ordenação por citações/referências/ano com filtro de publicação: conjunto exato ≤ 250 000 obras ordenado via `IN`, conjunto maior varrido pelo índice de `works` com verificação correlata; (3) sem filtro de publicação: índice de `works`. Chave de cache construída dos filtros normalizados; `venue_id` aplicado (400 se combinado com texto livre).
+- **Validação (frio, 1210):** `type=PREPRINT&page=2/15` 4,5 s vazia → 0,02–0,03 s com 100 linhas; `type=THESIS&page=50` 0,03 s; `venue_id=1012159&page=2` 0,02 s; `type=ARTICLE&limit=100&page=1000` 0,32 s; `type=BOOK&sort_by=cited_by_count&page=3` 0,46 s; `type=ARTICLE&sort_by=cited_by_count` página em 0,02 s. Asserções de smoke novas para os filtros raros.
+
+### P37 · 🟢 `/publications`: `has_files` com outros filtros, contagem lenta, validação frouxa
+- **Problemas:** o fast path de `has_files` rodava também com outros filtros e devolvia páginas vazias sob um total "exato" errado; `has_files=false` materializava o índice inteiro de `files`; a contagem juntava `works` sempre (`type=ARTICLE` > 20 s); `type=foo` e `q=a` respondiam 200 vazio; as linhas de citação usavam `year` (a convenção é `publication_year`) e listavam todos os contribuidores (até 34 kB por linha).
+- **Solução:** fast path só com `has_files` sozinho e ordem padrão (total exato de `files`, 6 239 322); demais casos com verificação correlata por linha; contagem junta `works` só quando o filtro exige; `q`/`search` 2..200, `type` no enum de 12 valores, `venue`/`venue_name` 2..255; linhas de citação com `publication_year`, 3 nomes e `authors_count` exato.
+- **Validação:** `type=ARTICLE` conta exatamente 7 055 450 em 0,8 s; `type=foo` e `q=a` → 400.
+
+### P38 · 🟢 Colaborações vazias, 503 e totais falsos
+- **Problemas:** quatro instruções seriais de até 4,5 s cada: `/collaborations/top` devolvia "sucesso" vazio ou 503 com filtro de ano; escalas de força diferentes por endpoint; páginas além do fim reportavam `total = offset` (`page=1000&limit=5` → 4 995, real 1 126); falhas viravam 500 mesmo em estouro de orçamento.
+- **Solução:** uma única instrução (`rankCollaborationPairs`: CTE sobre as 2 000 pessoas mais produtivas, papel AUTHOR, deduplicação por obra, total por `COUNT(*) OVER ()`) compartilhada com `/metrics/collaborations`; uma escala de força; página além do fim recalcula o total; o controller passa por `res.error` (503 em estouro).
+- **Validação:** `/collaborations/top` ~1,1 s com total exato; asserção de smoke de página além do fim.
+
+### P39 · 🟢 Instituições, métricas, citações e painel
+- **Problemas:** busca de instituições em modo natural (qualquer termo; `Toronto Rehabilitation Institute` em ~657º, atrás do MIT); siglas com caixa mista não casavam; `funded_works_count` contava linhas de financiamento; `/metrics/*` com página profunda → 500 e resumo anual só da página; citações mascaravam falhas como zeros; o painel exibia constantes (`rollback_active`, `index_size_mb`, conexões) e `error_rate` contava 4xx.
+- **Solução:** busca booleana com todos os termos (`+term*`) ou sigla exata sem caixa, ordenada por sigla, nome exato, porte e relevância; `COUNT(DISTINCT work_id)` e `grant_numbers[]`; rankings com `offset + índice + 1`; resumo anual sobre todos os anos com `refreshed_at`; citações propagam o erro; painel com telemetria real, sondas de dependência e `error_rate` = 5xx.
+- **Validação:** `/institutions?q=Toronto Rehabilitation Institute` no topo; `/institutions?q=USP` 0,83 s frio; capítulos `institutions.md`, `metrics.md`, `dashboard.md` com payloads ao vivo.
+
+### P40 · 🟢 Assinaturas, assuntos, pessoas, cursos e bibliografias
+- **Problemas:** `/signatures/search?q=a` dava 503 e a consulta seguia 32 s no master; `/subjects/{id}/works` aplicava filtros **depois** da paginação (páginas vazias antes dos resultados); `/persons` tinha um fallback `LIKE` sem índice e `recent_works` repetia obras; leituras de bibliografia agregavam o corpus inteiro por `work_id`; `/bibliographies/statistics` calculava a média de obras por curso como Σn²/Σn; listagens aninhadas de cursos, assinaturas e `/works/{id}/bibliographies` aceitavam qualquer valor (e esta última nunca dava 404).
+- **Solução:** busca de assinaturas por substring percorrida na ordem do índice (para na página), contagem com orçamento de 2 s; filtros de assuntos na seleção de ids; busca de pessoas só pelo Manticore, uma linha por obra com `roles[]`; junção da última publicação compartilhada; média simples por curso; validadores (`page`, `limit`, `offset`, `role`, `reading_type`, `week_number`, `vocabulary`) e 404 para obra inexistente.
+- **Validação:** `q=silva` 0,68 s frio; asserções de smoke de 400/404.
+
+### P41 · 🟢 Plataforma: horários, erros, paginação
+- **Problemas:** carimbos de tempo +3 h (o conector lia `TIMESTAMP` como hora local de Node); origem CORS não permitida → 500; JSON malformado → 500; `offset` era arredondado para a fronteira de página; `/docs.json` vinha dentro do envelope.
+- **Solução:** `keepDefaultTimezone` + `timezone: 'local'`; erros de cliente → 4xx (corpo > 16 kB → 413), envelope sempre `status: "error"`; `offset` servido como enviado e ecoado em `meta.pagination_extras.offset`; OpenAPI cru.
+- **Validação:** obra 24224223 → `2026-10-08T20:23:23Z`, o mesmo instante que o `17:23:23` (UTC−3) gravado no banco (antes saía `23:23:23Z`); asserções de smoke de CORS, JSON malformado, offset e `/docs.json`.
+
+### P42 · 🟢 Documentação, scripts e repositório
+- **Problemas:** o payload raiz e o CLAUDE.md afirmavam uma busca FULLTEXT de assuntos que não existe; `README.md` citava `server.sh`, um `.env` de exemplo inexistente e `GRANT ALL`; `CITATION.cff` falava em Sphinx, 86 endpoints e 1,16 milhão de obras; `manage.sh` limpava o cache com `FLUSHALL` (apagando o analytics), não abortava o deploy com testes falhando e reportava sucesso com verificações falhas; `process.sh dev` apagava os logs do serviço em execução.
+- **Solução:** textos corrigidos; `README.md`, `CITATION.cff` e `RUN_ORDER.md` reescritos; os 17 capítulos de `domains/` revisados contra o código e payloads ao vivo; componente OpenAPI `RequestTimeout`; `manage.sh` remove só os prefixos de cache da API, aborta o deploy em falha e sai com código ≠ 0; código morto, fixtures Jest e dependências sem uso removidos.
+
+### P43 · 📋 Pendências do operador
+- A conta `dev` tem `ALL PRIVILEGES … WITH GRANT OPTION`; a proposta de conta só-`SELECT` está em `database/required_objects.sql`.
+- `/etc/node-backend.env` está com modo 0655 (legível por qualquer conta local) e contém senha e chaves: deve ser 0640. Ele ainda define variáveis que o código não lê mais (`RATE_LIMIT_SEARCH`, `RATE_LIMIT_METRICS`, `RATE_LIMIT_RELATIONAL`, `ENABLE_HTTPS`, `HTTPS_PORT`, `SPHINX_ENABLED`, `COLLAB_QUERY_TIMEOUT_MS`, `COLLAB_FORCE_FALLBACK`, `DISABLE_ORG_RESEARCHER_SORT`, `DEFAULT_LIMIT`, `MAX_LIMIT`, `UPLOAD_PATH`, `MAX_FILE_SIZE`, `LOG_FILE`, `API_VERSION`).
+- `CORS_ORIGINS` no servidor de desenvolvimento permite apenas `localhost:3000/3001`.
+- O índice Manticore do servidor de desenvolvimento está defasado (7 673 100 obras indexadas contra 7 657 142 no MariaDB; ~137 mil pessoas fora da busca): `sudo scripts/manticore/render-config.sh && sudo scripts/manticore/reindex.sh all`.
+- `metrics_annual_summary` não é atualizada desde 2026-07-23.
+- Índices redundantes (`venues.idx_eissn`, `persons.idx_persons_preferred_name`, `persons.idx_family_name`, `signatures.idx_signatures_signature`, `signatures.idx_signature_search`) e `work_subjects.idx_subject` (provoca `index_merge` ruim): `DROP` opcionais em `database/required_objects.sql`.
+
 ---
 
-_As divergências puramente de documentação (schemas swagger obsoletos, params não-documentados, enums faltantes, descrições estale) são tratadas na fase de reconstrução do swagger; inventário completo em `scratchpad/reports/verification.json`._
+_As divergências puramente de documentação (schemas OpenAPI, parâmetros, enums, descrições) são corrigidas diretamente em `config/openapi.schemas.js`, nos blocos `@swagger` das rotas e nos capítulos de `documentation/domains/`._
