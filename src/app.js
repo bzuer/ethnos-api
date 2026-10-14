@@ -551,12 +551,6 @@ const registerProcessHandlers = () => {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGQUIT', () => gracefulShutdown('SIGQUIT'));
-
-  process.on('message', (msg) => {
-    if (msg === 'shutdown') {
-      gracefulShutdown('PM2_SHUTDOWN');
-    }
-  });
 };
 
 if (require.main === module) {
