@@ -66,6 +66,7 @@ Paginated list of works. Open (no auth). Without filters or `sort_by` the newest
 | `cited_by_max` | int | — | ≥0 | inclusive upper bound. Alias `citation_count_max`. |
 | `sort_by` | string | see below | `cited_by_count, references_count, publication_year, id, relevance` (aliases `citation_count, reference_count, year, work_id`; camelCase `sortBy`) | primary sort key. |
 | `sort_order` | string | `DESC` | `ASC`/`DESC`, case-insensitive (alias `sortOrder`) | sort direction. |
+| `autocorrect` | bool | `true` | `1/0/true/false` (400 otherwise) | full-text query revision; `false` serves the literal query and only suggests a revision (see below). |
 
 The publication-level filters (`type`, `year_from`/`year_to`, `open_access`, `peer_reviewed`, `venue_id`) are matched together against a single publication: `type=BOOK&year_from=2020` keeps works that have a BOOK published in or after 2020.
 
@@ -191,6 +192,7 @@ Venue sub-object (`venue`, and every venue block in this domain):
 **Totals, timing and degraded pages**
 
 - `meta.match_mode` is always `"any_publication"`.
+- **Query revision.** When a full-text request matches nothing, misspelled terms are corrected against the Manticore dictionary (`q=lkuiz fernando dias duarte` serves the 56 works of `luiz fernando dias duarte`). Failing that, the `q` term that conflicts with the others is dropped (`q=durkheim suicide nervosa` → `durkheim suicide`). The served query is described in `meta.query_revision` (absent when nothing was revised). On the first page, a rare term one edit from a far more frequent word gets a non-applied suggestion instead. `autocorrect=false` keeps the literal query. `author`/`subject`/`venue_name` terms are corrected but never dropped. Shape, rules and rendering advice: [search › Query revision](./search.md#query-revision-typo-tolerance).
 - `pagination.total` is exact (`meta.pagination_total_exact: true`) on the full-text path and on filtered MariaDB requests whose count finishes inside its 2 s budget. Measured 2026-10-14: `type=BOOK` → 388,246, `type=THESIS` → 10,614, `language=pt` → 289,191, `year_from=2020&year_to=2021` → 696,649.
 - It is the fixed corpus estimate **7,657,142** with `pagination_total_exact: false` on the unfiltered browse and whenever the count exceeds its budget. That fallback is the **whole-corpus** figure, not an approximation of the filtered set — e.g. `open_access=true` or `type=ARTICLE` answer 7,657,142 although the rows are correctly filtered. Treat `false` as "no usable total" and page with `hasNext` / `data.length`. The first request for such a filter set takes about 2 s, because the response waits for the count budget; the outcome is then cached per filter set (10 minutes for an estimate, 1 hour for an exact count), so its other pages and sorts, `/works/showcase` and filter-only `/search/works` answer without that wait (measured 2.0 s → ~0.005 s).
 - The page is selected by one of three plans, chosen by the filters and the sort:

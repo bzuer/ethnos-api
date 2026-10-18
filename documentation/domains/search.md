@@ -1,6 +1,6 @@
 # Search — full-text discovery over works and persons
 
-The search domain is the primary discovery surface of the API. It exposes seven read-only endpoints. Full-text matching runs on **Manticore Search** (SphinxQL), the same engine behind `q=` on `/works`, `/publications` and `/persons`:
+The search domain is the primary discovery surface of the API. It exposes seven read-only endpoints. Full-text matching runs on **Manticore Search** (SphinxQL), the same engine behind `q=` on `/works`, `/publications` and `/persons`, and a query that matches nothing is revised for typos and stray words (see [Query revision](#query-revision-typo-tolerance)):
 
 - The `works` index has the full-text fields `title, subtitle, abstract, authors, subjects, venue`. The `authors` field holds **AUTHOR-role contributors only**, so editors and translators are not matched by `q` or `author=`. The `venue` field holds the name and abbreviation of the venue of every publication of the work.
 - The `persons` index has the fields `preferred_name, given_names, family_name`.
@@ -27,13 +27,97 @@ This chapter documents only what is specific to search. The envelope, pagination
 ## Rules shared by every search endpoint
 
 - **Query text is literal.** Only letters, combining marks, digits, `_` and whitespace reach the engine. Every other character is a word separator, including `? % * " ' & : . - | @ ( )`. The text is also lower-cased. So `ritual&myth` is the same query as `ritual myth`, `culture?` is the same as `culture`, and words such as `MAYBE`, `NEAR`, `SENTENCE` or `ZONE` are ordinary terms. There are no operators, phrases or wildcards.
-- **Every term is required (AND).** In the content fields (`title`, `subtitle`, `abstract`, `subjects`), each term also matches its inflected forms through Portuguese and English stemming: `movimentos` finds *movimento*. In `authors` and `venue`, terms match verbatim, so names are never stemmed.
+- **Every term is required (AND).** In the content fields (`title`, `subtitle`, `abstract`, `subjects`), each term also matches its inflected forms through Portuguese and English stemming: `movimentos` finds *movimento*. In `authors` and `venue`, terms match verbatim, so names are never stemmed. A query that matches nothing is revised: misspellings are corrected, and failing that the conflicting term is dropped. See [Query revision](#query-revision-typo-tolerance).
 - **Match window.** Full-text results can be paged up to the first 100,000 matches. A request with `offset + limit > 100000` returns **400 `VALIDATION_ERROR`**: "Full-text results can be paged up to the first 100000 matches; narrow the query or use a different sort".
 - **Time budget.** Every Manticore query carries `max_query_time = 4000 ms`, below the 5 s request ceiling. When the page query hits it, the request fails with **503 `REQUEST_TIMEOUT`** rather than serving a truncated page. When only the count hits it, the page is served with `meta.pagination_total_exact: false` and a lower-bound `total` (one more than the rows seen while a full page came back, so `hasNext` stays usable).
 - **Pagination.** `page`/`limit` or `offset`/`limit`, with a default `limit` of 10. An explicit `offset` is served as given and echoed in `meta.pagination_extras.offset`.
 - **`relevance` is always `null`.** The field appears on the work rows of `/search/works` and `/search/global` and on the person rows of `/search/persons` and `/search/global`. It stays `null` even with `sort_by=relevance`: the ranking score is never surfaced. `/search/advanced` rows omit the key entirely.
 
 > Figures in this chapter were measured on 2026-10-14 against the development server. Its Manticore index is stale: it holds 7,673,100 works for 7,657,142 in MariaDB, and 4,766,283 persons for 4,903,220. Full-text totals there drift from production. Treat the numbers as orders of magnitude, not fixed values.
+
+## Query revision (typo tolerance)
+
+Because every term is required, a single misspelled or out-of-place word used to empty the whole result: `lkuiz fernando dias duarte` returned nothing, while `luiz fernando dias duarte` returns 56 works and the person Luiz Fernando Dias Duarte. Since 2026-10-18 the works and persons full-text paths revise such queries against the Manticore dictionary, which is the vocabulary of the very index the query runs on.
+
+**1. The literal query matches nothing.** The API looks for a revised query that does match, and serves it:
+
+- **Correction.** A term absent from the dictionary is replaced by a dictionary word within one edit. An edit is a deletion, insertion, substitution or adjacent transposition, so `bourdeiu` is one edit from `bourdieu`. Words of six letters or more may take two edits: `malinowksy` → `malinowski`. A term that does exist in the dictionary is only ever replaced by a one-edit neighbour (`castor` → `castro` in `eduardo viveiros de castor`).
+- **How candidates are chosen.** Each candidate is judged by how much the *whole* corrected query matches: its matches, plus their citations for works or their `total_works` for persons. Each edit costs a factor of 20. Popularity therefore breaks ties: on `/search/persons`, `marcel maus` becomes `marcel mauss` rather than one of the many other one-edit neighbours of `maus`. Rewrites that change fewer terms are always tried first.
+- **Relaxation.** If no correction yields results, the one `q` term that conflicts with the others is dropped: `durkheim suicide nervosa` → `durkheim suicide`, 508 works. A term that occurs nowhere in the index and has no correction is dropped as well (`luiz fernando dias duarte xqztw` → the 56 works). Only `q` is relaxed. `author`, `subject` and `venue_name` are corrected but never dropped, and a query is never reduced to nothing.
+- **Filters are respected.** No revision happens when the zero is explained by the structured filters (`type`, `language`, years, flags, `verified`, citation bounds). If the text alone matches, the terms are fine and the empty page is the true answer.
+- The response carries the revised query's rows and `pagination`. `query_revision.applied` is `true`, with `status` `"corrected"`, or `"relaxed"` when a term was dropped.
+
+**2. The literal query has results.** This applies to the first page only. Suppose a term is rare (in at most 1,000 documents) and sits one edit away from a word whose query matches at least 20 times more. The response then stays the literal query, and `query_revision` carries a **suggestion** with `status: "suggested"` and `applied: false`. For example, `bourdeiu distinction` returns its 2 works and suggests `bourdieu distinction` (1,181).
+
+**3. `autocorrect=false`** turns every revision into a suggestion: the literal (possibly empty) result is served and `query_revision.applied` is `false`. Use it for the "search instead for …" link, otherwise that link would be revised again.
+
+Correctly spelled queries are never revised. A query that already has results and no rare term costs one extra dictionary lookup (1–3 ms). A zero-result query typically takes 15–130 ms longer. The work is bounded: each candidate count is capped at 500 ms, and the revision is skipped when the literal search already took over 1 s. If the revision fails, the literal result is served unchanged.
+
+### `query_revision`
+
+Present only when a revision was applied or is suggested. It sits in `meta.query_revision` on `/works`, `/search/works`, `/search/advanced`, `/search/persons`, `/persons` (search path) and `/publications`. On `/search/global` it sits inside each block (`data.works.query_revision`, `data.persons.query_revision`), and on `/search/autocomplete` in `data.query_revision`.
+
+| field | type | notes |
+|---|---|---|
+| `status` | enum | `"corrected"`: the rows are those of the corrected query. `"relaxed"`: a term was also dropped. `"suggested"`: the rows are the literal query's and `revised` is only a proposal. |
+| `applied` | boolean | `true` when `data` and `pagination` reflect `revised`. |
+| `original` | object | Normalised literal terms per parameter (lower-cased, punctuation removed), e.g. `{ "q": "lkuiz fernando dias duarte" }`. Only parameters that carry terms appear. |
+| `revised` | object | Revised terms per parameter. Send them back as the same parameters to reproduce the response. |
+| `corrections[]` | array | `{ parameter, term, replacement, edit_distance }`. `parameter` is `q`, `author`, `subject` or `venue_name`. `edit_distance` is 1 or 2. |
+| `dropped_terms[]` | array | `{ parameter, term }`. Always `q`. |
+| `original_total` | int | Matches of the literal query: 0 unless `status` is `"suggested"`. |
+| `revised_total` / `revised_total_exact` | int / boolean | Matches of the revised query. They equal `pagination.total` when applied. On `/publications` they count matching works (capped at the 5,000-work full-text cap), not publications. |
+
+`GET /search/works?q=lkuiz fernando dias duarte&limit=1` (row omitted):
+
+```json
+{
+  "pagination": { "page": 1, "limit": 1, "total": 56, "totalPages": 56, "hasNext": true, "hasPrev": false },
+  "meta": {
+    "query": "lkuiz fernando dias duarte",
+    "search_type": "fulltext",
+    "match_mode": "any_publication",
+    "pagination_total_exact": true,
+    "query_revision": {
+      "status": "corrected",
+      "applied": true,
+      "original": { "q": "lkuiz fernando dias duarte" },
+      "revised": { "q": "luiz fernando dias duarte" },
+      "corrections": [{ "parameter": "q", "term": "lkuiz", "replacement": "luiz", "edit_distance": 1 }],
+      "dropped_terms": [],
+      "original_total": 0,
+      "revised_total": 56,
+      "revised_total_exact": true
+    }
+  }
+}
+```
+
+`GET /works?q=durkheim suicide nervosa` (`meta.query_revision` only):
+
+```json
+{
+  "status": "relaxed",
+  "applied": true,
+  "original": { "q": "durkheim suicide nervosa" },
+  "revised": { "q": "durkheim suicide" },
+  "corrections": [],
+  "dropped_terms": [{ "parameter": "q", "term": "nervosa" }],
+  "original_total": 0,
+  "revised_total": 508,
+  "revised_total_exact": true
+}
+```
+
+**Rendering it.**
+- `applied: true`: show "Showing results for **{revised.q}**", with the `corrections[].replacement` words highlighted. Add "Search instead for {original.q}", linking to the same request with `autocorrect=false`. For `status: "relaxed"`, add "Missing: {dropped_terms[].term}".
+- `applied: false`: show "Did you mean **{revised.q}**?", linking to the revised parameters.
+
+**Limits.**
+- Words shorter than four letters are never corrected.
+- Only Latin letters (after accent folding, so `antropología` counts) are corrected. Terms with digits or in other scripts can only be dropped, and only when they occur nowhere in the index.
+- Merged or split words (`levistrauss`, `da matta`) are not repaired.
+- Corrections can only reach what the search index holds. On the development server the stale index lacks some recently updated persons (e.g. Clifford Geertz, Bronislaw Malinowski), so a name search for them falls back to relaxation there.
 
 ---
 
@@ -65,6 +149,7 @@ Works search. `q` is optional, and the request takes one of two paths depending 
 | `subject` | string | — | 2–255 chars | Manticore `subjects` field (stemmed). |
 | `sort_by` | enum | relevance with a text term, otherwise `id DESC` | `cited_by_count, references_count, publication_year, id, relevance` (aliases `citation_count, reference_count, year, work_id`) | Primary sort key. |
 | `sort_order` | enum | `DESC` | `ASC`/`DESC`, case-insensitive | Sort direction. |
+| `autocorrect` | boolean | `true` | `1/0/true/false` (400 otherwise) | `false` serves the literal query and only suggests a revision. See [Query revision](#query-revision-typo-tolerance). |
 
 The shared `cited_by_min`/`cited_by_max` (aliases `citation_count_min`/`citation_count_max`) and pagination parameters also apply. Any invalid value returns 400 with the standard `errors[]` array.
 
@@ -150,6 +235,7 @@ The row is the `/works` list item. Its full field table is in [works › `GET /w
 | `meta.search_type` | Constant `"fulltext"`, on both paths. |
 | `meta.match_mode` | `"any_publication"`. |
 | `meta.pagination_total_exact` | `true` on the full-text path. On the browse path it is `false` when the count fell back to the corpus estimate. |
+| `meta.query_revision` | Present only when the text query was revised or a revision is suggested. See [Query revision](#query-revision-typo-tolerance). |
 | `meta.performance.*` | `engine` (`Manticore`/`MariaDB`), `query_type` (`search` / `showcase_optimized`), `primary_query_ms`, `elapsed_ms`, `controller`, `controller_time_ms`. |
 
 ### Notes
@@ -254,6 +340,7 @@ GET /search/advanced?q=ritual&peer_reviewed=1
 | `meta.filters_applied` | int | Number of non-empty filters other than `q`, sort and pagination. |
 | `meta.engine` | string | `"Manticore"` when a text term participates, else `"MariaDB"`. |
 | `meta.pagination_total_exact` | boolean | Same semantics as on `/search/works`. |
+| `meta.query_revision` | object | Same as on `/search/works`, including `autocorrect`. |
 | `meta.performance.controller_time_ms` | int | Controller wall time. |
 
 ---
@@ -268,6 +355,7 @@ Works and persons in one round trip, for a unified search box. There is no cross
 |---|---|---|---|---|
 | `q` | string | — | **required**, 2–200 chars | Run against the works and persons indexes. |
 | `limit` | integer | 5 | 1–20 (400 outside) | Rows per entity block. |
+| `autocorrect` | boolean | `true` | `1/0/true/false` (400 otherwise) | `false` serves the literal query in both blocks and only suggests revisions. |
 
 ### Example response
 
@@ -362,6 +450,7 @@ Works and persons in one round trip, for a unified search box. There is no cross
 | `data.works.results[]` | array | `/search/works` rows (with `relevance: null`). |
 | `data.persons.total` | int | Exact Manticore count. |
 | `data.persons.results[]` | array | `/search/persons` rows. |
+| `data.works.query_revision` / `data.persons.query_revision` | object | Present per block when that block was revised or a revision is suggested. The blocks are revised independently. |
 | `data.institutions` | object | Always `{ total: null, results: [], note }`. `null` means "not searched", not zero. Hide the block or link to `/institutions?q=`. |
 | `meta.query_time_ms` | int | Combined works + persons time. |
 | `meta.sources.works` / `meta.sources.persons` | object | Per-entity performance blocks. `meta.sources.institutions` is `null`. |
@@ -381,6 +470,7 @@ Researcher and author name search over `preferred_name, given_names, family_name
 |---|---|---|---|---|
 | `q` | string | — | **required**, 2–200 chars | Name query. |
 | `verified` | boolean | — | `1/0/true/false` (400 otherwise) | Restrict by `is_verified`. Echoed as a boolean in `meta.verified`. |
+| `autocorrect` | boolean | `true` | `1/0/true/false` (400 otherwise) | `false` serves the literal query and only suggests a revision. |
 
 Plus `page`/`limit`/`offset`.
 
@@ -428,10 +518,12 @@ The row is the `/persons` list item (see [persons › `GET /persons`](./persons.
 | `meta.query` | Echoed `q`. |
 | `meta.search_type` | Constant `"fulltext"`. |
 | `meta.verified` | Boolean; present only when `verified` was supplied. |
+| `meta.query_revision` | Present only when the name was revised or a revision is suggested. See [Query revision](#query-revision-typo-tolerance). |
 | `meta.performance.*` | `engine` (`"Manticore"`), `query_type` (`"search"`), `controller`, `controller_time_ms`. |
 
 ### Notes
 
+- A name that matches nothing is revised. `lkuiz fernando dias duarte` serves Luiz Fernando Dias Duarte, `lilia schwarz` serves Lilia Schwarcz, and `darcy ribero` serves Darcy Ribeiro. A wrong name part is dropped: `luiz fernando silva duarte` → `luiz fernando duarte`.
 - Ranking: names matching the query words in order rank first (`preferred_name` 10, `family_name` 6, `given_names` 4), then a BM25 term and a productivity boost (`min(total_works, 500)`).
 - Some "persons" are institutional author strings (e.g. `"Department of Anthropology"`). This reflects the data.
 - Live cardinalities (dev, 2026-10-14): `q=silva` 35,970; with `verified=true`, 16,698.
@@ -502,6 +594,7 @@ Typeahead suggestions blending work **titles**, **author** names and **venue** n
 | `suggestions[].name` / `abbreviated_name` | string | **Venue items only.** |
 | `suggestions[].preview` | string | Ready-to-display string. |
 | `data.type`, `data.count`, `data.generated_at` | | Absent in the short shape. |
+| `data.query_revision` | object | Present only when the typed text produced no suggestion and the suggestions shown are those of a corrected text (`status: "corrected"`, always applied). See [Query revision](#query-revision-typo-tolerance). |
 | `data.message` | string | Short shape only: `"Query too short"`. |
 | `meta.engine` | string | `"Manticore"`. Absent in the short shape. |
 
@@ -513,6 +606,7 @@ Typeahead suggestions blending work **titles**, **author** names and **venue** n
   - A lone 2-character query matches that exact word.
   - Prefix expansion is capped at the 128 most frequent completions.
 - **Author and venue items** must contain every typed term (case- and accent-insensitive substring), so names that matched only through a co-author or a sibling publication are dropped. Author suggestions come from the AUTHOR-role `authors` field. Title items match on stems.
+- **Correction fallback.** When the typed text yields no suggestion, its completed words are corrected against the dictionary and the suggestions of the corrected text are returned with `data.query_revision`: `lkuiz fernando d` suggests for `luiz fernando d`. The last word is treated as a prefix being typed and left alone, unless no dictionary word starts with it, or it matches nothing as a prefix next to the other words. Autocomplete never drops a word.
 - If the full-text lookup fails, the endpoint returns an empty `suggestions` list, never an error inside a success envelope.
 
 ---

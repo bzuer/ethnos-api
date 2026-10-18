@@ -8,7 +8,7 @@ Estado da auditoria: 92 endpoints `ok`, 9 `ok_empty` (válidos, dados ausentes p
 
 Legenda: 🟢 corrigido+validado · 📋 operador (fora do alcance da API).
 
-Revisão integral de 2026-10-14 (código, scripts e documentação): ver **Bloco H**. Ela substitui as soluções de P2 (fonte do `/search/popular`) e P4 (fast path de `has_files`).
+Revisão integral de 2026-10-14 (código, scripts e documentação): ver **Bloco H**. Ela substitui as soluções de P2 (fonte do `/search/popular`) e P4 (fast path de `has_files`). Tolerância a erros de digitação na busca (2026-10-18): ver **Bloco I**.
 
 Arquivos alterados nesta fase: `src/services/{metrics,autocomplete,subjects,publications,collaborations,instructors}.service.js`, `src/controllers/{metrics,persons,works}.controller.js`, `src/dto/{course,dashboard}.dto.js`, `src/routes/{dashboard,persons}.js`, `src/services/citations.service.js`, `src/app.js`, `database/required_objects.sql`.
 
@@ -288,6 +288,36 @@ Validação comum a todo o bloco: instância temporária em `PORT=1210` com o c�
 - **Filtros densos esperavam o orçamento da contagem em toda página.** `/works?type=ARTICLE` (e `open_access`, assuntos multimilionários com filtro) levava 2 s em cada página e em cada troca de ordenação, porque a contagem estourava os 2 s sempre. **Solução:** `cacheService.rememberCount` guarda o resultado da contagem por conjunto de filtros (exata 1 h, estimativa 10 min) em `/works`, `/publications` e `/subjects/{id}/works`. **Validação:** primeira requisição 2,0 s; demais páginas, ordenações, `/works/showcase` e `/search/works` com os mesmos filtros ~0,005 s; teste unitário novo.
 - **Campos redundantes em `/instructors/{id}/statistics`** (`name_variations` sempre `[]`, `confirmed_authorships` cópia de `works_authored`, `author_string`/`first_author_name`/`authors_array` cópias de `author_name`, `signature_consistency_score` sem sentido com uma assinatura por pessoa): removidos do serviço, do DTO, do schema OpenAPI e da documentação; cache `v2 → v3`.
 - **`init.sh` local obsoleto** (criava `/var/run/ethnos-api` e copiava `config/sphinx-unified.conf`, ambos inexistentes, antes de `manage.sh restart`): removido junto com sua entrada no `.gitignore`.
+
+## Bloco I — Tolerância a erros de digitação na busca — RESOLVIDO 2026-10-18
+
+### P45 · 🟢 Uma palavra errada ou um erro de digitação zerava a busca
+- **Problema:** `lkuiz fernando dias duarte` não devolvia nada em `/works`, `/search/*`, `/persons` e `/publications`, e o autocomplete também não sugeria nada. `luiz fernando dias duarte` devolve 56 obras e a pessoa Luiz Fernando Dias Duarte. O mesmo acontecia com uma palavra válida que não aparece junto das demais: `durkheim suicide nervosa` → 0.
+- **Causa raiz:** toda busca exige todos os termos (AND). Um termo ausente do índice (`lkuiz`: 0 documentos no dicionário do Manticore) ou incompatível com os outros esvazia o resultado inteiro, e não havia nenhum mecanismo de correção. A correção nativa do Manticore (`CALL SUGGEST`, `OPTION fuzzy=1`) exige dicionário com infixos (`min_infix_len`), ausente nas tabelas (só `min_prefix_len = 3`). Ativá-lo pediria reconstruir a tabela `works` (8 GB, ~64 min em produção) e multiplicaria seu tamanho. Além disso, o `fuzzy` do Buddy reescreve o `MATCH` com alternativas `OR` fora do nosso controle, justamente o formato que derruba o `searchd` 29.9.0 sob o ranker de expressão.
+- **Solução** (no lado da API, sem reconstruir o índice, com leituras somente no Manticore; `src/utils/spelling.js` puro e orquestração em `src/services/searchEngine.service.js`):
+  - **Quando a consulta literal não tem resultado**, cada termo é consultado no dicionário da própria tabela com `CALL KEYWORDS(..., 1 AS stats)`. Os candidatos são a vizinhança completa de distância 1 (remoção, inserção, troca e transposição adjacente; ~300–650 palavras exatas por termo, numa só chamada, 2–15 ms) e, para palavras ausentes de 6 letras ou mais, a distância 2, por expansão de prefixos de 4 letras (`mali*` para `malinowksy`, 3–40 ms).
+  - Um termo ausente do dicionário pode ir a 2 edições. Um termo existente só a 1, e só para uma palavra muito mais frequente (×20), ou como candidato "de contexto".
+  - Cada reescrita é julgada pela consulta inteira: `COUNT(*)` + `SUM(citation_count)` em obras, ou `SUM(total_works)` em pessoas, sempre com `ranker=none` e 500 ms. Cada edição custa ×20, e reescritas que mudam menos termos são avaliadas primeiro (parando no primeiro nível com resultado).
+  - Se nenhuma correção dá resultado, descarta-se o termo de `q` que conflita com os demais. A escolha maximiza ln(resultados ponderados) + ln(frequência do termo descartado), ou seja, prefere manter o consenso e largar a palavra comum. Termos inexistentes e sem correção também são descartados.
+  - `author`/`subject`/`venue_name` são corrigidos, nunca descartados. Não há revisão quando o zero se explica pelos filtros estruturados: o texto sozinho é contado e, se casar, a revisão é abortada.
+  - A resposta serve a consulta revisada e a descreve em `query_revision` (`status: corrected|relaxed`, `applied: true`).
+  - **Quando a consulta literal tem resultado** (só na primeira página), um termo raro (≤ 1 000 documentos) a 1 edição de uma palavra cuja consulta casa ≥ 20× mais gera apenas sugestão (`status: suggested`, `applied: false`).
+  - `autocorrect=false` transforma toda revisão em sugestão (para o link "buscar por …"). Vale em `/works`, `/search/{works,advanced,global,persons}`, `/persons` e `/publications`. Em `/search/global` cada bloco traz o seu `query_revision`.
+  - O autocomplete, quando não acha sugestão, corrige as palavras completas e devolve as sugestões do texto corrigido com `data.query_revision`. A última palavra é tratada como prefixo em digitação e só é corrigida se nenhuma palavra do dicionário começa com ela ou se o prefixo não casa ao lado das demais.
+  - **Segurança do `searchd`:** nenhuma forma nova de `MATCH`. A consulta revisada usa exatamente os pares por termo já existentes, só que com outras palavras. As contagens usam `ranker=none`, os curingas só aparecem em `CALL KEYWORDS` e em contagens `ranker=none`, e as palavras de substituição são restritas a `[a-z]+`.
+  - Limites: revisão pulada se a busca literal levou mais de 1 s; no máximo 4 contagens simultâneas (o pool do Manticore tem 5 conexões); a página revisada herda o tempo restante do orçamento de 4 s. Qualquer falha devolve o resultado literal.
+  - Chaves de cache: `works:list:v9`, `search:works:v6`, `search:persons:v3`, `search:global:v4`, `persons:search:v4`, `publications:list:v6`, `autocomplete:v3` (que agora também inclui o `limit`, antes ausente da chave).
+- **Validação:**
+  - Instância temporária em `PORT=1210`, índice de desenvolvimento.
+  - `lkuiz fernando dias duarte` → 56 obras (`luiz`), a pessoa correta em `/search/persons` e `/search/global`, 54 publicações em `/publications`, sugestões no autocomplete (`lkuiz fernando d`).
+  - Correções: `eduardo viveiros de castor` → `castro` (368), `claude levi strass` → `strauss` (1 546), `malinowksy argonauts` → `malinowski` (75, 2 edições), `antorpolgia da religiao` → `antropologia` (491), `marcel maus dadiva` → `mauss` (61), `clifford gertz` → `geertz` (1 044), `roberto damata carnavais` → `damatta` (11), pessoas `marcel maus` → `mauss`, `lilia schwarz` → `schwarcz`, `darcy ribero` → `ribeiro`.
+  - Relaxamentos: `durkheim suicide nervosa` → `durkheim suicide` (508), `levi strauss tristes trópicos kula` → sem `kula` (38), `luiz fernando silva duarte` (pessoas) → sem `silva`.
+  - Sugestões não aplicadas: `bourdeiu distinction` (2 → 1 181), `pierre bordieu` (38 → 6 000), `antropolgia urbana` (8 → 6 667).
+  - Consultas corretas intactas: `etnografia urbana`, `kula ring`, `movimentos sociais`, `gilberto freire casa grande senzala`.
+  - Custo extra: 15–130 ms numa consulta com zero resultados, 1–3 ms numa consulta com resultado.
+  - `searchd` sem reinício (`NRestarts=0`) durante todos os testes.
+  - 104/104 testes unitários (22 novos, incluindo um Manticore falso que confere que nenhum `MATCH` sob o ranker de expressão contém `*` ou `=`) e 59/59 de smoke (5 novos).
+  - No índice defasado do servidor de desenvolvimento faltam algumas pessoas atualizadas recentemente (Clifford Geertz, Bronislaw Malinowski, Roberto Damatta). Nesses casos a busca de pessoas cai no relaxamento; o reindex pendente em P43 resolve.
 
 ---
 

@@ -186,6 +186,7 @@ In OpenAPI the security scheme `XAccessKey` is declared globally as **optional**
 | `engine` / `performance.engine` | works, publications, search | `"Manticore"` when a full-text term participated, else `"MariaDB"` |
 | `performance.*` | works, publications | server-side timing (`primary_query_ms`, `total_rows_examined`, `query_type`) |
 | `fulltext_truncated` / `fulltext_work_cap` | `/publications` with full-text | the full-text work-id set was capped (default 5000) |
+| `query_revision` | full-text works/persons/publications listings and search (`data.works`/`data.persons` on `/search/global`, `data` on autocomplete) | the literal query matched nothing and a corrected or relaxed query was served (`applied: true`), or a revision is only suggested (`applied: false`). See [search › Query revision](./domains/search.md#query-revision-typo-tolerance) |
 | `page_degraded` (+ `note`) | `/works`, `/works/showcase`, `/publications`, `/persons`, `/subjects/{id}/works` | the page query hit the statement budget and returned empty; narrow the filter or ask for a shallower page |
 | `degraded` | collaboration rankings | the ranking exceeded its budget; the empty page is not a real zero |
 | `has_files_source` | `/publications?has_files=true` | `"files_index"` when the fast path served the page (`has_files=true` alone, default sort) |
@@ -210,6 +211,9 @@ Available on `/works`, `/works/showcase`, `/publications`, `/search/works`, `/se
 
 With `sort_by` omitted: `/works`, `/works/showcase` and filter-only search default to `id DESC`, `/publications` to `id DESC`, the person/venue/institution work listings to `publication_year DESC` (with an id tiebreak); full-text paths default to relevance. Year sorts put works without a year last (except the ascending `publication_year` sort on `/works`, which starts with them). Work list items expose `cited_by_count` / `references_count`; publication list items expose `citation_count` / `reference_count`.
 
+### Full-text query revision
+`autocorrect` (bool, default `true`) on `/works`, `/publications`, `/persons` and `/search/{works,advanced,global,persons}`. With the default, a full-text query that matches nothing is served corrected or relaxed. `false` serves the literal query and returns the revision as a suggestion only; use it for a "search instead for …" link.
+
 ### Common filters
 `type` (per the domain's enum, case-insensitive), `language` (ISO 639-1), `year_from` / `year_to` (from year 1000), `open_access` (bool), `peer_reviewed` (bool). Booleans accept `true`/`false`/`1`/`0`. Empty-string params (`param=`) are treated as absent. On work listings a publication-level filter matches if **any** publication matches, and the row shows the latest **matching** publication.
 
@@ -221,6 +225,7 @@ With `sort_by` omitted: `/works`, `/works/showcase` and filter-only search defau
 - **Query text is literal.** Only letters, digits and `_` are word characters; every other character (quotes, `?`, `%`, `*`, `&`, `:`, …) separates words, and operator words such as `NEAR` or `MAYBE` are searched as plain words. There are no wildcards or phrase operators.
 - **MariaDB** serves the rest: `/venues` search is a substring `LIKE` over name, abbreviation, ISSNs and publisher name; the `/publications` `venue` filter uses `ft_venues_search` (word match); there is no subject term search; `/institutions` requires every query word in `ft_organizations_name` or an exact acronym; `/signatures/search` is a substring match.
 - **Word forms.** Each `q` term matches inflected variants in the content fields (`title`, `subtitle`, `abstract`, `subjects`) through Portuguese and English stemming — `movimentos` also finds *movimento*, `ethnographies` also finds *ethnography* and *ethnographic* — while matching `authors` and `venue` verbatim, so proper names are never stemmed into something else. A term is satisfied by either side, and multi-word queries require every term (AND). The `author` / `subject` / `venue` filters keep the behaviour of the field they target: names verbatim, subjects stemmed.
+- **Typos and stray words.** Every term is required, so a single misspelled or unrelated word would empty the result. When the literal query matches nothing, the API corrects the misspelled terms against the search index's own dictionary: one edit, two for long unknown words, candidates judged by how much the whole corrected query matches. Failing that, it drops the free-text term that conflicts with the others. It serves that query and describes it in `query_revision`. Correctly spelled queries are never altered; see [search › Query revision](./domains/search.md#query-revision-typo-tolerance).
 - `meta.engine` tells you which engine served a given response.
 
 ---

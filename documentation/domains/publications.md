@@ -39,6 +39,7 @@ List publications, paginated. No auth. `meta.engine` is `"Manticore"` whenever a
 | `cited_by_min` / `cited_by_max` | integer | — | ≥ 0 | inclusive bounds on `p.citation_count` (an exact mirror of the parent work's `works.citation_count`). Aliases `citation_count_min` / `citation_count_max`. |
 | `sort_by` | string | `p.id DESC` | `cited_by_count`, `citation_count`, `references_count`, `reference_count`, `publication_year`, `year`, `id`, `publication_id`, `relevance` (camelCase `sortBy` also accepted) | primary sort key, see below. |
 | `sort_order` | string | `DESC` | `ASC`/`DESC`, case-insensitive (alias `sortOrder`) | sort direction. |
+| `autocorrect` | boolean | `true` | `1/0/true/false` (400 otherwise) | full-text query revision; `false` keeps the literal `q`/`author`/`subject` and only suggests a revision. |
 
 Sort resolution:
 
@@ -206,6 +207,7 @@ A capped full-text query (`GET /publications?q=ritual`) reports `"meta": { "engi
 - It is the fixed corpus estimate **7,744,534** with `pagination_total_exact: false` on the unfiltered listing and whenever the count exceeds its budget (e.g. `has_files=false` alone). That fallback is the whole-corpus figure, not an approximation of the filtered set; treat `false` as "no usable total" and stop paging when `data.length < limit`.
 - Count outcomes are cached per filter set (an estimate for 10 minutes, an exact count for 1 hour), so only the first request for a filter waits on the count; its other pages and sorts reuse it.
 - **Full-text cap.** `q`/`author`/`subject` keep at most the first 5,000 matching works by relevance (`MANTICORE_PUBLICATIONS_WORK_CAP`). When the cap is hit the response sets `meta.fulltext_truncated: true`, `meta.fulltext_work_cap: 5000` and `pagination_total_exact: false`: the total counts the publications of those 5,000 works only (`q=ritual` → 4,976 publications, while 53,180 works match on `/works?q=ritual`). Below the cap the total is exact.
+- **Query revision.** When `q`/`author`/`subject` match no work, misspelled terms are corrected (and, failing that, the conflicting `q` term dropped) exactly as on [`/works`](./works.md#get-works), and `meta.query_revision` describes the revised query: `q=lkuiz fernando dias duarte` → 54 publications of the 56 works of `luiz fernando dias duarte`. Here `revised_total` counts matching works (capped at 5,000), not publications. Unlike `/works`, there is no first-page suggestion. See [search › Query revision](./search.md#query-revision-typo-tolerance).
 - If the id selection exceeds its statement budget the page degrades to `data: []` with `meta.page_degraded: true`, a `meta.note` and `pagination_total_exact: false` instead of failing.
 - Invalid `sort_by`, `limit` outside 1..100, a non-integer id filter, etc. → 400 `VALIDATION_ERROR` with the express-validator `errors[]` array.
 
