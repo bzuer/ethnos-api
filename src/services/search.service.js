@@ -3,6 +3,7 @@ const { logger } = require('../middleware/errorHandler');
 const personsService = require('./persons.service');
 const worksService = require('./works.service');
 const { createPagination, normalizePagination } = require('../utils/pagination');
+const { isAutocorrectEnabled } = require('../utils/spelling');
 
 
 class SearchService {
@@ -15,8 +16,9 @@ class SearchService {
     const sortBy = filters.sort_by ?? filters.sortBy ?? null;
     const sortOrder = filters.sort_order ?? filters.sortOrder ?? null;
     const trimmedQuery = (query || '').trim();
+    const autocorrect = isAutocorrectEnabled(filters.autocorrect);
 
-    const cacheKey = `search:works:v5:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}`;
+    const cacheKey = `search:works:v6:${autocorrect ? 1 : 0}:${trimmedQuery}:${page}:${limit}:${offset}:${type || 'all'}:${language || 'all'}:${year_from || 'all'}:${year_to || 'all'}:${peer_reviewed === undefined ? 'all' : Number(Boolean(peer_reviewed))}:${open_access === undefined ? 'all' : Number(Boolean(open_access))}:${venue_name || 'all'}:${author || 'all'}:${subject || 'all'}:${citedByMin ?? 'all'}:${citedByMax ?? 'all'}:${sortBy || 'default'}:${sortOrder || 'desc'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -42,7 +44,8 @@ class SearchService {
         cited_by_min: citedByMin,
         cited_by_max: citedByMax,
         sort_by: sortBy,
-        sort_order: sortOrder
+        sort_order: sortOrder,
+        autocorrect
       };
 
       const worksResult = await worksService.getWorks(worksFilters);
@@ -59,7 +62,8 @@ class SearchService {
           query: trimmedQuery,
           search_type: 'fulltext',
           ...(worksResult.meta?.match_mode ? { match_mode: worksResult.meta.match_mode } : {}),
-          pagination_total_exact: worksResult.meta?.pagination_total_exact ?? true
+          pagination_total_exact: worksResult.meta?.pagination_total_exact ?? true,
+          ...(worksResult.meta?.query_revision ? { query_revision: worksResult.meta.query_revision } : {})
         },
         performance: {
           ...((worksResult && worksResult.performance) || (worksResult && worksResult.meta && worksResult.meta.performance) || {}),
@@ -83,7 +87,8 @@ class SearchService {
       ? true
       : (filters.verified === 'false' || filters.verified === '0' || filters.verified === false ? false : undefined);
     const trimmedQuery = (query || '').trim();
-    const cacheKey = `search:persons:v2:${trimmedQuery}:${page}:${limit}:${offset}:${verified ?? 'all'}`;
+    const autocorrect = isAutocorrectEnabled(filters.autocorrect);
+    const cacheKey = `search:persons:v3:${autocorrect ? 1 : 0}:${trimmedQuery}:${page}:${limit}:${offset}:${verified ?? 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -95,7 +100,8 @@ class SearchService {
       const serviceResult = await personsService.searchPersons(trimmedQuery, {
         limit: parseInt(limit, 10),
         offset: parseInt(offset, 10),
-        verified
+        verified,
+        autocorrect
       });
       logger.info(`Persons search completed: "${trimmedQuery}" - ${serviceResult.data.length} results`);
 
@@ -133,8 +139,9 @@ class SearchService {
   async globalSearch(query, filters = {}) {
     const limit = Math.min(Math.max(parseInt(filters.limit, 10) || 5, 1), 20);
     const trimmedQuery = (query || '').trim();
+    const autocorrect = isAutocorrectEnabled(filters.autocorrect);
 
-    const cacheKey = `search:global:v3:${trimmedQuery}:${limit}`;
+    const cacheKey = `search:global:v4:${autocorrect ? 1 : 0}:${trimmedQuery}:${limit}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -146,8 +153,8 @@ class SearchService {
       const start = process.hrtime.bigint();
 
       const [works, persons] = await Promise.all([
-        this.searchWorks(trimmedQuery, { page: 1, limit, offset: 0 }),
-        this.searchPersons(trimmedQuery, { page: 1, limit, offset: 0 })
+        this.searchWorks(trimmedQuery, { page: 1, limit, offset: 0, autocorrect }),
+        this.searchPersons(trimmedQuery, { page: 1, limit, offset: 0, autocorrect })
       ]);
 
       const totalTimeMs = Number(((process.hrtime.bigint() - start) / BigInt(1e6)).toString());
@@ -156,11 +163,13 @@ class SearchService {
         data: {
           works: {
             total: works.pagination.total,
-            results: works.data.slice(0, limit)
+            results: works.data.slice(0, limit),
+            ...(works.meta?.query_revision ? { query_revision: works.meta.query_revision } : {})
           },
           persons: {
             total: persons.pagination.total,
-            results: persons.data.slice(0, limit)
+            results: persons.data.slice(0, limit),
+            ...(persons.meta?.query_revision ? { query_revision: persons.meta.query_revision } : {})
           },
           institutions: {
             total: null,

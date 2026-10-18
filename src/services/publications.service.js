@@ -399,7 +399,7 @@ class PublicationsService {
     const pagination = normalizePagination(filters);
     const { page, limit, offset } = pagination;
 
-    const cacheKey = `publications:list:v5:p${page}:l${limit}:o${offset}:${JSON.stringify(filters)}`;
+    const cacheKey = `publications:list:v6:p${page}:l${limit}:o${offset}:${JSON.stringify(filters)}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
@@ -484,10 +484,17 @@ class PublicationsService {
     }
 
     let ftCapped = false;
+    let queryRevision = null;
     if (searchTerm || authorFilter || subjectFilter) {
       const cap = parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10);
-      const ft = await searchEngine.fetchWorkIdsForFilters({ q: searchTerm, author: authorFilter, subject: subjectFilter }, cap);
+      const ft = await searchEngine.fetchWorkIdsForFilters({
+        q: searchTerm,
+        author: authorFilter,
+        subject: subjectFilter,
+        autocorrect: filters.autocorrect
+      }, cap);
       ftCapped = ft.capped;
+      queryRevision = ft.revision;
       if (ft.ids.length === 0) {
         where.push('1 = 0');
       } else {
@@ -629,6 +636,7 @@ class PublicationsService {
         pagination_total_exact: totalIsExact,
         ...(pageDegraded ? { page_degraded: true, note: 'This sort exceeded the statement budget; try a narrower filter or a different sort.' } : {}),
         ...(ftCapped ? { fulltext_truncated: true, fulltext_work_cap: parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10) } : {}),
+        ...(queryRevision ? { query_revision: queryRevision } : {}),
         ...(useFilesFastPath ? { has_files_source: 'files_index' } : {}),
         elapsed_ms: Date.now() - t0
       }

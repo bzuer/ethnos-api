@@ -125,7 +125,12 @@ const validatePublicationsQuery = [
     .optional({ values: 'falsy' })
     .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
     .isIn(['ASC', 'DESC'])
-    .withMessage('sort_order must be ASC or DESC')
+    .withMessage('sort_order must be ASC or DESC'),
+
+  query('autocorrect')
+    .optional({ values: 'falsy' })
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('autocorrect must be boolean-like (1/0/true/false)')
 ];
 
 /**
@@ -148,6 +153,10 @@ const validatePublicationsQuery = [
  *         then `"Manticore"`. When the cap is hit the response sets
  *         `meta.fulltext_truncated=true`, `meta.fulltext_work_cap=5000` and
  *         `pagination_total_exact=false` (the total only counts those works' publications).
+ *         When these terms match no work, misspelled terms are corrected (and, failing
+ *         that, the conflicting `q` term dropped) and the revised query is described in
+ *         `meta.query_revision`; `autocorrect=false` keeps the literal query and only
+ *         suggests the revision. There is no first-page suggestion on this endpoint.
  *       - `venue` (alias `venue_name`) is a word match (boolean mode, every word
  *         required) against venue name and abbreviation via MariaDB `ft_venues_search`.
  *       - All other filters (`type`, `language`, `year_from`/`year_to`, `open_access`,
@@ -324,6 +333,7 @@ const validatePublicationsQuery = [
  *           enum: [ASC, DESC]
  *           default: DESC
  *         description: Sort direction for `sort_by` (case-insensitive; alias `sortOrder`). Defaults to DESC.
+ *       - $ref: '#/components/parameters/autocorrectParam'
  *     responses:
  *       200:
  *         description: >-
@@ -366,6 +376,8 @@ const validatePublicationsQuery = [
  *                         has_files_source:
  *                           type: string
  *                           enum: [files_index]
+ *                         query_revision:
+ *                           $ref: '#/components/schemas/QueryRevision'
  *                         pagination_extras:
  *                           type: object
  *                           properties:

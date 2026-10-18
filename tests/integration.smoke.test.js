@@ -736,5 +736,56 @@ describe('Integration smoke (real DB)', () => {
     });
   });
 
+  describe('Query revision (2026-10-18)', () => {
+    const TYPO = encodeURIComponent('lkuiz fernando dias duarte');
+
+    test('a misspelled term is corrected on every full-text surface', async () => {
+      const works = assertSuccess(await fetchJson(`/works?q=${TYPO}&limit=5`), 'works with a typo');
+      assert.ok(works.pagination.total > 0, 'the corrected query has results');
+      assert.equal(works.meta.query_revision.status, 'corrected');
+      assert.equal(works.meta.query_revision.applied, true);
+      assert.deepEqual(works.meta.query_revision.revised, { q: 'luiz fernando dias duarte' });
+      assert.deepEqual(works.meta.query_revision.corrections, [{ parameter: 'q', term: 'lkuiz', replacement: 'luiz', edit_distance: 1 }]);
+      assert.equal(works.meta.query_revision.original_total, 0);
+
+      const global = assertSuccess(await fetchJson(`/search/global?q=${TYPO}&limit=3`), 'global search with a typo');
+      assert.ok(global.data.works.total > 0 && global.data.persons.total > 0);
+      assert.equal(global.data.works.query_revision.applied, true);
+      assert.equal(global.data.persons.query_revision.applied, true);
+
+      const publications = assertSuccess(await fetchJson(`/publications?q=${TYPO}&limit=3`), 'publications with a typo');
+      assert.ok(publications.pagination.total > 0);
+      assert.equal(publications.meta.query_revision.status, 'corrected');
+    });
+
+    test('autocorrect=false serves the literal query with a suggestion', async () => {
+      const literal = assertSuccess(await fetchJson(`/works?q=${TYPO}&limit=5&autocorrect=false`), 'works literal');
+      assert.equal(literal.pagination.total, 0);
+      assert.equal(literal.meta.query_revision.status, 'suggested');
+      assert.equal(literal.meta.query_revision.applied, false);
+      assert.ok(literal.meta.query_revision.revised_total > 0);
+      assert.equal((await fetchJson('/works?q=ritual&autocorrect=maybe')).status, 400, 'autocorrect is boolean-like');
+    });
+
+    test('a correctly spelled query is never revised', async () => {
+      const body = assertSuccess(await fetchJson(`/works?q=${encodeURIComponent('luiz fernando dias duarte')}&limit=5`), 'works spelled correctly');
+      assert.ok(body.pagination.total > 0);
+      assert.equal(body.meta.query_revision, undefined);
+    });
+
+    test('a word that matches nothing together with the others is dropped and reported', async () => {
+      const body = assertSuccess(await fetchJson(`/works?q=${encodeURIComponent('durkheim suicide nervosa')}&limit=5`), 'works relaxed');
+      assert.ok(body.pagination.total > 0);
+      assert.equal(body.meta.query_revision.status, 'relaxed');
+      assert.ok(body.meta.query_revision.dropped_terms.length === 1);
+    });
+
+    test('autocomplete falls back to the corrected words', async () => {
+      const body = assertSuccess(await fetchJson(`/search/autocomplete?q=${encodeURIComponent('lkuiz fernando d')}&limit=8`), 'autocomplete with a typo');
+      assert.ok(body.data.count > 0);
+      assert.deepEqual(body.data.query_revision.revised, { q: 'luiz fernando d' });
+    });
+  });
+
   after(() => {});
 });

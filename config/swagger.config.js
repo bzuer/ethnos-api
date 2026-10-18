@@ -1714,6 +1714,18 @@ const options = {
           },
           example: 2
         },
+        autocorrectParam: {
+          name: 'autocorrect',
+          in: 'query',
+          description: 'Full-text query revision (default on). When the literal query matches nothing, misspelled terms are corrected and, failing that, the conflicting q term is dropped; the response then serves the revised query and describes it in query_revision. false serves the literal query and only suggests the revision (query_revision.applied = false). Boolean-like (1/0/true/false); 400 otherwise.',
+          required: false,
+          schema: {
+            type: 'string',
+            enum: ['1', '0', 'true', 'false'],
+            default: 'true'
+          },
+          example: 'false'
+        },
       },
       responses: {
         Success: {

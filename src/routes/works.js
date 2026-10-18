@@ -100,7 +100,12 @@ const validateWorksQuery = [
     .optional({ values: 'falsy' })
     .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
     .isIn(['ASC', 'DESC'])
-    .withMessage('sort_order must be ASC or DESC')
+    .withMessage('sort_order must be ASC or DESC'),
+
+  query('autocorrect')
+    .optional({ values: 'falsy' })
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('autocorrect must be boolean-like (1/0/true/false)')
 ];
 
 
@@ -130,6 +135,15 @@ const validateWorksQuery = [
  *       `venue_id`, which cannot be combined with full-text terms (400).
  *       `meta.performance.engine` and the per-row `search_engine` report the
  *       engine that served the page.
+ *
+ *       Full-text revision: when a full-text query matches nothing, misspelled
+ *       terms are corrected against the Manticore dictionary (one edit, or two
+ *       for long words absent from the dictionary) and, failing that, the `q`
+ *       term that conflicts with the others is dropped; the response then
+ *       serves the revised query and describes it in `meta.query_revision`
+ *       (`autocorrect=false` serves the literal query and only suggests the
+ *       revision). A first page whose rare term is one edit from a far more
+ *       frequent word carries a non-applied suggestion instead.
  *
  *       Totals: exact (`meta.pagination_total_exact: true`) on the full-text
  *       path and when the filtered count finishes inside its 2 s budget;
@@ -288,6 +302,7 @@ const validateWorksQuery = [
  *           enum: [ASC, DESC]
  *           default: DESC
  *         description: Sort direction for `sort_by` (`sortOrder` is an accepted alias). Defaults to DESC.
+ *       - $ref: '#/components/parameters/autocorrectParam'
  *     responses:
  *       200:
  *         description: Paginated list of works.
@@ -318,6 +333,8 @@ const validateWorksQuery = [
  *                         note:
  *                           type: string
  *                           description: Explanation accompanying `page_degraded`.
+ *                         query_revision:
+ *                           $ref: '#/components/schemas/QueryRevision'
  *                         performance:
  *                           $ref: '#/components/schemas/PerformanceMeta'
  *       400:

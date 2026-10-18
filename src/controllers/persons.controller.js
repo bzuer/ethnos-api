@@ -61,7 +61,8 @@ class PersonsController {
         offset: req.query.offset,
         search,
         signature: req.query.signature,
-        verified: req.query.verified || undefined
+        verified: req.query.verified || undefined,
+        autocorrect: req.query.autocorrect
       };
 
       const result = await personsService.getPersons(filters);

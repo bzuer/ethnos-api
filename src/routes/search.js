@@ -78,7 +78,11 @@ const validateWorksSearch = [
     .optional({ values: 'falsy' })
     .customSanitizer(value => (typeof value === 'string' ? value.toUpperCase() : value))
     .isIn(['ASC', 'DESC'])
-    .withMessage('sort_order must be ASC or DESC')
+    .withMessage('sort_order must be ASC or DESC'),
+  query('autocorrect')
+    .optional({ values: 'falsy' })
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('autocorrect must be boolean-like (1/0/true/false)')
 ];
 
 /**
@@ -99,6 +103,12 @@ const validateWorksSearch = [
  *       contributors only. Pages beyond the first 100,000 full-text matches return 400.
  *       Each row shows the latest publication matching the filters. Requests with `q`
  *       are recorded for /search/popular.
+ *       When a text query matches nothing, misspelled terms are corrected against the
+ *       Manticore dictionary and, failing that, the `q` term that conflicts with the others is
+ *       dropped; the revised query is served and described in `meta.query_revision`
+ *       (`autocorrect=false` keeps the literal query and only suggests the revision). A first
+ *       page whose rare term is one edit from a far more frequent word carries a non-applied
+ *       suggestion.
  *     parameters:
  *       - name: q
  *         in: query
@@ -201,6 +211,7 @@ const validateWorksSearch = [
  *           type: string
  *           enum: [ASC, DESC]
  *           default: DESC
+ *       - $ref: '#/components/parameters/autocorrectParam'
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -238,6 +249,8 @@ const validateWorksSearch = [
  *                         pagination_total_exact:
  *                           type: boolean
  *                           description: False when the browse-path count fell back to the corpus estimate.
+ *                         query_revision:
+ *                           $ref: '#/components/schemas/QueryRevision'
  *                         performance:
  *                           type: object
  *       400:
@@ -259,6 +272,9 @@ router.get('/works', validateWorksSearch, searchController.searchWorks);
  *       Works and persons searched in one round trip (Manticore), each block with its own
  *       exact total and a `results[]` slice capped at `limit`. Institutions are not part of
  *       the global search (use /institutions?q=). The query is recorded for /search/popular.
+ *       Each block is revised independently (misspelling correction, then dropping the
+ *       conflicting term) when the literal query matches nothing in it, and then carries its own
+ *       `query_revision`; `autocorrect=false` turns both revisions into suggestions.
  *     parameters:
  *       - name: q
  *         in: query
@@ -277,6 +293,7 @@ router.get('/works', validateWorksSearch, searchController.searchWorks);
  *           minimum: 1
  *           maximum: 20
  *           default: 5
+ *       - $ref: '#/components/parameters/autocorrectParam'
  *     responses:
  *       200:
  *         description: >-
@@ -305,7 +322,11 @@ router.get('/global', [
   query('limit')
     .optional({ values: 'falsy' })
     .isInt({ min: 1, max: 20 })
-    .withMessage('limit must be between 1 and 20')
+    .withMessage('limit must be between 1 and 20'),
+  query('autocorrect')
+    .optional({ values: 'falsy' })
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('autocorrect must be boolean-like (1/0/true/false)')
 ], searchController.globalSearch);
 
 
@@ -319,7 +340,10 @@ router.get('/global', [
  *       preferred_name, given_names and family_name (unstemmed, every term required,
  *       query text literal). Each row is a compact PersonSearchItem, not the full person
  *       profile; `relevance` is always null. Totals are exact; pages beyond the first
- *       100,000 matches return 400.
+ *       100,000 matches return 400. A name that matches nothing is revised (a misspelled
+ *       name part corrected, preferring the better-known match; failing that, the part that
+ *       conflicts with the rest dropped) and described in `meta.query_revision`;
+ *       `autocorrect=false` keeps the literal query and only suggests the revision.
  *     tags: [Search]
  *     parameters:
  *       - name: q
@@ -338,6 +362,7 @@ router.get('/global', [
  *         schema:
  *           type: string
  *           enum: ["1", "0", "true", "false"]
+ *       - $ref: '#/components/parameters/autocorrectParam'
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -359,6 +384,9 @@ router.get('/global', [
  *                       $ref: '#/components/schemas/PaginationMeta'
  *                     meta:
  *                       type: object
+ *                       properties:
+ *                         query_revision:
+ *                           $ref: '#/components/schemas/QueryRevision'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -372,7 +400,11 @@ router.get('/persons', [
   query('verified')
     .optional({ values: 'falsy' })
     .isIn(['true', 'false', '1', '0'])
-    .withMessage('verified must be boolean-like (1/0/true/false)')
+    .withMessage('verified must be boolean-like (1/0/true/false)'),
+  query('autocorrect')
+    .optional({ values: 'falsy' })
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('autocorrect must be boolean-like (1/0/true/false)')
 ], searchController.searchPersons);
 
 
@@ -387,7 +419,8 @@ router.get('/persons', [
  *       under `data.results` (without the `relevance` key) next to a `data.facets` object.
  *       Faceting is not implemented: `data.facets` is always `{}`. `work_type` is an alias
  *       of `type` and takes precedence when both are set. Requests are not recorded for
- *       /search/popular.
+ *       /search/popular. Query revision (`meta.query_revision`, `autocorrect`) behaves as on
+ *       /search/works.
  *     parameters:
  *       - name: q
  *         in: query
@@ -491,6 +524,7 @@ router.get('/persons', [
  *           type: string
  *           enum: [ASC, DESC]
  *           default: DESC
+ *       - $ref: '#/components/parameters/autocorrectParam'
  *       - $ref: '#/components/parameters/pageParam'
  *       - $ref: '#/components/parameters/limitParam'
  *       - $ref: '#/components/parameters/offsetParam'
@@ -533,6 +567,8 @@ router.get('/persons', [
  *                           enum: [Manticore, MariaDB]
  *                         pagination_total_exact:
  *                           type: boolean
+ *                         query_revision:
+ *                           $ref: '#/components/schemas/QueryRevision'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -605,7 +641,8 @@ const advancedSearch = async (req, res, next) => {
       cited_by_min: filters.citation_count_min,
       cited_by_max: filters.citation_count_max,
       sort_by: sortBy,
-      sort_order: sortOrder
+      sort_order: sortOrder,
+      autocorrect: req.query.autocorrect
     };
     const result = await worksService.getWorks(worksFilters);
     const controllerTime = Date.now() - start;
@@ -622,6 +659,7 @@ const advancedSearch = async (req, res, next) => {
         filters_applied: Object.keys(filters).length,
         engine: result.meta?.performance?.engine || (query ? 'Manticore' : 'MariaDB'),
         pagination_total_exact: result.meta?.pagination_total_exact ?? true,
+        ...(result.meta?.query_revision ? { query_revision: result.meta.query_revision } : {}),
         performance: {
           controller_time_ms: controllerTime
         }
@@ -731,7 +769,11 @@ const autocompleteService = require('../services/autocomplete.service');
  *       the endpoint still returns HTTP 200 but with the reduced shape
  *       `data: { suggestions: [], message: "Query too short" }` (no
  *       `query`/`type`/`count`/`generated_at`, and `meta.engine` absent). Requests are
- *       not recorded for /search/popular.
+ *       not recorded for /search/popular. When the typed text yields no suggestion, its
+ *       completed words (and a last word that no dictionary word starts with, or that matches
+ *       nothing as a prefix next to the other words) are corrected against the Manticore
+ *       dictionary and the suggestions of the corrected text are returned with
+ *       `data.query_revision`.
  *     parameters:
  *       - name: q
  *         in: query

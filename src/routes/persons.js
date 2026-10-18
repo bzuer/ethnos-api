@@ -45,7 +45,12 @@ const validatePersonsQuery = [
   query('verified')
     .optional({ values: 'falsy' })
     .isIn(['true', 'false', '1', '0'])
-    .withMessage('verified must be boolean-like (1/0/true/false)')
+    .withMessage('verified must be boolean-like (1/0/true/false)'),
+
+  query('autocorrect')
+    .optional({ values: 'falsy' })
+    .isIn(['1', '0', 'true', 'false'])
+    .withMessage('autocorrect must be boolean-like (1/0/true/false)')
 ];
 
 /**
@@ -61,7 +66,11 @@ const validatePersonsQuery = [
  *       affiliation or country filter. The plain list selects ids under the statement
  *       budget: a count over budget sets `meta.pagination_total_exact=false`, and a page
  *       over budget returns empty `data` with `meta.page_degraded=true` and a `meta.note`.
- *       The search path pages up to the first 100,000 matches (400 beyond).
+ *       The search path pages up to the first 100,000 matches (400 beyond). A name search
+ *       that matches nothing is revised (a misspelled name part corrected, preferring the
+ *       better-known match; failing that, the part that conflicts with the rest dropped) and
+ *       described in `meta.query_revision`; `autocorrect=false` keeps the literal query and
+ *       only suggests the revision.
  *     tags: [Persons]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -103,6 +112,7 @@ const validatePersonsQuery = [
  *           enum: ['true', 'false', '1', '0']
  *         description: Filter by verification status (`is_verified`) on every path.
  *         example: 'true'
+ *       - $ref: '#/components/parameters/autocorrectParam'
  *     responses:
  *       200:
  *         description: List of persons retrieved successfully
@@ -128,6 +138,7 @@ const validatePersonsQuery = [
  *                         `pagination_total_exact` (plain list only; false when the
  *                         count exceeded its 2 s budget and `total` is a lower bound),
  *                         `page_degraded` and `note` (plain list page over budget),
+ *                         `query_revision` (search path, see QueryRevision),
  *                         `pagination_extras.offset`.
  *       400:
  *         $ref: '#/components/responses/BadRequest'

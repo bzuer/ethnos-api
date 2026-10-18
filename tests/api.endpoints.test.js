@@ -1214,6 +1214,284 @@ describe('Manticore query options', () => {
   });
 });
 
+describe('Spelling helpers', () => {
+  const spelling = require('../src/utils/spelling');
+
+  test('the distance-1 neighbourhood covers deletion, transposition, substitution and insertion', () => {
+    const variants = spelling.editsOne('abc');
+    for (const expected of ['ac', 'bc', 'bac', 'acb', 'abd', 'xbc', 'abcd', 'xabc']) expect(variants).toContain(expected);
+    expect(variants.includes('abc')).toBe(false);
+    expect(variants.every(variant => /^[a-z]{2,}$/.test(variant))).toBe(true);
+  });
+
+  test('edit distance counts an adjacent transposition as one edit', () => {
+    expect(spelling.editDistance('lkuiz', 'luiz')).toBe(1);
+    expect(spelling.editDistance('bourdeiu', 'bourdieu')).toBe(1);
+    expect(spelling.editDistance('malinowksy', 'malinowski')).toBe(2);
+    expect(spelling.editDistance('castor', 'castro')).toBe(1);
+    expect(spelling.editDistance('same', 'same')).toBe(0);
+  });
+
+  test('only plain words of four or more letters are correctable, accents folded', () => {
+    expect(spelling.correctableForm('Antropología')).toBe('antropologia');
+    expect(spelling.correctableForm('abc')).toBeNull();
+    expect(spelling.correctableForm('3rd')).toBeNull();
+    expect(spelling.correctableForm('москва')).toBeNull();
+    expect(spelling.statForm('1984')).toBe('1984');
+    expect(spelling.statForm('a')).toBeNull();
+  });
+
+  test('wildcard seeds for second edits exist only for long words', () => {
+    expect(spelling.wildcardSeeds('lkuiz')).toEqual([]);
+    const seeds = spelling.wildcardSeeds('malinowksy');
+    expect(seeds).toContain('mali');
+    expect(seeds.every(seed => seed.length === 4)).toBe(true);
+  });
+
+  test('an unknown term takes up to two edits, a dictionary word only one', () => {
+    const docs = new Map([['malinowski', 1280], ['malinowsky', 8], ['malinowska', 102]]);
+    const unknown = spelling.rankCandidates('malinowksy', docs, 0);
+    expect(unknown[0].word).toBe('malinowski');
+    expect(unknown[0].distance).toBe(2);
+    const known = spelling.rankCandidates('malinowsky', new Map([['malinowski', 1280], ['malinowska', 102]]), 8);
+    expect(known.map(candidate => candidate.word)).toEqual(['malinowski']);
+  });
+
+  test('a dictionary word is corrected only towards a far more frequent word unless context candidates are asked for', () => {
+    const docs = new Map([['luis', 39654], ['luiza', 4232], ['lui', 2]]);
+    expect(spelling.rankCandidates('luiz', docs, 15122)).toEqual([]);
+    const contextual = spelling.rankCandidates('luiz', docs, 15122, { contextLimit: 2 });
+    expect(contextual.map(candidate => candidate.word)).toEqual(['luis', 'luiza']);
+    expect(spelling.rankCandidates('xqzt', new Map([['qzt', 1], ['xqzta', 2]]), 0)).toEqual([]);
+  });
+
+  test('rewrites with fewer changed terms come first', () => {
+    const slot = (term, words) => ({ options: words.map((word, i) => ({ term, word, distance: word === term ? 0 : 1, score: 10 - i })) });
+    const rewrites = spelling.enumerateRewrites([slot('aa', ['aa', 'ab']), slot('cc', ['cc', 'cd'])], 10);
+    expect(rewrites.map(rewrite => rewrite.changes)).toEqual([1, 1, 2]);
+  });
+
+  test('autocorrect is on unless explicitly disabled', () => {
+    for (const value of [undefined, null, '', 'true', '1', true]) expect(spelling.isAutocorrectEnabled(value)).toBe(true);
+    for (const value of ['false', 'FALSE', '0', false]) expect(spelling.isAutocorrectEnabled(value)).toBe(false);
+  });
+});
+
+describe('Search query revision', () => {
+  const manticore = require('../src/config/manticore');
+  const searchEngine = require('../src/services/searchEngine.service');
+
+  const WORKS = {
+    1: { text: 'luiz fernando dias duarte da vida nervosa', weight: 30, language: 'pt' },
+    2: { text: 'luiz fernando dias duarte familia', weight: 10, language: 'pt' },
+    3: { text: 'durkheim suicide', weight: 100, language: 'en' },
+    4: { text: 'durkheim suicide sociology', weight: 50, language: 'en' },
+    5: { text: 'nervosa anorexia', weight: 5, language: 'en' },
+    6: { text: 'luis garcia', weight: 1, language: 'es' },
+    7: { text: 'antropolgia urbana', weight: 0, language: 'pt' },
+    8: { text: 'luiz silva', weight: 2, language: 'pt' },
+    9: { text: 'luiz costa', weight: 2, language: 'pt' },
+    ...Object.fromEntries(Array.from({ length: 60 }, (_, i) => [100 + i, { text: 'antropologia urbana', weight: 0, language: 'pt' }]))
+  };
+  const PERSONS = {
+    1: { text: 'marcel mauss', weight: 100 },
+    2: { text: 'marcel mais', weight: 1 },
+    3: { text: 'jean maus', weight: 1 },
+    4: { text: 'luiz fernando dias duarte', weight: 29 }
+  };
+
+  const fakeManticore = ({ failKeywords = false } = {}) => {
+    const corpora = { works: WORKS, persons: PERSONS };
+    const statements = [];
+    const words = doc => doc.text.split(' ');
+    const docsFor = (table, word) => Object.values(corpora[table]).filter(doc => words(doc).includes(word)).length;
+    const vocabulary = table => [...new Set(Object.values(corpora[table]).flatMap(words))];
+    const keywordRows = (text, table) => text.split(' ').flatMap((token, i) => {
+      const exactPrefix = table === 'works' ? '=' : '';
+      if (token.endsWith('*')) {
+        const expansions = vocabulary(table).filter(word => word.startsWith(token.slice(0, -1)));
+        if (expansions.length === 0) return [{ qpos: i + 1, tokenized: token, normalized: token, docs: 0, hits: 0 }];
+        return expansions.map(word => ({ qpos: i + 1, tokenized: token, normalized: `${exactPrefix}${word}`, docs: docsFor(table, word), hits: 0 }));
+      }
+      return [{ qpos: i + 1, tokenized: token, normalized: token, docs: docsFor(table, token.replace(/^=/, '')), hits: 0 }];
+    });
+    const matching = sql => {
+      const table = /\bFROM persons\b/.test(sql) ? 'persons' : 'works';
+      const expr = (sql.match(/MATCH\('([^']*)'\)/) || [])[1] || '';
+      const terms = [...new Set(expr.replace(/@\([^)]*\)|@\w+/g, ' ').replace(/[()|]/g, ' ').split(/\s+/).filter(Boolean))];
+      const language = (sql.match(/language = '(\w+)'/) || [])[1];
+      return Object.entries(corpora[table]).filter(([, doc]) => (!language || doc.language === language)
+        && terms.every(term => (term.endsWith('*')
+          ? words(doc).some(word => word.startsWith(term.slice(0, -1)))
+          : words(doc).includes(term))));
+    };
+    const run = (sql, params = []) => {
+      statements.push(sql);
+      if (sql.startsWith('CALL KEYWORDS')) {
+        if (failKeywords) throw new Error('keywords unavailable');
+        return keywordRows(params[0], params[1]);
+      }
+      const rows = matching(sql);
+      if (sql.includes('COUNT(*)')) return [{ total: rows.length, weight: rows.reduce((sum, [, doc]) => sum + doc.weight, 0) }];
+      return rows.map(([id]) => ({ id: Number(id), w: 1 }));
+    };
+    stubMethod(manticore, 'query', async (sql, params) => run(sql, params));
+    stubMethod(manticore, 'queryWithMeta', async (sql, params) => ({ rows: run(sql, params), meta: [] }));
+    return statements;
+  };
+
+  const ranked = statements => statements.filter(sql => sql.includes('ranker=expr'));
+
+  test('a misspelled term with no dictionary entry is corrected and the corrected query is served', async () => {
+    const statements = fakeManticore();
+    const result = await searchEngine.searchWorkIds({ q: 'Lkuiz Fernando Dias Duarte' }, 10, 0);
+    expect(result.ids.sort()).toEqual([1, 2]);
+    expect(result.total).toBe(2);
+    expect(result.revision).toEqual({
+      status: 'corrected',
+      applied: true,
+      original: { q: 'lkuiz fernando dias duarte' },
+      revised: { q: 'luiz fernando dias duarte' },
+      corrections: [{ parameter: 'q', term: 'lkuiz', replacement: 'luiz', edit_distance: 1 }],
+      dropped_terms: [],
+      original_total: 0,
+      revised_total: 2,
+      revised_total_exact: true
+    });
+    for (const sql of ranked(statements)) {
+      const expr = sql.match(/MATCH\('([^']*)'\)/)[1];
+      expect(/[*=]/.test(expr)).toBe(false);
+    }
+  });
+
+  test('autocorrect=false keeps the empty result and only suggests the correction', async () => {
+    fakeManticore();
+    const result = await searchEngine.searchWorkIds({ q: 'lkuiz fernando dias duarte', autocorrect: 'false' }, 10, 0);
+    expect(result.ids).toEqual([]);
+    expect(result.total).toBe(0);
+    expect(result.revision.status).toBe('suggested');
+    expect(result.revision.applied).toBe(false);
+    expect(result.revision.revised).toEqual({ q: 'luiz fernando dias duarte' });
+    expect(result.revision.revised_total).toBe(2);
+  });
+
+  test('a valid word that matches nothing together with the rest is dropped', async () => {
+    fakeManticore();
+    const result = await searchEngine.searchWorkIds({ q: 'durkheim suicide nervosa' }, 10, 0);
+    expect(result.ids.sort()).toEqual([3, 4]);
+    expect(result.revision.status).toBe('relaxed');
+    expect(result.revision.revised).toEqual({ q: 'durkheim suicide' });
+    expect(result.revision.dropped_terms).toEqual([{ parameter: 'q', term: 'nervosa' }]);
+    expect(result.revision.corrections).toEqual([]);
+  });
+
+  test('explicit field filters are corrected but never dropped', async () => {
+    fakeManticore();
+    const result = await searchEngine.searchWorkIds({ author: 'xqzw duarte' }, 10, 0);
+    expect(result.total).toBe(0);
+    expect(result.revision).toBeNull();
+  });
+
+  test('no revision when the zero is explained by attribute filters', async () => {
+    const statements = fakeManticore();
+    const result = await searchEngine.searchWorkIds({ q: 'luiz duarte', language: 'en' }, 10, 0);
+    expect(result.total).toBe(0);
+    expect(result.revision).toBeNull();
+    expect(statements.some(sql => sql.startsWith('CALL KEYWORDS') && sql.includes('fold_wildcards'))).toBe(false);
+  });
+
+  test('a rare misspelling with a few hits gets a suggestion on the first page only', async () => {
+    fakeManticore();
+    const first = await searchEngine.searchWorkIds({ q: 'antropolgia urbana' }, 10, 0);
+    expect(first.ids).toEqual([7]);
+    expect(first.revision).toMatchObject({
+      status: 'suggested',
+      applied: false,
+      revised: { q: 'antropologia urbana' },
+      original_total: 1,
+      revised_total: 60
+    });
+    restoreStubs();
+    const statements = fakeManticore();
+    const second = await searchEngine.searchWorkIds({ q: 'antropolgia urbana' }, 10, 10);
+    expect(second.revision).toBeNull();
+    expect(statements.some(sql => sql.startsWith('CALL KEYWORDS'))).toBe(false);
+  });
+
+  test('correct queries with results and no closer frequent word run no revision counts', async () => {
+    const statements = fakeManticore();
+    const result = await searchEngine.searchWorkIds({ q: 'durkheim suicide' }, 10, 0);
+    expect(result.total).toBe(2);
+    expect(result.revision).toBeNull();
+    expect(statements.filter(sql => sql.includes('SUM('))).toHaveLength(0);
+  });
+
+  test('person names are corrected towards the better-known match', async () => {
+    fakeManticore();
+    const result = await searchEngine.searchPersonIds('marcel maus', { limit: 10, offset: 0 });
+    expect(result.ids).toEqual([1]);
+    expect(result.revision.corrections).toEqual([{ parameter: 'q', term: 'maus', replacement: 'mauss', edit_distance: 1 }]);
+  });
+
+  test('a failing dictionary lookup leaves the original result untouched', async () => {
+    fakeManticore({ failKeywords: true });
+    const result = await searchEngine.searchWorkIds({ q: 'lkuiz duarte' }, 10, 0);
+    expect(result.total).toBe(0);
+    expect(result.revision).toBeNull();
+  });
+
+  test('/publications full-text resolution is corrected too', async () => {
+    fakeManticore();
+    const result = await searchEngine.fetchWorkIdsForFilters({ q: 'lkuiz fernando' }, 5000);
+    expect(result.ids.sort()).toEqual([1, 2]);
+    expect(result.revision.revised).toEqual({ q: 'luiz fernando' });
+  });
+
+  test('autocomplete corrects completed words and leaves a valid trailing prefix alone', async () => {
+    fakeManticore();
+    const revised = await searchEngine.revisePrefixQuery('lkuiz fernando d');
+    expect(revised.query).toBe('luiz fernando d');
+    expect(revised.revision.corrections[0]).toEqual({ parameter: 'q', term: 'lkuiz', replacement: 'luiz', edit_distance: 1 });
+    expect(await searchEngine.revisePrefixQuery('luiz fernando dias duar')).toBeNull();
+  });
+});
+
+describe('Query revision plumbing', () => {
+  test('GET /works rejects a non-boolean autocorrect', async () => {
+    const req = createMockReq({ method: 'GET', path: '/works', query: { q: 'ritual', autocorrect: 'maybe' } });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: worksRouter, method: 'get', path: '/', req, res });
+    expect(res.statusCode).toBe(400);
+    expect(res.body.errors[0].path).toBe('autocorrect');
+  });
+
+  test('GET /works passes autocorrect through and returns query_revision in meta', async () => {
+    let captured = null;
+    const revision = { status: 'corrected', applied: true, original: { q: 'lkuiz' }, revised: { q: 'luiz' } };
+    stubMethod(worksService, 'getWorks', async (filters) => {
+      captured = filters;
+      return { data: [], pagination: pageMeta(1, 10, 0), meta: { match_mode: 'any_publication', query_revision: revision } };
+    });
+    const req = createMockReq({ method: 'GET', path: '/works', query: { q: 'lkuiz', autocorrect: 'false' } });
+    const res = withResponseFormatter(req, createMockRes());
+    await invokeRouter({ router: worksRouter, method: 'get', path: '/', req, res });
+    expect(res.statusCode).toBe(200);
+    expect(captured.autocorrect).toBe('false');
+    expect(res.body.meta.query_revision).toEqual(revision);
+  });
+
+  test('works search and global search forward query_revision from the works and persons services', async () => {
+    const revision = { status: 'corrected', applied: true, original: { q: 'plumbing lkuiz' }, revised: { q: 'plumbing luiz' } };
+    stubResolved(worksService, 'getWorks', { data: [], pagination: pageMeta(1, 5, 0), meta: { query_revision: revision } });
+    stubResolved(personsService, 'searchPersons', { data: [], pagination: pageMeta(1, 5, 0), meta: { query_revision: revision } });
+    const works = await searchService.searchWorks('plumbing lkuiz', { page: 1, limit: 5 });
+    expect(works.meta.query_revision).toEqual(revision);
+    const global = await searchService.globalSearch('plumbing lkuiz global', { limit: 5 });
+    expect(global.data.works.query_revision).toEqual(revision);
+    expect(global.data.persons.query_revision).toEqual(revision);
+  });
+});
+
 describe('Work review relations', () => {
   const { formatWorkDetails, formatReviewRelations } = require('../src/dto/work.dto');
 

@@ -5145,6 +5145,9 @@ module.exports = {
               "$ref": "#/components/schemas/WorkListItem"
             },
             "description": "Up to `limit` work rows."
+          },
+          "query_revision": {
+            "$ref": "#/components/schemas/QueryRevision"
           }
         }
       },
@@ -5161,6 +5164,9 @@ module.exports = {
               "$ref": "#/components/schemas/PersonSearchItem"
             },
             "description": "Up to `limit` person rows."
+          },
+          "query_revision": {
+            "$ref": "#/components/schemas/QueryRevision"
           }
         }
       },
@@ -5259,6 +5265,14 @@ module.exports = {
       "count": {
         "type": "integer",
         "description": "Number of suggestions. Absent on the short-query branch."
+      },
+      "query_revision": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/QueryRevision"
+          }
+        ],
+        "description": "Present only when the typed text produced no suggestion and its completed words were corrected; the suggestions are those of `revised.q` (always applied, status corrected)."
       },
       "generated_at": {
         "type": "string",
@@ -8972,5 +8986,118 @@ module.exports = {
         "example": "Service is ready to accept requests"
       }
     }
+  },
+  "QueryRevision": {
+    "type": "object",
+    "description": "Present only when the full-text query was revised or a revision is suggested. When the literal query matches nothing, misspelled terms are corrected against the Manticore dictionary (status corrected); if no correction yields results, the one free-text (q) term that conflicts with the rest is dropped (status relaxed). When the literal query has results but a rare term sits one edit away from a far more frequent word, the revision is only suggested on the first page (status suggested, applied false). autocorrect=false turns every revision into a suggestion.",
+    "properties": {
+      "status": {
+        "type": "string",
+        "enum": [
+          "corrected",
+          "relaxed",
+          "suggested"
+        ],
+        "description": "corrected: the response is the corrected query; relaxed: one or more terms were also dropped; suggested: the response is the literal query and `revised` is only a proposal."
+      },
+      "applied": {
+        "type": "boolean",
+        "description": "True when data and pagination reflect `revised`; false when they reflect the literal query."
+      },
+      "original": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Normalised literal terms per parameter (lower-cased, punctuation removed), e.g. { \"q\": \"lkuiz fernando dias duarte\" }.",
+        "example": {
+          "q": "lkuiz fernando dias duarte"
+        }
+      },
+      "revised": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "The revised terms per parameter, ready to be sent back as the same parameters.",
+        "example": {
+          "q": "luiz fernando dias duarte"
+        }
+      },
+      "corrections": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "string",
+              "enum": [
+                "q",
+                "author",
+                "subject",
+                "venue_name"
+              ]
+            },
+            "term": {
+              "type": "string",
+              "example": "lkuiz"
+            },
+            "replacement": {
+              "type": "string",
+              "example": "luiz"
+            },
+            "edit_distance": {
+              "type": "integer",
+              "enum": [
+                1,
+                2
+              ],
+              "description": "Damerau (adjacent transposition = 1) edits between term and replacement."
+            }
+          }
+        }
+      },
+      "dropped_terms": {
+        "type": "array",
+        "description": "Terms removed from `q` (never from author/subject/venue_name).",
+        "items": {
+          "type": "object",
+          "properties": {
+            "parameter": {
+              "type": "string",
+              "enum": [
+                "q"
+              ]
+            },
+            "term": {
+              "type": "string",
+              "example": "nervosa"
+            }
+          }
+        }
+      },
+      "original_total": {
+        "type": "integer",
+        "description": "Matches of the literal query (0 unless status is suggested)."
+      },
+      "revised_total": {
+        "type": "integer",
+        "description": "Matches of the revised query (equals pagination.total when applied). On /publications it counts matching works (capped at the full-text work cap), not publications."
+      },
+      "revised_total_exact": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "status",
+      "applied",
+      "original",
+      "revised",
+      "corrections",
+      "dropped_terms",
+      "original_total",
+      "revised_total",
+      "revised_total_exact"
+    ]
   }
 };

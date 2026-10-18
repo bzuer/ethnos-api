@@ -15,6 +15,7 @@ const toVerifiedFlag = (value) => {
 };
 const { hydrateAuthorNamesForWorks } = require('../utils/hydration');
 const searchEngine = require('./searchEngine.service');
+const { isAutocorrectEnabled } = require('../utils/spelling');
 
 class PersonsService {
   async getPersonById(id) {
@@ -232,7 +233,7 @@ class PersonsService {
       const replacements = { limit: parseInt(limit), offset: parseInt(offset) };
 
       if (search) {
-        return await this.searchPersons(search, { limit, offset, verified });
+        return await this.searchPersons(search, { limit, offset, verified, autocorrect: filters.autocorrect });
       }
 
       const verifiedFlag = toVerifiedFlag(verified);
@@ -666,15 +667,16 @@ class PersonsService {
     const pagination = normalizePagination(options);
     const { page, limit, offset } = pagination;
     const { verified } = options;
+    const autocorrect = isAutocorrectEnabled(options.autocorrect);
     const trimmed = (searchTerm || '').trim();
-    const cacheKey = `persons:search:v3:${trimmed}:${limit}:${offset}:${verified ?? 'all'}`;
+    const cacheKey = `persons:search:v4:${autocorrect ? 1 : 0}:${trimmed}:${limit}:${offset}:${verified ?? 'all'}`;
 
     try {
       const cached = await cacheService.get(cacheKey);
       if (cached) return cached;
     } catch (_) {}
 
-    const mres = await searchEngine.searchPersonIds(trimmed, { verified, limit, offset });
+    const mres = await searchEngine.searchPersonIds(trimmed, { verified, limit, offset, autocorrect });
     let people = [];
     if (mres.ids.length) {
       const rows = await sequelize.query(
@@ -695,7 +697,10 @@ class PersonsService {
     const result = {
       data: formattedResults,
       pagination: createPagination(page, limit, mres.total),
-      meta: { pagination_total_exact: mres.exact },
+      meta: {
+        pagination_total_exact: mres.exact,
+        ...(mres.revision ? { query_revision: mres.revision } : {})
+      },
       performance: { engine: 'Manticore', query_type: 'search' }
     };
     if (mres.exact) {

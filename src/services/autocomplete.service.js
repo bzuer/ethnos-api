@@ -8,7 +8,7 @@ const searchEngine = require('./searchEngine.service');
 
 class AutocompleteService {
     constructor() {
-        this.cachePrefix = 'autocomplete:v2:';
+        this.cachePrefix = 'autocomplete:v3:';
         this.cacheTTL = 3600;
         this.minQueryLength = 2;
         this.maxSuggestions = 10;
@@ -36,7 +36,7 @@ class AutocompleteService {
             return { suggestions: [], type: 'none' };
         }
 
-        const cacheKey = `${this.cachePrefix}${type}:${query.toLowerCase()}`;
+        const cacheKey = `${this.cachePrefix}${type}:${limit}:${query.toLowerCase()}`;
 
         if (redis.connected) {
             try {
@@ -49,21 +49,18 @@ class AutocompleteService {
             }
         }
 
-        let suggestions = [];
-
         try {
-            switch (type) {
-                case 'titles':
-                    suggestions = await this.getTitleSuggestions(query, limit);
-                    break;
-                case 'authors':
-                    suggestions = await this.getAuthorSuggestions(query, limit);
-                    break;
-                case 'venues':
-                    suggestions = await this.getVenueSuggestions(query, limit);
-                    break;
-                default:
-                    suggestions = await this.getAllSuggestions(query, limit);
+            let suggestions = await this._suggestionsFor(query, type, limit);
+            let revision = null;
+            if (suggestions.length === 0) {
+                const revised = await this._reviseQuery(query);
+                if (revised) {
+                    const corrected = await this._suggestionsFor(revised.query, type, limit);
+                    if (corrected.length > 0) {
+                        suggestions = corrected;
+                        revision = revised.revision;
+                    }
+                }
             }
 
             const result = {
@@ -71,6 +68,7 @@ class AutocompleteService {
                 suggestions,
                 type,
                 count: suggestions.length,
+                ...(revision ? { query_revision: revision } : {}),
                 generated_at: new Date().toISOString()
             };
 
@@ -93,6 +91,30 @@ class AutocompleteService {
                 count: 0,
                 generated_at: new Date().toISOString()
             };
+        }
+    }
+
+
+    async _suggestionsFor(query, type, limit) {
+        switch (type) {
+            case 'titles':
+                return this.getTitleSuggestions(query, limit);
+            case 'authors':
+                return this.getAuthorSuggestions(query, limit);
+            case 'venues':
+                return this.getVenueSuggestions(query, limit);
+            default:
+                return this.getAllSuggestions(query, limit);
+        }
+    }
+
+
+    async _reviseQuery(query) {
+        try {
+            return await searchEngine.revisePrefixQuery(query);
+        } catch (error) {
+            logger.warn('Autocomplete query revision failed; returning no suggestions', { error: error.message });
+            return null;
         }
     }
 

@@ -18,6 +18,7 @@ const { ERROR_CODES } = require('../utils/responseBuilder');
 const { hydrateAuthorsForWorks, hydrateAuthorCountsByWork } = require('../utils/hydration');
 const { fetchReviewRelations } = require('../utils/reviewRelations');
 const searchEngine = require('./searchEngine.service');
+const { isAutocorrectEnabled } = require('../utils/spelling');
 
 const WORK_LEVEL_FILE_CAP = 50;
 const FILE_ROLE_PRIORITY = { MAIN: 0, SUPPLEMENT: 1, COVER: 2, PREVIEW: 3 };
@@ -115,14 +116,15 @@ const normalizeWorksListFilters = (filters = {}) => {
     cited_by_min: toNonNegativeInt(filters.cited_by_min ?? filters.citation_count_min),
     cited_by_max: toNonNegativeInt(filters.cited_by_max ?? filters.citation_count_max),
     sort_by: text(filters.sort_by ?? filters.sortBy),
-    sort_order: text(filters.sort_order ?? filters.sortOrder) ? text(filters.sort_order ?? filters.sortOrder).toUpperCase() : null
+    sort_order: text(filters.sort_order ?? filters.sortOrder) ? text(filters.sort_order ?? filters.sortOrder).toUpperCase() : null,
+    autocorrect: isAutocorrectEnabled(filters.autocorrect)
   };
 };
 
 const worksListCacheKey = (prefix, page, limit, f) => [
   prefix, `p${page}`, `l${limit}`,
   ...['search', 'type', 'language', 'year_from', 'year_to', 'open_access', 'peer_reviewed', 'venue_id',
-    'venue_name', 'author', 'subject', 'cited_by_min', 'cited_by_max', 'sort_by', 'sort_order']
+    'venue_name', 'author', 'subject', 'cited_by_min', 'cited_by_max', 'sort_by', 'sort_order', 'autocorrect']
     .map((key) => `${key}=${f[key] ?? ''}`)
 ].join(':');
 
@@ -336,7 +338,7 @@ class WorksService {
       throw new AppError('venue_id cannot be combined with full-text terms (q, author, subject, venue_name); use venue_name instead', 400, ERROR_CODES.VALIDATION);
     }
 
-    const cacheKey = worksListCacheKey('works:list:v8', page, effectiveLimit, f);
+    const cacheKey = worksListCacheKey('works:list:v9', page, effectiveLimit, f);
     const cached = await cacheService.get(cacheKey);
     if (cached) return cached;
 
@@ -521,7 +523,8 @@ class WorksService {
       cited_by_min: f.cited_by_min,
       cited_by_max: f.cited_by_max,
       sort_by: f.sort_by,
-      sort_order: f.sort_order
+      sort_order: f.sort_order,
+      autocorrect: f.autocorrect
     }, limit, offset);
 
     const data = await this._hydrateWorkList(mres.ids, buildPublicationMatch(f, 'p2'), { dataSource: 'search', engine: 'Manticore' });
@@ -533,6 +536,7 @@ class WorksService {
       meta: {
         match_mode: 'any_publication',
         pagination_total_exact: mres.exact,
+        ...(mres.revision ? { query_revision: mres.revision } : {}),
         performance: { engine: 'Manticore', query_type: 'search', primary_query_ms: primaryQueryMs }
       },
       performance: { engine: 'Manticore', query_type: 'search', match_mode: 'any_publication', primary_query_ms: primaryQueryMs }

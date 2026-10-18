@@ -37,7 +37,8 @@ class SearchController {
         cited_by_min: req.query.cited_by_min ?? req.query.citation_count_min,
         cited_by_max: req.query.cited_by_max ?? req.query.citation_count_max,
         sort_by: req.query.sort_by ?? req.query.sortBy,
-        sort_order: req.query.sort_order ?? req.query.sortOrder
+        sort_order: req.query.sort_order ?? req.query.sortOrder,
+        autocorrect: req.query.autocorrect
       };
 
       const startTime = Date.now();
@@ -88,7 +89,8 @@ class SearchController {
         page: req.query.page,
         limit: req.query.limit,
         offset: req.query.offset,
-        verified: req.query.verified
+        verified: req.query.verified,
+        autocorrect: req.query.autocorrect
       };
 
       const startTime = Date.now();
@@ -134,7 +136,8 @@ class SearchController {
 
       const { q: query } = req.query;
       const filters = {
-        limit: req.query.limit || 5
+        limit: req.query.limit || 5,
+        autocorrect: req.query.autocorrect
       };
 
       const startTime = Date.now();
