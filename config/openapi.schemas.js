@@ -5148,6 +5148,9 @@ module.exports = {
           },
           "query_revision": {
             "$ref": "#/components/schemas/QueryRevision"
+          },
+          "query_revision_degraded": {
+            "$ref": "#/components/schemas/QueryRevisionDegraded"
           }
         }
       },
@@ -5167,6 +5170,9 @@ module.exports = {
           },
           "query_revision": {
             "$ref": "#/components/schemas/QueryRevision"
+          },
+          "query_revision_degraded": {
+            "$ref": "#/components/schemas/QueryRevisionDegraded"
           }
         }
       },
@@ -9099,5 +9105,12 @@ module.exports = {
       "revised_total",
       "revised_total_exact"
     ]
+  },
+  "QueryRevisionDegraded": {
+    "type": "boolean",
+    "enum": [
+      true
+    ],
+    "description": "Present (true) only when the full-text query was eligible for revision but the revision could not complete: a Manticore dictionary or count error, a revision count cut short by max_query_time, a failed re-run of the revised query, or a literal zero-result search that used up the revision budget (1 s). The rows and pagination are the literal query's (with query_revision as a non-applied suggestion when one was found), the response is not cached, and a retry may return the corrected result. Absent otherwise."
   }
 };

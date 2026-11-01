@@ -1300,7 +1300,7 @@ describe('Search query revision', () => {
     4: { text: 'luiz fernando dias duarte', weight: 29 }
   };
 
-  const fakeManticore = ({ failKeywords = false } = {}) => {
+  const fakeManticore = ({ failKeywords = false, cutShortCounts = false, failPageAfter = null } = {}) => {
     const corpora = { works: WORKS, persons: PERSONS };
     const statements = [];
     const words = doc => doc.text.split(' ');
@@ -1325,18 +1325,24 @@ describe('Search query revision', () => {
           ? words(doc).some(word => word.startsWith(term.slice(0, -1)))
           : words(doc).includes(term))));
     };
+    let pages = 0;
+    const isCutShort = sql => cutShortCounts && sql.includes('SUM(');
     const run = (sql, params = []) => {
       statements.push(sql);
       if (sql.startsWith('CALL KEYWORDS')) {
         if (failKeywords) throw new Error('keywords unavailable');
         return keywordRows(params[0], params[1]);
       }
+      if (isCutShort(sql)) return [{ total: 0, weight: 0 }];
       const rows = matching(sql);
       if (sql.includes('COUNT(*)')) return [{ total: rows.length, weight: rows.reduce((sum, [, doc]) => sum + doc.weight, 0) }];
+      pages += 1;
+      if (failPageAfter !== null && pages > failPageAfter) throw new Error('page query failed');
       return rows.map(([id]) => ({ id: Number(id), w: 1 }));
     };
+    const cutShortMeta = [{ Variable_name: 'warning', Value: 'query time exceeded max_query_time' }];
     stubMethod(manticore, 'query', async (sql, params) => run(sql, params));
-    stubMethod(manticore, 'queryWithMeta', async (sql, params) => ({ rows: run(sql, params), meta: [] }));
+    stubMethod(manticore, 'queryWithMeta', async (sql, params) => ({ rows: run(sql, params), meta: isCutShort(sql) ? cutShortMeta : [] }));
     return statements;
   };
 
@@ -1433,11 +1439,58 @@ describe('Search query revision', () => {
     expect(result.revision.corrections).toEqual([{ parameter: 'q', term: 'maus', replacement: 'mauss', edit_distance: 1 }]);
   });
 
-  test('a failing dictionary lookup leaves the original result untouched', async () => {
+  test('a failing dictionary lookup leaves the original result untouched and marks the revision degraded', async () => {
     fakeManticore({ failKeywords: true });
     const result = await searchEngine.searchWorkIds({ q: 'lkuiz duarte' }, 10, 0);
     expect(result.total).toBe(0);
     expect(result.revision).toBeNull();
+    expect(result.revisionDegraded).toBe(true);
+  });
+
+  test('a completed revision, or one with nothing to revise, is not degraded', async () => {
+    fakeManticore();
+    expect((await searchEngine.searchWorkIds({ q: 'lkuiz fernando dias duarte' }, 10, 0)).revisionDegraded).toBe(false);
+    expect((await searchEngine.searchWorkIds({ q: 'durkheim suicide' }, 10, 0)).revisionDegraded).toBe(false);
+    expect((await searchEngine.searchWorkIds({ q: 'luiz duarte', language: 'en' }, 10, 0)).revisionDegraded).toBe(false);
+  });
+
+  test('revision counts cut short by max_query_time leave the zero result degraded instead of final', async () => {
+    fakeManticore({ cutShortCounts: true });
+    const result = await searchEngine.searchWorkIds({ q: 'lkuiz fernando dias duarte' }, 10, 0);
+    expect(result.total).toBe(0);
+    expect(result.revision).toBeNull();
+    expect(result.revisionDegraded).toBe(true);
+  });
+
+  test('a failed re-run of the revised query serves the literal result with a suggestion, degraded', async () => {
+    fakeManticore({ failPageAfter: 1 });
+    const result = await searchEngine.searchWorkIds({ q: 'lkuiz fernando dias duarte' }, 10, 0);
+    expect(result.ids).toEqual([]);
+    expect(result.revision).toMatchObject({ status: 'suggested', applied: false, revised: { q: 'luiz fernando dias duarte' } });
+    expect(result.revisionDegraded).toBe(true);
+  });
+
+  test('works, persons and publications flag a degraded revision and never cache it', async () => {
+    const cacheService = require('../src/services/cache.service');
+    const writes = [];
+    stubMethod(cacheService, 'get', async () => null);
+    stubMethod(cacheService, 'set', async (key) => { writes.push(key); return true; });
+    fakeManticore({ failKeywords: true });
+    const works = await worksService.getWorks({ search: 'lkuiz duarte', page: 1, limit: 10 });
+    expect(works.meta.query_revision_degraded).toBe(true);
+    const persons = await personsService.searchPersons('marcel mauz', { page: 1, limit: 10 });
+    expect(persons.meta.query_revision_degraded).toBe(true);
+    const ft = await searchEngine.fetchWorkIdsForFilters({ q: 'lkuiz fernando' }, 5000);
+    expect(ft.revisionDegraded).toBe(true);
+    expect(writes).toEqual([]);
+
+    restoreStubs();
+    stubMethod(cacheService, 'get', async () => null);
+    stubMethod(cacheService, 'set', async (key) => { writes.push(key); return true; });
+    fakeManticore();
+    const healthy = await personsService.searchPersons('marcel mauss', { page: 1, limit: 10 });
+    expect(healthy.meta.query_revision_degraded).toBeUndefined();
+    expect(writes).toEqual(['persons:search:v4:1:marcel mauss:10:0:all']);
   });
 
   test('/publications full-text resolution is corrected too', async () => {
@@ -1478,6 +1531,32 @@ describe('Query revision plumbing', () => {
     expect(res.statusCode).toBe(200);
     expect(captured.autocorrect).toBe('false');
     expect(res.body.meta.query_revision).toEqual(revision);
+  });
+
+  test('search wrappers forward degraded flags and cache only final results', async () => {
+    const cacheService = require('../src/services/cache.service');
+    const writes = [];
+    stubMethod(cacheService, 'get', async () => null);
+    stubMethod(cacheService, 'set', async (key) => { writes.push(key.split(':').slice(0, 2).join(':')); return true; });
+    const note = 'This sort exceeded the statement budget.';
+    stubResolved(worksService, 'getWorks', { data: [], pagination: pageMeta(1, 5, 0), meta: { page_degraded: true, note, pagination_total_exact: false } });
+    const degradedPage = await searchService.searchWorks('', { type: 'ARTICLE', sort_by: 'cited_by_count', page: 1, limit: 5 });
+    expect(degradedPage.meta.page_degraded).toBe(true);
+    expect(degradedPage.meta.note).toBe(note);
+    stubResolved(worksService, 'getWorks', { data: [], pagination: pageMeta(1, 5, 0), meta: { pagination_total_exact: true, query_revision_degraded: true } });
+    stubResolved(personsService, 'searchPersons', { data: [], pagination: pageMeta(1, 5, 0), meta: { pagination_total_exact: true } });
+    const degradedRevision = await searchService.searchWorks('degraded lkuiz', { page: 1, limit: 5 });
+    expect(degradedRevision.meta.query_revision_degraded).toBe(true);
+    const global = await searchService.globalSearch('degraded lkuiz global', { limit: 5 });
+    expect(global.data.works.query_revision_degraded).toBe(true);
+    expect(global.data.persons.query_revision_degraded).toBeUndefined();
+    stubResolved(worksService, 'getWorks', { data: [], pagination: pageMeta(1, 5, 11), meta: { pagination_total_exact: false } });
+    await searchService.searchWorks('inexact total', { page: 1, limit: 5 });
+    expect(writes).toEqual(['search:persons']);
+
+    stubResolved(worksService, 'getWorks', { data: [], pagination: pageMeta(1, 5, 3), meta: { pagination_total_exact: true } });
+    await searchService.searchWorks('final result', { page: 1, limit: 5 });
+    expect(writes).toEqual(['search:persons', 'search:works']);
   });
 
   test('works search and global search forward query_revision from the works and persons services', async () => {
@@ -1682,6 +1761,15 @@ describe('Cache TTL resolution', () => {
     expect([...store.keys()].every((key) => key.startsWith('works:count:v1:'))).toBe(true);
     await cacheService.rememberCount('works:count:v1', 'SELECT 1', [], async () => ({ total: 7, exact: false }));
     expect(ttls).toEqual([3600, 3600, 600]);
+  });
+
+  test('degraded pages, degraded revisions and inexact full-text totals are not cacheable', () => {
+    expect(cacheService.isCacheableResult(undefined)).toBe(true);
+    expect(cacheService.isCacheableResult({ pagination_total_exact: true })).toBe(true);
+    expect(cacheService.isCacheableResult({ pagination_total_exact: false })).toBe(true);
+    expect(cacheService.isCacheableResult({ pagination_total_exact: false }, { fullText: true })).toBe(false);
+    expect(cacheService.isCacheableResult({ page_degraded: true })).toBe(false);
+    expect(cacheService.isCacheableResult({ query_revision_degraded: true, pagination_total_exact: true }, { fullText: true })).toBe(false);
   });
 });
 

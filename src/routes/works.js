@@ -143,7 +143,10 @@ const validateWorksQuery = [
  *       serves the revised query and describes it in `meta.query_revision`
  *       (`autocorrect=false` serves the literal query and only suggests the
  *       revision). A first page whose rare term is one edit from a far more
- *       frequent word carries a non-applied suggestion instead.
+ *       frequent word carries a non-applied suggestion instead. When the
+ *       revision cannot complete (a Manticore error or timeout) the literal
+ *       result is served with `meta.query_revision_degraded: true` and is not
+ *       cached.
  *
  *       Totals: exact (`meta.pagination_total_exact: true`) on the full-text
  *       path and when the filtered count finishes inside its 2 s budget;
@@ -335,6 +338,8 @@ const validateWorksQuery = [
  *                           description: Explanation accompanying `page_degraded`.
  *                         query_revision:
  *                           $ref: '#/components/schemas/QueryRevision'
+ *                         query_revision_degraded:
+ *                           $ref: '#/components/schemas/QueryRevisionDegraded'
  *                         performance:
  *                           $ref: '#/components/schemas/PerformanceMeta'
  *       400:

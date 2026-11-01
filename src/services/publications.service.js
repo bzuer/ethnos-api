@@ -485,6 +485,7 @@ class PublicationsService {
 
     let ftCapped = false;
     let queryRevision = null;
+    let queryRevisionDegraded = false;
     if (searchTerm || authorFilter || subjectFilter) {
       const cap = parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10);
       const ft = await searchEngine.fetchWorkIdsForFilters({
@@ -495,6 +496,7 @@ class PublicationsService {
       }, cap);
       ftCapped = ft.capped;
       queryRevision = ft.revision;
+      queryRevisionDegraded = Boolean(ft.revisionDegraded);
       if (ft.ids.length === 0) {
         where.push('1 = 0');
       } else {
@@ -637,15 +639,18 @@ class PublicationsService {
         ...(pageDegraded ? { page_degraded: true, note: 'This sort exceeded the statement budget; try a narrower filter or a different sort.' } : {}),
         ...(ftCapped ? { fulltext_truncated: true, fulltext_work_cap: parseInt(process.env.MANTICORE_PUBLICATIONS_WORK_CAP || '5000', 10) } : {}),
         ...(queryRevision ? { query_revision: queryRevision } : {}),
+        ...(queryRevisionDegraded ? { query_revision_degraded: true } : {}),
         ...(useFilesFastPath ? { has_files_source: 'files_index' } : {}),
         elapsed_ms: Date.now() - t0
       }
     };
 
-    try {
-      await cacheService.set(cacheKey, result, 1800);
-    } catch (cacheError) {
-      logger.warn('Publications list cache write failed', { error: cacheError.message });
+    if (cacheService.isCacheableResult(result.meta)) {
+      try {
+        await cacheService.set(cacheKey, result, 1800);
+      } catch (cacheError) {
+        logger.warn('Publications list cache write failed', { error: cacheError.message });
+      }
     }
 
     return result;

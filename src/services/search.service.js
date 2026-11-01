@@ -63,7 +63,9 @@ class SearchService {
           search_type: 'fulltext',
           ...(worksResult.meta?.match_mode ? { match_mode: worksResult.meta.match_mode } : {}),
           pagination_total_exact: worksResult.meta?.pagination_total_exact ?? true,
-          ...(worksResult.meta?.query_revision ? { query_revision: worksResult.meta.query_revision } : {})
+          ...(worksResult.meta?.page_degraded ? { page_degraded: true, note: worksResult.meta.note } : {}),
+          ...(worksResult.meta?.query_revision ? { query_revision: worksResult.meta.query_revision } : {}),
+          ...(worksResult.meta?.query_revision_degraded ? { query_revision_degraded: true } : {})
         },
         performance: {
           ...((worksResult && worksResult.performance) || (worksResult && worksResult.meta && worksResult.meta.performance) || {}),
@@ -71,8 +73,11 @@ class SearchService {
         }
       };
 
-      await cacheService.set(cacheKey, result, 300);
-      logger.info(`Works search cached: "${trimmedQuery}" - ${result.pagination.total} results`);
+      const fullText = Boolean(trimmedQuery || venue_name || author || subject);
+      if (cacheService.isCacheableResult(result.meta, { fullText })) {
+        await cacheService.set(cacheKey, result, 300);
+        logger.info(`Works search cached: "${trimmedQuery}" - ${result.pagination.total} results`);
+      }
       return result;
     } catch (error) {
       logger.error('Error in works search:', error);
@@ -127,7 +132,9 @@ class SearchService {
         }
       };
 
-      await cacheService.set(cacheKey, result, 300);
+      if (cacheService.isCacheableResult(result.meta, { fullText: true })) {
+        await cacheService.set(cacheKey, result, 300);
+      }
       return result;
     } catch (error) {
       logger.error('Error in persons search:', error);
@@ -164,12 +171,14 @@ class SearchService {
           works: {
             total: works.pagination.total,
             results: works.data.slice(0, limit),
-            ...(works.meta?.query_revision ? { query_revision: works.meta.query_revision } : {})
+            ...(works.meta?.query_revision ? { query_revision: works.meta.query_revision } : {}),
+            ...(works.meta?.query_revision_degraded ? { query_revision_degraded: true } : {})
           },
           persons: {
             total: persons.pagination.total,
             results: persons.data.slice(0, limit),
-            ...(persons.meta?.query_revision ? { query_revision: persons.meta.query_revision } : {})
+            ...(persons.meta?.query_revision ? { query_revision: persons.meta.query_revision } : {}),
+            ...(persons.meta?.query_revision_degraded ? { query_revision_degraded: true } : {})
           },
           institutions: {
             total: null,
@@ -188,8 +197,11 @@ class SearchService {
         }
       };
 
-      await cacheService.set(cacheKey, result, 300);
-      logger.info(`Global search cached: "${trimmedQuery}"`);
+      if (cacheService.isCacheableResult(works.meta, { fullText: true })
+        && cacheService.isCacheableResult(persons.meta, { fullText: true })) {
+        await cacheService.set(cacheKey, result, 300);
+        logger.info(`Global search cached: "${trimmedQuery}"`);
+      }
 
       return result;
     } catch (error) {

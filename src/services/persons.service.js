@@ -699,11 +699,12 @@ class PersonsService {
       pagination: createPagination(page, limit, mres.total),
       meta: {
         pagination_total_exact: mres.exact,
-        ...(mres.revision ? { query_revision: mres.revision } : {})
+        ...(mres.revision ? { query_revision: mres.revision } : {}),
+        ...(mres.revisionDegraded ? { query_revision_degraded: true } : {})
       },
       performance: { engine: 'Manticore', query_type: 'search' }
     };
-    if (mres.exact) {
+    if (cacheService.isCacheableResult(result.meta, { fullText: true })) {
       try { await cacheService.set(cacheKey, result, 3600); } catch (_) {}
     }
     logger.info(`Persons search "${trimmed}" [Manticore]: ${formattedResults.length} of ${mres.total} results`);

@@ -347,8 +347,7 @@ class WorksService {
       : await this._getWorksVitrine(f, effectiveLimit, offset, page);
 
     result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0 };
-    const transientTotal = hasFulltext && result.meta?.pagination_total_exact === false;
-    if (!result.meta?.page_degraded && !transientTotal) {
+    if (cacheService.isCacheableResult(result.meta, { fullText: hasFulltext })) {
       await cacheService.set(cacheKey, result, 1800);
     }
     return result;
@@ -366,7 +365,7 @@ class WorksService {
 
     const result = await this._getWorksVitrine(f, effectiveLimit, offset, page);
     result.performance = { ...(result.performance || {}), elapsed_ms: Date.now() - t0, query_type: 'showcase_optimized' };
-    if (!result.meta?.page_degraded) {
+    if (cacheService.isCacheableResult(result.meta)) {
       await cacheService.set(cacheKey, result, 1800);
     }
     return result;
@@ -537,6 +536,7 @@ class WorksService {
         match_mode: 'any_publication',
         pagination_total_exact: mres.exact,
         ...(mres.revision ? { query_revision: mres.revision } : {}),
+        ...(mres.revisionDegraded ? { query_revision_degraded: true } : {}),
         performance: { engine: 'Manticore', query_type: 'search', primary_query_ms: primaryQueryMs }
       },
       performance: { engine: 'Manticore', query_type: 'search', match_mode: 'any_publication', primary_query_ms: primaryQueryMs }

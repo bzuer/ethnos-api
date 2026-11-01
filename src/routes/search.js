@@ -108,7 +108,9 @@ const validateWorksSearch = [
  *       dropped; the revised query is served and described in `meta.query_revision`
  *       (`autocorrect=false` keeps the literal query and only suggests the revision). A first
  *       page whose rare term is one edit from a far more frequent word carries a non-applied
- *       suggestion.
+ *       suggestion. If the revision cannot complete (a Manticore error or timeout),
+ *       `meta.query_revision_degraded=true` marks the literal result as provisional and it
+ *       is not cached, so a retry can still be corrected.
  *     parameters:
  *       - name: q
  *         in: query
@@ -249,8 +251,16 @@ const validateWorksSearch = [
  *                         pagination_total_exact:
  *                           type: boolean
  *                           description: False when the browse-path count fell back to the corpus estimate.
+ *                         page_degraded:
+ *                           type: boolean
+ *                           description: Present (true) when the browse-path page query exceeded its statement budget and `data` is empty.
+ *                         note:
+ *                           type: string
+ *                           description: Explanation accompanying `page_degraded`.
  *                         query_revision:
  *                           $ref: '#/components/schemas/QueryRevision'
+ *                         query_revision_degraded:
+ *                           $ref: '#/components/schemas/QueryRevisionDegraded'
  *                         performance:
  *                           type: object
  *       400:
@@ -274,7 +284,9 @@ router.get('/works', validateWorksSearch, searchController.searchWorks);
  *       the global search (use /institutions?q=). The query is recorded for /search/popular.
  *       Each block is revised independently (misspelling correction, then dropping the
  *       conflicting term) when the literal query matches nothing in it, and then carries its own
- *       `query_revision`; `autocorrect=false` turns both revisions into suggestions.
+ *       `query_revision`; `autocorrect=false` turns both revisions into suggestions. A block
+ *       whose revision could not complete carries `query_revision_degraded=true` and the
+ *       response is not cached.
  *     parameters:
  *       - name: q
  *         in: query
@@ -343,7 +355,8 @@ router.get('/global', [
  *       100,000 matches return 400. A name that matches nothing is revised (a misspelled
  *       name part corrected, preferring the better-known match; failing that, the part that
  *       conflicts with the rest dropped) and described in `meta.query_revision`;
- *       `autocorrect=false` keeps the literal query and only suggests the revision.
+ *       `autocorrect=false` keeps the literal query and only suggests the revision; a
+ *       revision that could not complete sets `meta.query_revision_degraded=true`.
  *     tags: [Search]
  *     parameters:
  *       - name: q
@@ -387,6 +400,8 @@ router.get('/global', [
  *                       properties:
  *                         query_revision:
  *                           $ref: '#/components/schemas/QueryRevision'
+ *                         query_revision_degraded:
+ *                           $ref: '#/components/schemas/QueryRevisionDegraded'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -419,7 +434,8 @@ router.get('/persons', [
  *       under `data.results` (without the `relevance` key) next to a `data.facets` object.
  *       Faceting is not implemented: `data.facets` is always `{}`. `work_type` is an alias
  *       of `type` and takes precedence when both are set. Requests are not recorded for
- *       /search/popular. Query revision (`meta.query_revision`, `autocorrect`) behaves as on
+ *       /search/popular. Query revision (`meta.query_revision`, `meta.query_revision_degraded`,
+ *       `autocorrect`) and the degraded browse page (`meta.page_degraded`) behave as on
  *       /search/works.
  *     parameters:
  *       - name: q
@@ -567,8 +583,16 @@ router.get('/persons', [
  *                           enum: [Manticore, MariaDB]
  *                         pagination_total_exact:
  *                           type: boolean
+ *                         page_degraded:
+ *                           type: boolean
+ *                           description: Present (true) when the browse-path page query exceeded its statement budget and `data.results` is empty.
+ *                         note:
+ *                           type: string
+ *                           description: Explanation accompanying `page_degraded`.
  *                         query_revision:
  *                           $ref: '#/components/schemas/QueryRevision'
+ *                         query_revision_degraded:
+ *                           $ref: '#/components/schemas/QueryRevisionDegraded'
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       429:
@@ -659,7 +683,9 @@ const advancedSearch = async (req, res, next) => {
         filters_applied: Object.keys(filters).length,
         engine: result.meta?.performance?.engine || (query ? 'Manticore' : 'MariaDB'),
         pagination_total_exact: result.meta?.pagination_total_exact ?? true,
+        ...(result.meta?.page_degraded ? { page_degraded: true, note: result.meta.note } : {}),
         ...(result.meta?.query_revision ? { query_revision: result.meta.query_revision } : {}),
+        ...(result.meta?.query_revision_degraded ? { query_revision_degraded: true } : {}),
         performance: {
           controller_time_ms: controllerTime
         }

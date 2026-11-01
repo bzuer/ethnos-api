@@ -156,7 +156,9 @@ const validatePublicationsQuery = [
  *         When these terms match no work, misspelled terms are corrected (and, failing
  *         that, the conflicting `q` term dropped) and the revised query is described in
  *         `meta.query_revision`; `autocorrect=false` keeps the literal query and only
- *         suggests the revision. There is no first-page suggestion on this endpoint.
+ *         suggests the revision. There is no first-page suggestion on this endpoint. A
+ *         revision that could not complete sets `meta.query_revision_degraded=true`
+ *         (the page is not cached, nor is a `page_degraded` page).
  *       - `venue` (alias `venue_name`) is a word match (boolean mode, every word
  *         required) against venue name and abbreviation via MariaDB `ft_venues_search`.
  *       - All other filters (`type`, `language`, `year_from`/`year_to`, `open_access`,
@@ -378,6 +380,8 @@ const validatePublicationsQuery = [
  *                           enum: [files_index]
  *                         query_revision:
  *                           $ref: '#/components/schemas/QueryRevision'
+ *                         query_revision_degraded:
+ *                           $ref: '#/components/schemas/QueryRevisionDegraded'
  *                         pagination_extras:
  *                           type: object
  *                           properties:

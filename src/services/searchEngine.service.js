@@ -498,10 +498,19 @@ async function reviseSearch({
   countUnfiltered = null,
   rerun
 }) {
-  const eligible = result.exact
-    && (result.total === 0 || (allowSuggestion && offset === 0))
-    && Date.now() - started <= REVISION_START_BUDGET_MS;
-  if (!eligible) return { ...result, revision: null };
+  const literal = { ...result, revision: null, revisionDegraded: false };
+  const eligible = result.exact && (result.total === 0 || (allowSuggestion && offset === 0));
+  if (!eligible) return literal;
+  if (Date.now() - started > REVISION_START_BUDGET_MS) {
+    return { ...literal, revisionDegraded: result.total === 0 };
+  }
+
+  let countsCutShort = false;
+  const tracked = counter => counter && (async candidate => {
+    const outcome = await counter(candidate);
+    if (!outcome.exact) countsCutShort = true;
+    return outcome;
+  });
 
   let plan = null;
   try {
@@ -509,15 +518,16 @@ async function reviseSearch({
       dictionary,
       groups,
       total: result.total,
-      count,
-      countUnfiltered,
+      count: tracked(count),
+      countUnfiltered: tracked(countUnfiltered),
       relaxable: RELAXABLE_PARAMETER,
       allowSuggestion
     });
   } catch (error) {
-    logger.warn('Search query revision failed; serving the original result', { error: error.message });
+    logger.warn('Search query revision failed; serving the original result uncached', { error: error.message });
+    return { ...literal, revisionDegraded: true };
   }
-  if (!plan) return { ...result, revision: null };
+  if (!plan) return { ...literal, revisionDegraded: countsCutShort };
 
   const describe = (applied, revisedTotal, revisedTotalExact) => spelling.formatQueryRevision({
     status: applied ? (plan.dropped.length ? 'relaxed' : 'corrected') : 'suggested',
@@ -531,22 +541,22 @@ async function reviseSearch({
     revisedTotalExact
   });
   if (plan.kind === 'suggestion' || !autocorrect) {
-    return { ...result, revision: describe(false, plan.total, plan.exact) };
+    return { ...literal, revision: describe(false, plan.total, plan.exact) };
   }
 
   try {
     const queryTimeMs = Math.max(REVISED_PAGE_MIN_QUERY_TIME_MS, MAX_QUERY_TIME_MS - (Date.now() - started));
     const revised = await rerun(plan.groups, queryTimeMs);
-    if (revised.total > 0) return { ...revised, revision: describe(true, revised.total, revised.exact) };
+    if (revised.total > 0) return { ...revised, revision: describe(true, revised.total, revised.exact), revisionDegraded: false };
   } catch (error) {
-    logger.warn('Revised search query failed; serving the original result', { error: error.message });
+    logger.warn('Revised search query failed; serving the original result uncached', { error: error.message });
   }
-  return { ...result, revision: describe(false, plan.total, plan.exact) };
+  return { ...literal, revision: describe(false, plan.total, plan.exact), revisionDegraded: true };
 }
 
 async function searchWorkIds(filters = {}, limit, offset) {
   const groups = worksTermGroups(filters);
-  if (!hasTerms(groups)) return { ids: [], total: 0, exact: true, revision: null };
+  if (!hasTerms(groups)) return { ids: [], total: 0, exact: true, revision: null, revisionDegraded: false };
 
   assertWithinMatchWindow(offset, limit);
   const started = Date.now();
@@ -569,7 +579,7 @@ async function searchWorkIds(filters = {}, limit, offset) {
 
 async function searchPersonIds(query, { verified, limit, offset, autocorrect } = {}) {
   const groups = { q: splitTerms(query) };
-  if (!hasTerms(groups)) return { ids: [], total: 0, exact: true, revision: null };
+  if (!hasTerms(groups)) return { ids: [], total: 0, exact: true, revision: null, revisionDegraded: false };
 
   const conds = [];
   const verifiedFlag = toBoolFlag(verified);
@@ -603,7 +613,7 @@ async function runRelevanceWorkIdQuery(matchExpr, lim, maxMatches) {
 
 async function fetchWorkIdsForFilters(filters, cap = 5000) {
   const groups = worksTermGroups(filters);
-  if (!hasTerms(groups)) return { ids: [], capped: false, revision: null };
+  if (!hasTerms(groups)) return { ids: [], capped: false, revision: null, revisionDegraded: false };
 
   const lim = Math.min(Math.max(cap, 1), MAX_MATCHES_CEILING);
   const started = Date.now();
@@ -622,7 +632,7 @@ async function fetchWorkIdsForFilters(filters, cap = 5000) {
     count: candidate => revisionCount(WORKS_DICTIONARY, buildWorksMatchFromGroups(candidate)),
     rerun: candidate => run(candidate)
   });
-  return { ids: final.ids, capped: final.ids.length >= lim, revision: final.revision };
+  return { ids: final.ids, capped: final.ids.length >= lim, revision: final.revision, revisionDegraded: final.revisionDegraded };
 }
 
 function buildPrefixMatch(query, field) {

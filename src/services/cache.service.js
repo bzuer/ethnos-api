@@ -30,6 +30,12 @@ class CacheService {
     return this.defaultTTL[ttl] || this.defaultTTL.default;
   }
 
+  isCacheableResult(meta, { fullText = false } = {}) {
+    if (!meta) return true;
+    if (meta.page_degraded || meta.query_revision_degraded) return false;
+    return !(fullText && meta.pagination_total_exact === false);
+  }
+
   _redisMandatory() {
     return process.env.NODE_ENV === 'production' && process.env.REDIS_MANDATORY_IN_PRODUCTION === 'true';
   }

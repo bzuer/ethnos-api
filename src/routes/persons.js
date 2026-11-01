@@ -70,7 +70,8 @@ const validatePersonsQuery = [
  *       that matches nothing is revised (a misspelled name part corrected, preferring the
  *       better-known match; failing that, the part that conflicts with the rest dropped) and
  *       described in `meta.query_revision`; `autocorrect=false` keeps the literal query and
- *       only suggests the revision.
+ *       only suggests the revision. A revision that could not complete sets
+ *       `meta.query_revision_degraded=true` and the result is not cached.
  *     tags: [Persons]
  *     parameters:
  *       - $ref: '#/components/parameters/pageParam'
@@ -139,6 +140,7 @@ const validatePersonsQuery = [
  *                         count exceeded its 2 s budget and `total` is a lower bound),
  *                         `page_degraded` and `note` (plain list page over budget),
  *                         `query_revision` (search path, see QueryRevision),
+ *                         `query_revision_degraded` (search path, see QueryRevisionDegraded),
  *                         `pagination_extras.offset`.
  *       400:
  *         $ref: '#/components/responses/BadRequest'
