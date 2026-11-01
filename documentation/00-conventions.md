@@ -187,7 +187,8 @@ In OpenAPI the security scheme `XAccessKey` is declared globally as **optional**
 | `performance.*` | works, publications | server-side timing (`primary_query_ms`, `total_rows_examined`, `query_type`) |
 | `fulltext_truncated` / `fulltext_work_cap` | `/publications` with full-text | the full-text work-id set was capped (default 5000) |
 | `query_revision` | full-text works/persons/publications listings and search (`data.works`/`data.persons` on `/search/global`, `data` on autocomplete) | the literal query matched nothing and a corrected or relaxed query was served (`applied: true`), or a revision is only suggested (`applied: false`). See [search › Query revision](./domains/search.md#query-revision-typo-tolerance) |
-| `page_degraded` (+ `note`) | `/works`, `/works/showcase`, `/publications`, `/persons`, `/subjects/{id}/works` | the page query hit the statement budget and returned empty; narrow the filter or ask for a shallower page |
+| `query_revision_degraded` | wherever `query_revision` can appear, except autocomplete | `true` → the revision could not complete (Manticore error or timeout); the rows are the literal query's, the response is not cached, and a retry may be corrected. See [search › `query_revision_degraded`](./domains/search.md#query_revision_degraded) |
+| `page_degraded` (+ `note`) | `/works`, `/works/showcase`, `/search/works`, `/search/advanced` (browse path), `/publications`, `/persons`, `/subjects/{id}/works` | the page query hit the statement budget and returned empty; narrow the filter or ask for a shallower page. A degraded response is never cached |
 | `degraded` | collaboration rankings | the ranking exceeded its budget; the empty page is not a real zero |
 | `has_files_source` | `/publications?has_files=true` | `"files_index"` when the fast path served the page (`has_files=true` alone, default sort) |
 | `sort` / `sort.{by,order}` | venues, institutions | the effective sort applied |

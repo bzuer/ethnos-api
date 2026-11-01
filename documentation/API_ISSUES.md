@@ -8,7 +8,7 @@ Estado da auditoria: 92 endpoints `ok`, 9 `ok_empty` (válidos, dados ausentes p
 
 Legenda: 🟢 corrigido+validado · 📋 operador (fora do alcance da API).
 
-Revisão integral de 2026-10-14 (código, scripts e documentação): ver **Bloco H**. Ela substitui as soluções de P2 (fonte do `/search/popular`) e P4 (fast path de `has_files`). Tolerância a erros de digitação na busca (2026-10-18): ver **Bloco I**.
+Revisão integral de 2026-10-14 (código, scripts e documentação): ver **Bloco H**. Ela substitui as soluções de P2 (fonte do `/search/popular`) e P4 (fast path de `has_files`). Tolerância a erros de digitação na busca (2026-10-18): ver **Bloco I** (P46, 2026-11-01: revisão que falha não é mais cacheada).
 
 Arquivos alterados nesta fase: `src/services/{metrics,autocomplete,subjects,publications,collaborations,instructors}.service.js`, `src/controllers/{metrics,persons,works}.controller.js`, `src/dto/{course,dashboard}.dto.js`, `src/routes/{dashboard,persons}.js`, `src/services/citations.service.js`, `src/app.js`, `database/required_objects.sql`.
 
@@ -318,6 +318,26 @@ Validação comum a todo o bloco: instância temporária em `PORT=1210` com o c�
   - `searchd` sem reinício (`NRestarts=0`) durante todos os testes.
   - 104/104 testes unitários (22 novos, incluindo um Manticore falso que confere que nenhum `MATCH` sob o ranker de expressão contém `*` ou `=`) e 59/59 de smoke (5 novos).
   - No índice defasado do servidor de desenvolvimento faltam algumas pessoas atualizadas recentemente (Clifford Geertz, Bronislaw Malinowski, Roberto Damatta). Nesses casos a busca de pessoas cai no relaxamento; o reindex pendente em P43 resolve.
+
+### P46 · 🟢 Uma revisão que falhava era cacheada como resposta final (2026-11-01)
+- **Problema:** o log de `npm test` mostrava `Search query revision failed; serving the original result` seguido de `Works search cached: … 0 results`. No teste a falha é proposital, mas o caminho de produção era o mesmo: quando a revisão não conseguia terminar (erro do Manticore em `CALL KEYWORDS` ou numa contagem, contagem cortada pelo `max_query_time` de 500 ms, falha ao reexecutar a consulta revisada), o zero literal, sem correção, era gravado no cache como se fosse a resposta definitiva. Por isso uma busca com erro de digitação que pegasse uma falha passageira continuava devolvendo 0 resultados mesmo depois de o Manticore se recuperar: por 1 h em `persons:search:v4`, 30 min em `works:list:v9` e `publications:list:v6`, 5 min em `search:works:v6`/`search:persons:v3`/`search:global:v4`. Isso viola a regra "nunca cachear um resultado degradado". Reproduzido com o Manticore falso: as três chaves eram gravadas.
+- **Causa raiz:** `reviseSearch` (`searchEngine.service.js`) registrava a falha no log e devolvia `revision: null`, indistinguível de "não havia nada a revisar". Uma contagem cortada voltava `exact: false` com total 0, e o candidato era descartado em silêncio. Os chamadores não tinham como saber que a resposta era provisória.
+- **Achados correlatos, mesma classe:**
+  - `/publications` gravava no cache por 30 min a página vazia com `page_degraded`.
+  - `search.service.js` cacheava `/search/works` e `/search/persons` mesmo com `pagination_total_exact=false` no caminho de texto livre, que `works.service` e `persons.service` já se recusavam a cachear.
+  - `/search/works` e `/search/advanced` descartavam `page_degraded`/`note` vindos de `/works`: a página vazia do caminho de navegação chegava sem aviso e era cacheada por 5 min.
+- **Solução:**
+  - `reviseSearch` devolve `revisionDegraded: true` quando a revisão era elegível mas não terminou: exceção no planejamento, nenhum plano e alguma contagem cortada (as funções `count`/`countUnfiltered` são envolvidas e registram `exact: false`), reexecução da consulta revisada com erro ou com zero resultados (a resposta segue literal, com a revisão rebaixada a sugestão), ou busca literal com zero resultados que já gastou o orçamento de 1 s. Pular a sugestão numa primeira página com resultados que levou mais de 1 s **não** é degradação (as linhas estão certas, e a página pesada continua cacheável).
+  - `fetchWorkIdsForFilters` repassa a mesma flag.
+  - A flag vira `meta.query_revision_degraded: true` em `/works`, `/search/works`, `/search/advanced`, `/search/persons`, `/persons` (busca) e `/publications`, e `data.{works,persons}.query_revision_degraded` em `/search/global`. Schema OpenAPI `QueryRevisionDegraded`.
+  - Política única `cacheService.isCacheableResult(meta, { fullText })`: não cacheia `page_degraded`, `query_revision_degraded` nem, em texto livre, `pagination_total_exact=false`. Usada por `works.service` (listagem e vitrine), `persons.service`, `publications.service` e pelos três wrappers de `search.service` (o global só cacheia se os dois blocos forem cacheáveis).
+  - `/search/works` e `/search/advanced` repassam `page_degraded` + `note`.
+  - O autocomplete não muda: lista de sugestões vazia nunca foi cacheada.
+  - Chaves de cache inalteradas: o formato só ganha um campo opcional, e o que já estava cacheado era resposta final.
+- **Validação:**
+  - 110/110 testes unitários (1 estendido: dicionário com falha; 6 novos: contagens cortadas, reexecução com falha, revisão completa sem flag, os três serviços sem gravação no cache, os wrappers repassando as flags e cacheando só o definitivo, e a política `isCacheableResult`). Os 7 falham no código anterior.
+  - Instância temporária em `PORT=1210` sem Redis: 59/59 de smoke. Numa primeira rodada fria, 5 testes de outros endpoints (`/venues`, `/institutions?type=FUNDER`, `/institutions/{id}/works`, `/collaborations/top`, `/publications?venue=`) bateram o orçamento de 4,5 s por buffer pool frio. A segunda chamada responde em 0,2–1 s e a rodada seguinte passou inteira. Esses endpoints não foram tocados aqui.
+  - Caminhos saudáveis intactos: `lkuiz fernando dias duarte` corrigido em `/works`, `/search/works`, `/publications` (54) e `/search/global`, e `marcel maus` → `mauss` em `/search/persons`, todos sem `query_revision_degraded`.
 
 ---
 

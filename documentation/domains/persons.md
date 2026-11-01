@@ -120,6 +120,7 @@ GET /persons?verified=true&offset=40&limit=20
 | `meta.pagination_total_exact` | Plain list and search paths. `false` when the count exceeded its budget (2 s on the list, Manticore's 4 s `max_query_time` on search): `total` is then only a lower bound (`offset` + rows on this page, + 1 when the page is full). |
 | `meta.page_degraded`, `meta.note` | Plain list only, when the page query itself exceeded the statement budget: `data` is empty and `pagination.total` is 0. Use a filter or a shallower page. |
 | `meta.query_revision` | Search path only, when the name matched nothing and was revised (a misspelled part corrected, preferring the better-known match: `lkuiz fernando dias duarte` → Luiz Fernando Dias Duarte; failing that, the conflicting part dropped), or when a revision is suggested. See [search › Query revision](./search.md#query-revision-typo-tolerance). |
+| `meta.query_revision_degraded` | Search path only, `true` when the revision could not complete (Manticore error or timeout). The literal result is served and not cached. |
 | `meta.pagination_extras.offset` | Effective offset. |
 | `meta.request` | `{ method, path }`. |
 

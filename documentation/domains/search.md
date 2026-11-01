@@ -51,7 +51,9 @@ Because every term is required, a single misspelled or out-of-place word used to
 
 **3. `autocorrect=false`** turns every revision into a suggestion: the literal (possibly empty) result is served and `query_revision.applied` is `false`. Use it for the "search instead for …" link, otherwise that link would be revised again.
 
-Correctly spelled queries are never revised. A query that already has results and no rare term costs one extra dictionary lookup (1–3 ms). A zero-result query typically takes 15–130 ms longer. The work is bounded: each candidate count is capped at 500 ms, and the revision is skipped when the literal search already took over 1 s. If the revision fails, the literal result is served unchanged.
+Correctly spelled queries are never revised. A query that already has results and no rare term costs one extra dictionary lookup (1–3 ms). A zero-result query typically takes 15–130 ms longer. The work is bounded: each candidate count is capped at 500 ms, and the revision is skipped when the literal search already took over 1 s.
+
+**When the revision cannot complete**, the literal result is served with `query_revision_degraded: true`. That happens on a Manticore error, on a candidate count cut short by its 500 ms cap, when the re-run of the revised query fails, or when a zero-result literal search has already used up the 1 s budget. If a revision had been found but its re-run failed, `query_revision` is still present as a suggestion (`applied: false`). Such a response is **never cached**, so the same request retried a moment later can still be corrected. Until 2026-11-01 it was cached like a final answer: a typo that hit a transient Manticore failure kept returning zero results, uncorrected, for up to an hour (`/persons` search 1 h, `/works` and `/publications` 30 min, `/search/*` 5 min).
 
 ### `query_revision`
 
@@ -112,6 +114,11 @@ Present only when a revision was applied or is suggested. It sits in `meta.query
 **Rendering it.**
 - `applied: true`: show "Showing results for **{revised.q}**", with the `corrections[].replacement` words highlighted. Add "Search instead for {original.q}", linking to the same request with `autocorrect=false`. For `status: "relaxed"`, add "Missing: {dropped_terms[].term}".
 - `applied: false`: show "Did you mean **{revised.q}**?", linking to the revised parameters.
+- `query_revision_degraded: true`: the spelling check did not finish. Render the rows normally; on an empty result you may offer a retry instead of a final "no results".
+
+### `query_revision_degraded`
+
+Boolean, present (always `true`) only when the revision could not complete (see above); absent otherwise. It sits next to `query_revision`: in `meta` on `/works`, `/search/works`, `/search/advanced`, `/search/persons`, `/persons` (search path) and `/publications`, and per block on `/search/global` (`data.works.query_revision_degraded`, `data.persons.query_revision_degraded`). It never appears on `/search/autocomplete`: there a failed revision just yields no suggestions, and an empty suggestion list is never cached anyway.
 
 **Limits.**
 - Words shorter than four letters are never corrected.
@@ -235,7 +242,9 @@ The row is the `/works` list item. Its full field table is in [works › `GET /w
 | `meta.search_type` | Constant `"fulltext"`, on both paths. |
 | `meta.match_mode` | `"any_publication"`. |
 | `meta.pagination_total_exact` | `true` on the full-text path. On the browse path it is `false` when the count fell back to the corpus estimate. |
+| `meta.page_degraded`, `meta.note` | Browse path only, when the page query exceeded its statement budget: `data` is empty and `pagination_total_exact` is `false`. Forwarded from `/works` since 2026-11-01 (before, the empty page arrived unflagged and was cached for 5 minutes). |
 | `meta.query_revision` | Present only when the text query was revised or a revision is suggested. See [Query revision](#query-revision-typo-tolerance). |
+| `meta.query_revision_degraded` | Present (`true`) only when the revision could not complete; the response is not cached. See [`query_revision_degraded`](#query_revision_degraded). |
 | `meta.performance.*` | `engine` (`Manticore`/`MariaDB`), `query_type` (`search` / `showcase_optimized`), `primary_query_ms`, `elapsed_ms`, `controller`, `controller_time_ms`. |
 
 ### Notes
@@ -340,7 +349,9 @@ GET /search/advanced?q=ritual&peer_reviewed=1
 | `meta.filters_applied` | int | Number of non-empty filters other than `q`, sort and pagination. |
 | `meta.engine` | string | `"Manticore"` when a text term participates, else `"MariaDB"`. |
 | `meta.pagination_total_exact` | boolean | Same semantics as on `/search/works`. |
+| `meta.page_degraded`, `meta.note` | boolean, string | Same as on `/search/works` (browse path). |
 | `meta.query_revision` | object | Same as on `/search/works`, including `autocorrect`. |
+| `meta.query_revision_degraded` | boolean | Same as on `/search/works`. |
 | `meta.performance.controller_time_ms` | int | Controller wall time. |
 
 ---
@@ -451,6 +462,7 @@ Works and persons in one round trip, for a unified search box. There is no cross
 | `data.persons.total` | int | Exact Manticore count. |
 | `data.persons.results[]` | array | `/search/persons` rows. |
 | `data.works.query_revision` / `data.persons.query_revision` | object | Present per block when that block was revised or a revision is suggested. The blocks are revised independently. |
+| `data.works.query_revision_degraded` / `data.persons.query_revision_degraded` | boolean | Present (`true`) on a block whose revision could not complete. The whole response is then not cached. |
 | `data.institutions` | object | Always `{ total: null, results: [], note }`. `null` means "not searched", not zero. Hide the block or link to `/institutions?q=`. |
 | `meta.query_time_ms` | int | Combined works + persons time. |
 | `meta.sources.works` / `meta.sources.persons` | object | Per-entity performance blocks. `meta.sources.institutions` is `null`. |
@@ -519,6 +531,7 @@ The row is the `/persons` list item (see [persons › `GET /persons`](./persons.
 | `meta.search_type` | Constant `"fulltext"`. |
 | `meta.verified` | Boolean; present only when `verified` was supplied. |
 | `meta.query_revision` | Present only when the name was revised or a revision is suggested. See [Query revision](#query-revision-typo-tolerance). |
+| `meta.query_revision_degraded` | Present (`true`) only when the revision could not complete; the response is not cached. |
 | `meta.performance.*` | `engine` (`"Manticore"`), `query_type` (`"search"`), `controller`, `controller_time_ms`. |
 
 ### Notes
@@ -624,7 +637,7 @@ The most frequent recent search queries, for "trending" chips on an empty search
 - The endpoint counts identical query strings over every retained entry (up to 5,000) of each of the last 7 days.
 - Queries shorter than 2 characters and single common stop words are skipped.
 - Results are sorted by frequency, then alphabetically.
-- The top 50 are cached for 600 s under `autocomplete:v2:popular:terms:v2` and sliced to `limit`.
+- The top 50 are cached for 600 s under `autocomplete:v3:popular:terms:v2` and sliced to `limit`.
 
 Without Redis the list is empty: it is never an error and never a corpus scan.
 
